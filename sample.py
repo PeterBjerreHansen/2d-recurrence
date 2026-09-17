@@ -1,90 +1,97 @@
-"""
-Sample from a trained model
-"""
-import os
-import pickle
-from contextlib import nullcontext
+"""Generate chess characters from a local checkpoint and stop on the first invalid move."""
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+
 import torch
-import tiktoken
-from model import GPTConfig, GPT
 
-# -----------------------------------------------------------------------------
-init_from = 'resume' # either 'resume' (from an out_dir) or a gpt2 variant (e.g. 'gpt2-xl')
-out_dir = 'out' # ignored if init_from is not 'resume'
-start = "\n" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE:prompt.txt"
-num_samples = 10 # number of samples to draw
-max_new_tokens = 500 # number of tokens generated in each sample
-temperature = 0.8 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
-top_k = 200 # retain only the top_k most likely tokens, clamp others to have 0 probability
-seed = 1337
-device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
-# device = 'cpu' # Uncomment if on Mac
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
-compile = False # use PyTorch 2.0 to compile the model to be faster
-exec(open('configurator.py').read()) # overrides from command line or config file
-# -----------------------------------------------------------------------------
+from evaluation.chess import MoveValidator
+from model import GPT, GPTConfig
 
-torch.manual_seed(seed)
-torch.cuda.manual_seed(seed)
-torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
-torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
-device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
-ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-# model
-if init_from == 'resume':
-    # init from a model saved in a specific directory
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-    checkpoint = torch.load(ckpt_path, map_location=device)
-    gptconf = GPTConfig(**checkpoint['model_args'])
-    model = GPT(gptconf)
-    state_dict = checkpoint['model']
-    unwanted_prefix = '_orig_mod.'
-    for k,v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict)
-elif init_from.startswith('gpt2'):
-    # init from a given GPT-2 model
-    model = GPT.from_pretrained(init_from, dict(dropout=0.0))
+@torch.no_grad()
+def generate(model, meta, prompt=';1.', *, seed=1337, max_new_tokens=512, temperature=1.0, top_k=0):
+    if temperature < 0 or top_k < 0 or max_new_tokens < 0:
+        raise ValueError('temperature, top_k and max_new_tokens must be nonnegative')
+    validator = MoveValidator()
+    validator.read_prompt(prompt)
+    model.eval()
+    device = next(model.parameters()).device
+    try:
+        tokens = [meta['stoi'][char] for char in prompt]
+    except KeyError as error:
+        raise ValueError(f'Prompt character outside vocabulary: {error.args[0]!r}') from error
+    if len(tokens) > model.config.block_size:
+        raise ValueError('Prompt exceeds model context')
+    # Sample on CPU with a dedicated generator: reproducible within a device/version,
+    # without advancing the training process RNG or masking illegal moves.
+    generator = torch.Generator().manual_seed(seed)
+    reason = 'generation_limit'
+    for _ in range(max_new_tokens):
+        if len(tokens) >= model.config.block_size:
+            reason = 'context_limit'
+            break
+        x = torch.tensor([tokens], dtype=torch.long, device=device)
+        logits, _ = model(x)
+        logits = logits[0, -1].float().cpu()
+        if temperature == 0:
+            token = int(logits.argmax())
+        else:
+            logits = logits / temperature
+            if top_k:
+                threshold = torch.topk(logits, min(top_k, len(logits))).values[-1]
+                logits[logits < threshold] = -float('inf')
+            token = int(torch.multinomial(logits.softmax(-1), 1, generator=generator))
+        tokens.append(token)
+        validator.feed(meta['itos'][token])
+        if validator.reason:
+            break
+    report = validator.finish(reason)
+    report.update(prompt=prompt, seed=seed, generated_characters=len(tokens) - len(prompt),
+                  temperature=temperature, top_k=top_k, max_new_tokens=max_new_tokens)
+    return report
 
-model.eval()
-model.to(device)
-if compile:
-    model = torch.compile(model) # requires PyTorch 2.0 (optional)
 
-# look for the meta pickle in case it is available in the dataset folder
-load_meta = False
-if init_from == 'resume' and 'config' in checkpoint and 'dataset' in checkpoint['config']: # older checkpoints might not have these...
-    meta_path = os.path.join('data', checkpoint['config']['dataset'], 'meta.pkl')
-    load_meta = os.path.exists(meta_path)
-if load_meta:
-    print(f"Loading meta from {meta_path}...")
-    with open(meta_path, 'rb') as f:
-        meta = pickle.load(f)
-    # TODO want to make this more general to arbitrary encoder/decoder schemes
-    stoi, itos = meta['stoi'], meta['itos']
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: ''.join([itos[i] for i in l])
-else:
-    # ok let's assume gpt-2 encodings by default
-    print("No meta.pkl found, assuming GPT-2 encodings...")
-    enc = tiktoken.get_encoding("gpt2")
-    encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
-    decode = lambda l: enc.decode(l)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--checkpoint', required=True, help='Trusted local training checkpoint')
+    parser.add_argument('--device', default='cpu')
+    parser.add_argument('--prompt', default=';1.')
+    parser.add_argument('--prompts', help='JSON list of game-prefix strings')
+    parser.add_argument('--num-samples', type=int, default=10)
+    parser.add_argument('--seed', type=int, default=1337)
+    parser.add_argument('--max-new-tokens', type=int, default=512)
+    parser.add_argument('--temperature', type=float, default=1.0)
+    parser.add_argument('--top-k', type=int, default=0)
+    parser.add_argument('--output', default='out-evaluation/generation.json')
+    args = parser.parse_args()
+    if args.num_samples < 1:
+        parser.error('--num-samples must be positive')
+    checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+    model = GPT(GPTConfig(**checkpoint['model_args'])).to(args.device)
+    model.load_state_dict(checkpoint['model'])
+    prompts = json.loads(Path(args.prompts).read_text()) if args.prompts else [args.prompt]
+    if not prompts:
+        parser.error('Prompt list is empty')
+    results = [generate(model, checkpoint['meta'], prompts[i % len(prompts)], seed=args.seed + i,
+                        max_new_tokens=args.max_new_tokens, temperature=args.temperature, top_k=args.top_k)
+               for i in range(args.num_samples)]
+    attempts = sum(r['attempted_moves'] for r in results)
+    legal = sum(r['legal_moves'] for r in results)
+    summary = dict(samples=len(results), completed_move_legality=legal / attempts if attempts else None,
+                   mean_legal_continuation=legal / len(results),
+                   pgn_parse_success_rate=sum(r['pgn_parse_success'] for r in results) / len(results),
+                   valid_termination_rate=sum(r['valid_termination'] for r in results) / len(results),
+                   termination_reasons=dict(Counter(r['termination_reason'] for r in results)))
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(dict(checkpoint=str(Path(args.checkpoint).resolve()),
+                                  checkpoint_step=checkpoint['iter_num'], model_args=checkpoint['model_args'],
+                                  manifest_hash=checkpoint['manifest_hash'], settings=vars(args),
+                                  summary=summary, samples=results), indent=2) + '\n')
+    print(json.dumps(summary, indent=2))
 
-# encode the beginning of the prompt
-if start.startswith('FILE:'):
-    with open(start[5:], 'r', encoding='utf-8') as f:
-        start = f.read()
-start_ids = encode(start)
-x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 
-# run generation
-with torch.no_grad():
-    with ctx:
-        for k in range(num_samples):
-            y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(decode(y[0].tolist()))
-            print('---------------')
+if __name__ == '__main__':
+    main()

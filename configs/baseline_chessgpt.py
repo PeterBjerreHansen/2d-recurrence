@@ -1,0 +1,20 @@
+# Karvonen's 8-layer chess configuration. Unspecified optimizer settings match train.py.
+out_dir = 'out-baseline'
+dataset = 'chess_v1'
+n_layer = 8
+n_head = 8
+n_embd = 512
+block_size = 1023
+bias = False
+dropout = 0.0
+batch_size = 100
+gradient_accumulation_steps = 1
+learning_rate = 3e-4
+min_lr = 3e-5
+warmup_iters = 2000
+max_iters = 600000
+lr_decay_iters = 600000
+eval_interval = 4000
+eval_iters = 100
+log_interval = 50
+compile = True

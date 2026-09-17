@@ -1,0 +1,21 @@
+# Fast pipeline verification only; not an architecture comparison.
+out_dir = 'out-smoke'
+dataset = 'smoke_real'
+n_layer = 2
+n_head = 2
+n_embd = 64
+block_size = 128
+batch_size = 8
+gradient_accumulation_steps = 1
+max_iters = 40
+warmup_iters = 0
+lr_decay_iters = 40
+learning_rate = 1e-3
+min_lr = 1e-4
+eval_interval = 20
+eval_iters = 4
+log_interval = 10
+compile = False
+device = 'cpu'
+dtype = 'float32'
+num_threads = 4

@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/adamkarvonen/train_ChessGPT",
+  "commit": "dcbf7c6f8e400f73850be8283ab88ce445edb7ba",
+  "retained": [
+    "model.py",
+    "train.py",
+    "configurator.py",
+    "LICENSE",
+    "data/lichess_hf_dataset/meta.pkl"
+  ],
+  "notes": "Local fork retaining upstream ancestry; no remote fork or push has been performed."
+}

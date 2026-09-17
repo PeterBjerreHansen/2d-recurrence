@@ -1,0 +1,19 @@
+[project]
+name = "two-axis-chess"
+version = "0.1.0"
+description = "Character-level ChessGPT baseline for two-axis recurrence experiments"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "torch>=2.5,<3",
+    "numpy>=1.26,<3",
+    "chess>=1.11,<2",
+    "datasets>=3,<5",
+    "huggingface-hub>=0.28,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
