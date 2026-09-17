@@ -16,4 +16,13 @@ The local data, checkpoints, and detailed logs are ignored by Git. Their manifes
 
 ## Initial eight-layer run
 
-The committed `configs/baseline_pilot.py` specifies a bounded 100-update MPS run on the verified real-data subset with the full eight-layer model, width 512, eight heads, 1,023-character context, and effective batch size eight. Its completed results will be recorded here after the run.
+The 100-update run completed on MPS with the full eight-layer model, width 512, eight heads, 1,023-character context, and effective batch size eight. The code was clean at commit `02433146649ba54b83a98d1ff6bb5a65ae79dab9` on `baseline-chessgpt`, tagged `baseline-stage01`. Steady training updates took approximately 0.47 seconds each.
+
+| Metric | Initial | After 100 updates |
+| --- | ---: | ---: |
+| Validation NLL | 3.5744 | 1.7267 |
+| Validation character accuracy | 1.5% | 40.0% |
+
+Twenty temperature-1 continuations from `;1.` with seeds 1337–1356 produced 38 legal moves across 58 completed move attempts (65.5%). Mean legal continuation was 1.9 moves. Nine samples stopped on malformed moves and eleven on illegal moves; none completed a valid game. These are early learning results, not a trained chess-playing benchmark. The same untrained architecture and initialization produced no legal moves under the same evaluation settings.
+
+Loading the final checkpoint in evaluation-only mode reproduced the final NLL and accuracy. [Machine-readable results](baseline_pilot_results.json) record evaluations, sampling settings, data manifest, and checkpoint checksum. The default full-corpus training run remains unexecuted. The working branch is `mvp-2d-recurrence`; its baseline implementation starts from the same frozen commit, with validation documentation recorded afterward.
