@@ -1,6 +1,6 @@
 # Two-axis recurrent ChessGPT
 
-Stages 0–8 implement the ordinary character-level chess baseline and two-axis recurrent training. Both use the eight-layer, eight-head, width-512 Karvonen/nanoGPT backbone with learned positions and tied embedding/unembedding weights. The recurrent model partitions those blocks into 2 prelude, 4 shared core, 1 temporal source, and 1 coda. See [the proposal](proposal.md), [implementation plan](implementation_plan.md), and [recurrence contract](docs/RECURRENCE_CONTRACT.md).
+Stages 0–9 implement the ordinary character-level chess baseline and two-axis recurrent training and evaluation. Both use the eight-layer, eight-head, width-512 Karvonen/nanoGPT backbone with learned positions and tied embedding/unembedding weights. The recurrent model partitions those blocks into 2 prelude, 4 shared core, 1 temporal source, and 1 coda. See [the proposal](proposal.md), [implementation plan](implementation_plan.md), and [recurrence contract](docs/RECURRENCE_CONTRACT.md).
 
 This is a local fork retaining the upstream Git ancestry and MIT license. [Upstream provenance](docs/upstream.json) records the reference revision. `model.py` retains its transformer computation; GPT-2 checkpoint import was removed. The training loop keeps AdamW, cosine decay, gradient accumulation, mixed precision, optional compilation, and DDP, with complete resume state and explicit data validation added.
 
@@ -82,4 +82,18 @@ The pilot samples exact temporal/depth write counts from $\{0,1,3\}^2$ and rando
 
 Recurrent checkpoints include the sampler state and accumulated pair/pass histograms. The ordinary resume command applies unchanged. Under DDP, rank zero broadcasts each microbatch schedule; global accumulation must be divisible by world size. Use `compile=False` for recurrent training.
 
-These runs execute the parallel training graph. `sample.py` currently accepts baseline checkpoints only; live temporal-feedback generation is Stage 14. The nine-cell learning-curve experiment is Stage 9. [Stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) records the semantic, resume, distributed, and device checks.
+These runs execute the parallel training graph. Recurrent generation requires explicit `--execution=training_graph`; it recomputes the prefix for each character with a fixed write schedule. Live temporal-feedback generation remains Stage 14. [Stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) records the semantic, resume, distributed, and device checks.
+
+## Stage 9: nine-cell evaluation
+
+```sh
+uv run python train.py configs/stage09_mps.py
+uv run python -m evaluation.recurrence_grid --checkpoint out-stage09-seed1337/ckpt-step000100.pt --device=mps --output out-stage09-seed1337/grid-step000100.json
+uv run python sample.py --checkpoint out-stage09-seed1337/ckpt-step000100.pt --device=mps --execution=training_graph --u-t=3 --u-d=3 --output out-stage09-seed1337/generation-3-3.json
+```
+
+`stage09_mps.py` retains checkpoints at steps 0, 25, 50, 75, and 100. Checkpoints and reports stay in ignored output directories. The evaluator writes detailed JSON and a flat CSV. Every cell uses identical fixed validation batches, sampled with replacement. Defaults use eight batches of two rows, data seed 2027, and mask seeds 11/23/37. The two asymmetric cells `(1,3)` and `(3,1)` each have three distinct placements; all other pilot cells have one. The default evaluates all placements, without repeating deterministic cells to manufacture replication. Standard deviations describe variation across placements only.
+
+Reports include paired NLL differences and argmax prediction changes relative to `(0,0)` in the same checkpoint. That reference is not a separately trained baseline. Forward matrix-multiply FLOPs include actual held-state reads; the report lists excluded operations, so these estimates must not be presented as complete compute accounting. State RMS by pass and parameter-group gradient norms come from one separate eval-mode backward probe per cell, using the first fixed batch and first placement. Unused groups have null gradients. Diagnostics leave model weights and `.grad` buffers unchanged. `--no-diagnostics` skips these probes.
+
+The experiment workflow and exact commands are in [the MPS agent handoff](docs/STAGE09_MPS_HANDOFF.md). [Stage 9 validation](docs/STAGE_09_VALIDATION.md) separates implemented tooling from experiments still to run.

@@ -35,7 +35,7 @@ DEFAULTS = dict(
     backend='nccl', device='cuda', dtype='bfloat16', compile=True, seed=1337,
     num_threads=4, architecture='baseline', n_prelude=2, n_core=4, n_coda=1,
     recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729,
-    eval_u_t=0, eval_u_d=0,
+    eval_u_t=0, eval_u_d=0, keep_checkpoints=False,
 )
 
 
@@ -120,7 +120,7 @@ def train(config):
             raise ValueError('Resume dataset differs from checkpoint')
         if checkpoint['world_size'] != world_size:
             raise ValueError('Exact resume requires the same world size')
-        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval'}
+        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints'}
         for key in DEFAULTS.keys() - mutable:
             if config[key] != checkpoint['config'].get(key, DEFAULTS[key]):
                 raise ValueError(f'Resume changes {key}; use a new run for changed training settings')
@@ -192,12 +192,15 @@ def train(config):
         else:
             states[0] = state
         if master:
-            atomic_save(dict(model=raw_model.state_dict(), optimizer=optimizer.state_dict(),
+            payload = dict(model=raw_model.state_dict(), optimizer=optimizer.state_dict(),
                              scaler=scaler.state_dict(), model_args=model_args, config=config,
                              iter_num=step, best_val_loss=best_val, last_eval_step=last_eval_step,
                              rng_by_rank=states, world_size=world_size, manifest_hash=data.manifest_hash,
                              meta=data.meta, provenance=run_info,
-                             recurrence_sampler=sampler.state_dict() if sampler else None), out / 'ckpt.pt')
+                             recurrence_sampler=sampler.state_dict() if sampler else None)
+            atomic_save(payload, out / 'ckpt.pt')
+            if config['keep_checkpoints']:
+                atomic_save(payload, out / f'ckpt-step{step:06d}.pt')
 
     def next_schedule():
         # Only rank zero advances the sampler. Its checkpoint state is authoritative.

@@ -1,6 +1,6 @@
 # Implementation Plan: Two-Axis Recurrent Character-Level Chess Transformer
 
-Stages 0–8 are implemented. See [stages 0–1 validation](docs/STAGE_01_VALIDATION.md) and [stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) for evidence and limits. Stage 9 is the next experimental step; live-feedback generation remains Stage 14.
+Stages 0–8 and the Stage 9 experiment tooling are implemented. See [stages 0–1 validation](docs/STAGE_01_VALIDATION.md) and [stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) for evidence and limits. The Stage 9 learning-curve experiments are ready to run; see [validation](docs/STAGE_09_VALIDATION.md) and the [MPS handoff](docs/STAGE09_MPS_HANDOFF.md). Live-feedback generation remains Stage 14.
 
 ## Governing contract
 
@@ -186,7 +186,7 @@ Add tests for inference semantics when that implementation is introduced. These 
 
 ## Stage 9: Hybrid signs-of-life experiments
 
-Implement `evaluation/recurrence_grid.py` to evaluate all nine cells of $\{0,1,3\}^2$ using training-graph execution. For each cell, report NLL, character accuracy, actual pass count, estimated FLOPs, training probability, and mean and standard deviation over fixed mask seeds. Use distinct placements where they exist; diagonal and single-axis cells have no placement variation. Label generation results with their execution mode, prefill procedure, and depth budget.
+Implement `evaluation/recurrence_grid.py` to evaluate all nine cells of $\{0,1,3\}^2$ using training-graph execution. For each cell, report NLL, character accuracy, actual pass count, estimated FLOPs, training probability, and mean and standard deviation over fixed mask seeds. Use distinct placements where they exist; diagonal and single-axis cells have no placement variation. Label generation results with their execution mode, prefill procedure, and depth budget. Stage 9 generation recomputes the full prefix using the training graph and a fixed write schedule; it does not implement live feedback. The current compute estimate counts forward matrix multiplications, including schedule-dependent mixer reads, and explicitly excludes elementwise operations and backward. Complete accounting remains Stage 12.
 
 Look for stable four-pass execution, useful prediction changes under recurrence, some benefit from additional computation, healthy state norms and gradients, and valid chess generation. Do not require monotonic improvement at every setting. Nonzero gates or gradients show that a path participates in computation, not that its memory content is useful; controlled feedback interventions can distinguish these when interpreting the signal. Establish this initial signal before committing to substantial component-baseline training.
 

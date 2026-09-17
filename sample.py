@@ -3,15 +3,18 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+import random
 
 import torch
 
 from evaluation.chess import MoveValidator
 from model import GPT, GPTConfig
+from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
+from recurrence.schedule import sample_schedule
 
 
 @torch.no_grad()
-def generate(model, meta, prompt=';1.', *, seed=1337, max_new_tokens=512, temperature=1.0, top_k=0):
+def generate(model, meta, prompt=';1.', *, seed=1337, max_new_tokens=512, temperature=1.0, top_k=0, schedule=None):
     if temperature < 0 or top_k < 0 or max_new_tokens < 0:
         raise ValueError('temperature, top_k and max_new_tokens must be nonnegative')
     validator = MoveValidator()
@@ -33,7 +36,7 @@ def generate(model, meta, prompt=';1.', *, seed=1337, max_new_tokens=512, temper
             reason = 'context_limit'
             break
         x = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits, _ = model(x)
+        logits, _ = model(x, **(dict(schedule=schedule) if schedule is not None else {}))
         logits = logits[0, -1].float().cpu()
         if temperature == 0:
             token = int(logits.argmax())
@@ -49,7 +52,13 @@ def generate(model, meta, prompt=';1.', *, seed=1337, max_new_tokens=512, temper
             break
     report = validator.finish(reason)
     report.update(prompt=prompt, seed=seed, generated_characters=len(tokens) - len(prompt),
-                  temperature=temperature, top_k=top_k, max_new_tokens=max_new_tokens)
+                  temperature=temperature, top_k=top_k, max_new_tokens=max_new_tokens,
+                  execution='training_graph' if schedule is not None else 'baseline',
+                  prefill='full_prefix_recomputation_each_character',
+                  depth_budget=dict(kind='training_graph_core_passes', value=schedule.rounds) if schedule else None,
+                  u_t=schedule.u_t if schedule else None, u_d=schedule.u_d if schedule else None,
+                  temporal_write_mask=schedule.temporal_write_mask if schedule else None,
+                  depth_write_mask=schedule.depth_write_mask if schedule else None)
     return report
 
 
@@ -57,6 +66,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkpoint', required=True, help='Trusted local training checkpoint')
     parser.add_argument('--device', default='cpu')
+    parser.add_argument('--execution', choices=['baseline', 'training_graph'])
+    parser.add_argument('--u-t', type=int, default=3)
+    parser.add_argument('--u-d', type=int, default=3)
+    parser.add_argument('--mask-seed', type=int, default=11)
+    parser.add_argument('--num-threads', type=int, default=4)
     parser.add_argument('--prompt', default=';1.')
     parser.add_argument('--prompts', help='JSON list of game-prefix strings')
     parser.add_argument('--num-samples', type=int, default=10)
@@ -68,16 +82,22 @@ def main():
     args = parser.parse_args()
     if args.num_samples < 1:
         parser.error('--num-samples must be positive')
+    torch.set_num_threads(args.num_threads)
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
-    if checkpoint['config'].get('architecture', 'baseline') != 'baseline':
-        parser.error('Recurrent checkpoints require an explicit execution mode; live-feedback generation is deferred to stage 14.')
-    model = GPT(GPTConfig(**checkpoint['model_args'])).to(args.device)
+    recurrent = checkpoint['config'].get('architecture', 'baseline') == 'recurrent'
+    if recurrent and args.execution != 'training_graph':
+        parser.error('Recurrent checkpoints require --execution=training_graph; live feedback remains stage 14.')
+    if not recurrent and args.execution == 'training_graph':
+        parser.error('Training-graph recurrence requires a recurrent checkpoint')
+    schedule = sample_schedule(args.u_t, args.u_d, random.Random(args.mask_seed)) if recurrent else None
+    model = (Recurrent2DGPT(RecurrentGPTConfig(**checkpoint['model_args'])) if recurrent
+             else GPT(GPTConfig(**checkpoint['model_args']))).to(args.device)
     model.load_state_dict(checkpoint['model'])
     prompts = json.loads(Path(args.prompts).read_text()) if args.prompts else [args.prompt]
     if not prompts:
         parser.error('Prompt list is empty')
     results = [generate(model, checkpoint['meta'], prompts[i % len(prompts)], seed=args.seed + i,
-                        max_new_tokens=args.max_new_tokens, temperature=args.temperature, top_k=args.top_k)
+                        max_new_tokens=args.max_new_tokens, temperature=args.temperature, top_k=args.top_k, schedule=schedule)
                for i in range(args.num_samples)]
     attempts = sum(r['attempted_moves'] for r in results)
     legal = sum(r['legal_moves'] for r in results)
