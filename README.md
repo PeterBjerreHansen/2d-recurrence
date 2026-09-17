@@ -1,6 +1,6 @@
 # Two-axis recurrent ChessGPT
 
-Stages 0 and 1 implement the ordinary character-level chess baseline. The model is the eight-layer, eight-head, width-512 Karvonen/nanoGPT transformer with learned positions and tied embedding/unembedding weights. Recurrence is not implemented yet. The later 2/4/1/1 partition is specified in [the proposal](proposal.md) and [implementation plan](implementation_plan.md).
+Stages 0–8 implement the ordinary character-level chess baseline and two-axis recurrent training. Both use the eight-layer, eight-head, width-512 Karvonen/nanoGPT backbone with learned positions and tied embedding/unembedding weights. The recurrent model partitions those blocks into 2 prelude, 4 shared core, 1 temporal source, and 1 coda. See [the proposal](proposal.md), [implementation plan](implementation_plan.md), and [recurrence contract](docs/RECURRENCE_CONTRACT.md).
 
 This is a local fork retaining the upstream Git ancestry and MIT license. [Upstream provenance](docs/upstream.json) records the reference revision. `model.py` retains its transformer computation; GPT-2 checkpoint import was removed. The training loop keeps AdamW, cosine decay, gradient accumulation, mixed precision, optional compilation, and DDP, with complete resume state and explicit data validation added.
 
@@ -68,3 +68,18 @@ uv run python train.py configs/baseline_pilot.py --init_from=resume --eval_only=
 `ckpt.pt` stores model, optimizer, scaler, completed update count, per-rank random-generator states, batch-generator state, vocabulary, dataset-manifest hash, configuration, and code/environment provenance. Saves are atomic. `max_iters` is the total desired completed updates, not additional updates. Resuming with the same limit performs no extra training. A longer continuation can set a larger `max_iters` while retaining the original learning-rate schedule; changing that schedule constitutes a new experiment and is rejected by exact resume.
 
 Resume requires the same model, dataset, training settings, device, and world size. Logging/evaluation intervals and the total stopping step may change. CPU exact resume is tested against uninterrupted training with dropout. GPU backends can have additional numerical nondeterminism. Load only trusted local checkpoints and vocabulary files, which use Python serialization. `run.json`, append-only `events.jsonl`, and checkpoint provenance record the configuration and source state for each invocation.
+
+## Recurrent training
+
+After preparing the smoke dataset above, run a small CPU check or the full-width pilot:
+
+```sh
+uv run python train.py configs/recurrent_smoke.py
+uv run python train.py configs/recurrent_2d_pilot.py
+```
+
+The pilot samples exact temporal/depth write counts from $\{0,1,3\}^2$ and randomly places the writes. All available states are read on every pass, including when held. Training uses final-pass cross entropy with full gradients through every pass. Evaluation uses the explicit fixed pair `eval_u_t=3`, `eval_u_d=3` and an independent fixed mask RNG. It does not consume training schedules.
+
+Recurrent checkpoints include the sampler state and accumulated pair/pass histograms. The ordinary resume command applies unchanged. Under DDP, rank zero broadcasts each microbatch schedule; global accumulation must be divisible by world size. Use `compile=False` for recurrent training.
+
+These runs execute the parallel training graph. `sample.py` currently accepts baseline checkpoints only; live temporal-feedback generation is Stage 14. The nine-cell learning-curve experiment is Stage 9. [Stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) records the semantic, resume, distributed, and device checks.

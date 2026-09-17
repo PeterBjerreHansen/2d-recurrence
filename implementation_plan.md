@@ -1,8 +1,10 @@
 # Implementation Plan: Two-Axis Recurrent Character-Level Chess Transformer
 
+Stages 0–8 are implemented. See [stages 0–1 validation](docs/STAGE_01_VALIDATION.md) and [stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) for evidence and limits. Stage 9 is the next experimental step; live-feedback generation remains Stage 14.
+
 ## Governing contract
 
-The [project proposal](proposal.md#4-canonical-training-time-recurrence-contract) defines the architecture. Before implementing recurrence, extract that contract into `docs/RECURRENCE_CONTRACT.md` and use it as the maintained reference for code, tests, diagrams, and configuration terminology. The execution order is temporal mixing, depth mixing, shared core, then state writes. Depth writes store core output; temporal writes store the raw output of a dedicated temporal-source transformer block placed between the core and coda. Write masks never control reads.
+The [project proposal](proposal.md#4-canonical-training-time-recurrence-contract) defines the architecture. The [recurrence contract](docs/RECURRENCE_CONTRACT.md) is the maintained implementation reference for code, tests, diagrams, and configuration terminology. The execution order is temporal mixing, depth mixing, shared core, then state writes. Depth writes store core output; temporal writes store the raw output of a dedicated temporal-source transformer block placed between the core and coda. Write masks never control reads.
 
 Keep the implementation small enough to inspect the recurrent path in one file. The external repositories are references, not training frameworks to import wholesale. This plan preserves the staged approach: reproduce ordinary ChessGPT, establish a hybrid signal, and only then expand experiments and inference optimization.
 
@@ -64,7 +66,7 @@ When depth state exists, set $z_b=W_hN_h(h_D)+W_aN_a(a_b)$; otherwise set $z_b=a
 
 ### Canonical pseudocode
 
-The pseudocode samples a pair and two write masks per microbatch, using the checkpointed sampler RNG. `uniform_subset_mask` chooses exactly the requested number of positions uniformly without replacement; zero-length masks are valid. Pass indices are zero-based and masks have length `rounds - 1`. Reads depend on state availability, while only writes consult the masks. The temporal mixer receives predecessor validity separately from memory values so that a legitimate zero-valued memory is still read. Under DDP, broadcast the sampled pair and masks before this trajectory executes.
+The pseudocode samples a pair and two write masks per microbatch, using the checkpointed sampler RNG. `uniform_subset_mask` chooses exactly the requested number of positions uniformly without replacement; zero-length masks are valid. Pass indices are zero-based and masks have length `rounds - 1`. Reads depend on state availability, while only writes consult the masks. The current row format has no predecessor only at position zero. The temporal mixer bypasses that position by index, independently of memory values; a legitimate zero-valued memory elsewhere is still read. Under DDP, broadcast the sampled pair and masks before this trajectory executes.
 
 ```python
 u_t, u_d = sample_update_pair(pair_distribution, sampler_rng)
@@ -81,8 +83,8 @@ for b in range(rounds):
     if temporal_state is None:
         anchor = p
     else:
-        shifted_memory, valid = shift_right_with_validity(temporal_state)
-        anchor = temporal_mixer(p, shifted_memory, valid)
+        shifted_memory = shift_right(temporal_state)
+        anchor = temporal_mixer(p, shifted_memory)  # bypass position zero
 
     if depth_state is None:
         core_input = anchor
@@ -118,13 +120,13 @@ Verify reductions numerically with matched weights and controlled dropout. For $
 
 ## Stage 3: Refactor nanoGPT into prelude, core, source, and coda
 
-Partition the eight-layer backbone into two prelude blocks, four shared recurrent-core blocks, one dedicated temporal-source block, and one coda block. Retain width 512 and eight heads. At $(0,0)$ this is the ordinary eight-block transformer, followed by final LayerNorm and the tied unembedding matrix. Preserve configurable prelude, core, and coda counts; the MVP source is one normal causal transformer block, $L_S=1$, with the same width and block design as the backbone. It has its own parameters and is outside the depth loop. Remove the earlier coda-source-index configuration: the source is now an explicit module.
+Partition the eight-layer backbone into two prelude blocks, four shared recurrent-core blocks, one dedicated temporal-source block, and one coda block. Retain width 512 and eight heads. At $(0,0)$ this is the ordinary eight-block transformer, followed by final LayerNorm and the tied unembedding matrix. Preserve configurable prelude, core, and coda counts; the MVP source is one normal causal transformer block, $L_S=1$, with the same width and block design as the backbone. It has its own parameters and is outside the depth loop. Preserve the baseline ModuleList and identify these block ranges without registering duplicate module aliases.
 
 Add token and learned position embeddings once before the prelude; do not re-add them inside recurrence. Before adding mixers, verify that one core call followed by source and coda matches the equivalent ordinary stack within floating-point tolerance. Keep the source in the final prediction path even for ordinary and depth-only models. Map baseline blocks 1–2 to the prelude, 3–6 to the core, 7 to the source, and 8 to the coda, preserving block order and weights for the equivalence check.
 
 ## Stage 4: Implement the stochastic schedule sampler
 
-Use a `RecurrenceSchedule` carrying `u_t`, `u_d`, `rounds`, `temporal_write_mask`, and `depth_write_mask`, plus a checkpointable `RecurrenceScheduleSampler`. Accept arbitrary nonnegative integer supports and a pair-probability matrix. Do not hard-code the pilot support or use independent Bernoulli dropout: the two update counts must be exact.
+Use an immutable `RecurrenceSchedule` storing `temporal_write_mask` and `depth_write_mask`, with `u_t`, `u_d`, and `rounds` derived from those masks, plus a checkpointable `RecurrenceScheduleSampler`. Accept arbitrary nonnegative integer supports and a pair-probability matrix. Do not hard-code the pilot support or use independent Bernoulli dropout: the two update counts must be exact.
 
 A false mask entry means no write after that pass. The current state remains available for every subsequent read. At least one write follows every nonfinal pass; this requirement does not apply to the final pass, which has no mask entry. Empty masks for the one-pass case are valid.
 
@@ -132,13 +134,13 @@ Checkpoint the support, pair distribution, sampler RNG state, draw count, pair h
 
 ## Stage 5: Implement temporal recurrence
 
-Use $\operatorname{ShiftRight}(M)[0]=0$ and $\operatorname{ShiftRight}(M)[t]=M[t-1]$ for $t>0$. Shift the latest stored memory for each read without modifying it. Repeated reads of a held memory must not shift it farther through the sequence. Track predecessor validity and bypass the mixer where feedback is absent, including the first position.
+Use $\operatorname{ShiftRight}(M)[0]=0$ and $\operatorname{ShiftRight}(M)[t]=M[t-1]$ for $t>0$. Shift the latest stored memory for each read without modifying it. Repeated reads of a held memory must not shift it farther through the sequence. Bypass the mixer at position zero; the inherited row format needs no additional validity tensor.
 
 Every core pass processes the full teacher-forced sequence in parallel. A temporal write refreshes the complete memory sequence; subsequent passes read it whether or not they also write. Describe this as exact execution of the defined Jacobi-style training graph, with full backpropagation through all passes. It is distinct from sequential live feedback generation.
 
 Store the raw temporal-source output as memory. Run this block on each nonfinal core output selected for a temporal write, then run it once on the final core output and pass the result through the coda. Keep gradients through the source and every later read of its stored activation. Its standard transformer internals remain intact, but there is no additional `TemporalWriter` module, write projection, or write-time normalization. During live inference it runs once per token after all depth iterations, not inside the depth loop.
 
-Implement the gate and projected-value equations from Stage 2, with feature-wise coefficients initialized approximately to $\alpha=0.1$ and $\beta=0.9$. Do not constrain their sum to one. Use separate bias-free $D\rightarrow D$ value projections $W_m$ and $W_p$; identity initialization is a starting choice to record in configuration. The gate sees normalized sources before these projections. Reuse each normalized source for gate and value computation. An absent memory bypasses the entire mixer and returns raw $p$, including bypassing $W_pN_p(p)$.
+Implement the gate and projected-value equations from Stage 2, with feature-wise coefficients initialized approximately to $\alpha=0.1$ and $\beta=0.9$. Do not constrain their sum to one. Use separate bias-free $D\rightarrow D$ value projections $W_m$ and $W_p$; identity initialization is the MVP default recorded in the recurrence contract. The gate is a single dense affine map followed by sigmoid, with zero weights and biases that give the stated initial coefficients. The gate sees normalized sources before these projections. Reuse each normalized source for gate and value computation. An absent memory bypasses the entire mixer and returns raw $p$, including bypassing $W_pN_p(p)$.
 
 A held memory's normalized and projected forms can be reused within a forward trajectory if gradients and any stochastic operations are preserved. Treat this as an optimization of the direct equations. At inference, compute the fixed temporal anchor once before depth iteration. Do not cache training activations across optimizer steps.
 
@@ -146,7 +148,7 @@ A held memory's normalized and projected forms can be reused within a forward tr
 
 Use $D_\theta(h_D,a)=W_hN_h(h_D)+W_aN_a(a)$ whenever depth state exists. The anchor $a$ is the result of temporal mixing when temporal memory is available, or the prelude representation otherwise. A false temporal write mask does not revert the anchor to raw $p$.
 
-Do not add a sigmoid interpolation, per-loop gate, exit gate, or unconditional extra carry of the last core output in the MVP. The residual transformer core and learned projections provide the initial transformation. Use Huginn as a reference for shared core reuse and repeated access to an input anchor, without importing its large-scale training stack.
+Initialize both depth projections to $0.5I$, as recorded in the recurrence contract. Do not add a sigmoid interpolation, per-loop gate, exit gate, or unconditional extra carry of the last core output in the MVP. The residual transformer core and learned projections provide the initial transformation. Use Huginn as a reference for shared core reuse and repeated access to an input anchor, without importing its large-scale training stack.
 
 ## Stage 7: Integrate the hybrid trajectory
 

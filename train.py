@@ -1,4 +1,4 @@
-"""ChessGPT baseline training, adapted from Karvonen/nanoGPT.
+"""ChessGPT baseline and two-axis recurrent training, adapted from Karvonen/nanoGPT.
 
     uv run python train.py configs/smoke.py
     uv run python train.py configs/baseline_chessgpt.py --batch_size=16
@@ -21,6 +21,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from data_loader import ChessData
 from model import GPT, GPTConfig
+from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
+from recurrence.schedule import RecurrenceScheduleSampler, sample_schedule
 from training_utils import append_json, atomic_save, capture_rng, provenance, restore_rng
 
 DEFAULTS = dict(
@@ -31,7 +33,9 @@ DEFAULTS = dict(
     max_iters=600000, weight_decay=0.1, beta1=0.9, beta2=0.95, grad_clip=1.0,
     decay_lr=True, warmup_iters=2000, lr_decay_iters=600000, min_lr=3e-5,
     backend='nccl', device='cuda', dtype='bfloat16', compile=True, seed=1337,
-    num_threads=4,
+    num_threads=4, architecture='baseline', n_prelude=2, n_core=4, n_coda=1,
+    recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729,
+    eval_u_t=0, eval_u_d=0,
 )
 
 
@@ -48,6 +52,15 @@ def get_lr(step, config):
 
 def train(config):
     config = {**DEFAULTS, **config}
+    if config['architecture'] not in ['baseline', 'recurrent']:
+        raise ValueError('architecture must be baseline or recurrent')
+    recurrent = config['architecture'] == 'recurrent'
+    if recurrent and config['compile']:
+        raise ValueError('Use compile=False for variable recurrent schedules in the MVP')
+    sampler = RecurrenceScheduleSampler(config['recurrence_support'], config['recurrence_probabilities'],
+                                         config['recurrence_seed']) if recurrent else None
+    if recurrent:
+        sample_schedule(config['eval_u_t'], config['eval_u_d'], random.Random(0))
     if config['init_from'] not in ['scratch', 'resume']:
         raise ValueError('init_from must be scratch or resume')
     for key in ['batch_size', 'gradient_accumulation_steps', 'eval_interval', 'eval_iters', 'log_interval', 'num_threads']:
@@ -95,6 +108,8 @@ def train(config):
         raise FileExistsError('Checkpoint exists: choose a new out_dir or init_from=resume')
     model_args = {key: config[key] for key in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'dropout']}
     model_args['vocab_size'] = data.meta['vocab_size']
+    if recurrent:
+        model_args.update({key: config[key] for key in ['n_prelude', 'n_core', 'n_coda']})
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
     if config['init_from'] == 'resume':
@@ -107,13 +122,16 @@ def train(config):
             raise ValueError('Exact resume requires the same world size')
         mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval'}
         for key in DEFAULTS.keys() - mutable:
-            if config[key] != checkpoint['config'][key]:
+            if config[key] != checkpoint['config'].get(key, DEFAULTS[key]):
                 raise ValueError(f'Resume changes {key}; use a new run for changed training settings')
         step, best_val = checkpoint['iter_num'], checkpoint['best_val_loss']
         last_eval_step = checkpoint['last_eval_step']
-    model = GPT(GPTConfig(**model_args)).to(device)
+    model = (Recurrent2DGPT(RecurrentGPTConfig(**model_args)) if recurrent
+             else GPT(GPTConfig(**model_args))).to(device)
     if checkpoint:
         model.load_state_dict(checkpoint['model'])
+        if sampler is not None:
+            sampler.load_state_dict(checkpoint['recurrence_sampler'])
     optimizer = model.configure_optimizers(config['weight_decay'], config['learning_rate'],
                                           (config['beta1'], config['beta2']), device_type)
     scaler = torch.amp.GradScaler('cuda', enabled=(device_type == 'cuda' and config['dtype'] == 'float16'))
@@ -124,7 +142,8 @@ def train(config):
     if config['compile']:
         model = torch.compile(model)
     if ddp:
-        model = DDP(model, device_ids=[int(os.environ['LOCAL_RANK'])] if device_type == 'cuda' else None)
+        model = DDP(model, device_ids=[int(os.environ['LOCAL_RANK'])] if device_type == 'cuda' else None,
+                    find_unused_parameters=recurrent)
     if checkpoint:
         restore_rng(checkpoint['rng_by_rank'][rank], train_rng, device)
     del checkpoint
@@ -133,6 +152,7 @@ def train(config):
     if master:
         record = dict(config=config, model_args=model_args, provenance=run_info, world_size=world_size,
                       manifest_hash=data.manifest_hash, effective_batch_size=effective_batch,
+                      parameter_count=sum(p.numel() for p in raw_model.parameters()),
                       characters_per_step=effective_batch * config['block_size'], resume_step=step)
         (out / 'run.json').write_text(json.dumps(record, indent=2) + '\n')
         append_json(out / 'events.jsonl', dict(event='start', **record))
@@ -149,11 +169,13 @@ def train(config):
         result = {}
         for split in ['train', 'val']:
             generator = torch.Generator().manual_seed(config['seed'] + (10000 if split == 'train' else 20000))
+            schedule_rng = random.Random(config['recurrence_seed'] + (10000 if split == 'train' else 20000))
             total_loss, correct, total = 0.0, 0, 0
             for _ in range(config['eval_iters']):
                 x, y = data.batch(split, config['batch_size'], device, generator)
+                kwargs = dict(schedule=sample_schedule(config['eval_u_t'], config['eval_u_d'], schedule_rng)) if recurrent else {}
                 with context():
-                    logits, loss = raw_model(x, y)
+                    logits, loss = raw_model(x, y, **kwargs)
                 total_loss += loss.item() * y.numel()
                 correct += (logits.argmax(-1) == y).sum().item()
                 total += y.numel()
@@ -174,7 +196,15 @@ def train(config):
                              scaler=scaler.state_dict(), model_args=model_args, config=config,
                              iter_num=step, best_val_loss=best_val, last_eval_step=last_eval_step,
                              rng_by_rank=states, world_size=world_size, manifest_hash=data.manifest_hash,
-                             meta=data.meta, provenance=run_info), out / 'ckpt.pt')
+                             meta=data.meta, provenance=run_info,
+                             recurrence_sampler=sampler.state_dict() if sampler else None), out / 'ckpt.pt')
+
+    def next_schedule():
+        # Only rank zero advances the sampler. Its checkpoint state is authoritative.
+        selected = [sampler.sample() if master else None]
+        if ddp:
+            dist.broadcast_object_list(selected, src=0)
+        return selected[0]
 
     model.train()
     while True:
@@ -185,7 +215,8 @@ def train(config):
             last_eval_step = step
             if master:
                 print(f"step {step}: train {metrics['train_nll']:.4f}, val {metrics['val_nll']:.4f}, accuracy {metrics['val_accuracy']:.3f}", flush=True)
-                append_json(out / 'metrics.jsonl', dict(event='evaluation', step=step, **metrics))
+                label = dict(execution='training_graph', u_t=config['eval_u_t'], u_d=config['eval_u_d']) if recurrent else {}
+                append_json(out / 'metrics.jsonl', dict(event='evaluation', step=step, **label, **metrics))
             if not config['eval_only']:
                 save_checkpoint()
         if config['eval_only'] or step >= config['max_iters']:
@@ -199,12 +230,18 @@ def train(config):
             torch.cuda.synchronize()
         started = time.perf_counter()
         loss_sum = 0.0
+        schedules = []
         for micro_step in range(accumulation):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1
             x, y = data.batch('train', config['batch_size'], device, train_rng)
+            kwargs = {}
+            if recurrent:
+                schedule = next_schedule()
+                kwargs['schedule'] = schedule
+                schedules.append(dict(u_t=schedule.u_t, u_d=schedule.u_d, rounds=schedule.rounds))
             with context():
-                _, loss = model(x, y)
+                _, loss = model(x, y, **kwargs)
                 scaled_loss = loss / accumulation
             if not torch.isfinite(loss):
                 raise FloatingPointError(f'Non-finite loss at step {step}')
@@ -225,7 +262,7 @@ def train(config):
         if master and (step % config['log_interval'] == 0 or step == 1):
             print(f'step {step}: loss {loss_sum:.4f}, {elapsed:.3f}s', flush=True)
             append_json(out / 'metrics.jsonl', dict(event='train', step=step, nll=loss_sum, lr=lr,
-                                                   seconds=elapsed, characters_per_second=effective_batch * config['block_size'] / elapsed))
+                                                   seconds=elapsed, schedules=schedules, characters_per_second=effective_batch * config['block_size'] / elapsed))
     if ddp:
         dist.destroy_process_group()
     return out / 'ckpt.pt'

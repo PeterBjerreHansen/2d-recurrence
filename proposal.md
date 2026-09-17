@@ -46,7 +46,7 @@ Inference: run S once after depth refinement; its output is outgoing memory.
 
 ## 4. Canonical training-time recurrence contract
 
-This section is the source of truth for the architecture. The implementation plan, code, diagrams, and tests must follow it. Before implementation, extract this contract into `docs/RECURRENCE_CONTRACT.md` and use that file as the maintained implementation reference.
+This section defines the architecture. The [recurrence contract](docs/RECURRENCE_CONTRACT.md) records the maintained implementation reference, including concrete MVP initialization choices; the code, tests, and implementation plan follow it.
 
 ### 4.1 Counts, masks, and initialization
 

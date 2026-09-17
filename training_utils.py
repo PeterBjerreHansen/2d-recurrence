@@ -1,4 +1,4 @@
-"""Run provenance and complete checkpoint state for the baseline training loop."""
+"""Run provenance and complete checkpoint state for the training loop."""
 import importlib.metadata
 import json
 import os

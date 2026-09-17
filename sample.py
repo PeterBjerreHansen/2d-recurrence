@@ -69,6 +69,8 @@ def main():
     if args.num_samples < 1:
         parser.error('--num-samples must be positive')
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+    if checkpoint['config'].get('architecture', 'baseline') != 'baseline':
+        parser.error('Recurrent checkpoints require an explicit execution mode; live-feedback generation is deferred to stage 14.')
     model = GPT(GPTConfig(**checkpoint['model_args'])).to(args.device)
     model.load_state_dict(checkpoint['model'])
     prompts = json.loads(Path(args.prompts).read_text()) if args.prompts else [args.prompt]
