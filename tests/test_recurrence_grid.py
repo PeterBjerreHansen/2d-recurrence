@@ -6,6 +6,8 @@ import pytest
 import torch
 
 from data_loader import ChessData
+from evaluation.feedback_diagnostic import donor_permutation
+from evaluation.panels import fixed_panel_batches, load_panel
 from evaluation.recurrence_grid import compute_estimate, distinct_schedules, evaluate_checkpoint, evaluate_grid
 from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
 from recurrence.schedule import RecurrenceSchedule, sample_schedule
@@ -13,9 +15,18 @@ from sample import generate
 from train import train
 
 
+def test_feedback_donor_permutation_preserves_actual_identity_including_final_row():
+    source_outputs = torch.tensor([10., 11., 20., 21.])
+    swapped = source_outputs[torch.tensor(donor_permutation(2))]
+    assert swapped[:2].tolist() == [20., 21.]
+    assert swapped[2:].tolist() == [10., 11.]
+    final_batch = torch.tensor([30., 40.])
+    assert final_batch[torch.tensor(donor_permutation(1))].tolist() == [40., 30.]
+
+
 def model():
     torch.manual_seed(17)
-    return Recurrent2DGPT(RecurrentGPTConfig(n_layer=4, n_prelude=1, n_core=1,
+    return Recurrent2DGPT(RecurrentGPTConfig(n_layer=4, n_prelude=1, n_buffer=0, n_core=1,
                                             n_coda=1, n_head=2, n_embd=8, block_size=8))
 
 
@@ -88,7 +99,7 @@ def test_grid_fixed_data_metrics_diagnostics_and_no_mutation(prepared_data):
 def test_snapshot_checkpoint_evaluation_and_manifest_guard(prepared_data, tmp_path):
     config = dict(architecture='recurrent', recurrence_support=[0, 1, 3],
                   recurrence_probabilities=[[.1, .12, .04], [.12, .26, .08], [.04, .08, .16]],
-                  n_layer=4, n_prelude=1, n_core=1, n_coda=1, n_head=2, n_embd=8,
+                  n_layer=4, n_prelude=1, n_buffer=0, n_core=1, n_coda=1, n_head=2, n_embd=8,
                   dataset=str(prepared_data), block_size=8, batch_size=1,
                   gradient_accumulation_steps=1, max_iters=0, eval_interval=1, eval_iters=1,
                   log_interval=1, warmup_iters=0, lr_decay_iters=2, compile=False,
@@ -109,6 +120,30 @@ def test_snapshot_checkpoint_evaluation_and_manifest_guard(prepared_data, tmp_pa
     torch.save(broken, tmp_path / 'bad.pt')
     with pytest.raises(ValueError, match='differs'):
         evaluate_checkpoint(tmp_path / 'bad.pt', batches=1)
+
+
+def test_frozen_panel_isolation_and_exact_partial_batch(prepared_data, tmp_path):
+    data = ChessData(prepared_data, 8)
+    validation_count = len(data.rows['val'])
+    selection = [0, 2, 4]
+    confirmation = [index for index in range(validation_count) if index not in selection]
+    panel_path = tmp_path / 'panels.json'
+    panel_path.write_text(__import__('json').dumps({
+        'dataset_manifest_hash': data.manifest_hash,
+        'validation_row_count': validation_count,
+        'selection_seed': 2027,
+        'selection_indices': selection,
+        'confirmation_indices': confirmation,
+    }))
+    panel = load_panel(panel_path, data, 'selection')
+    batches, metadata = fixed_panel_batches(data, panel, batch_size=2)
+    assert metadata['row_indices'] == selection
+    assert metadata['batch_count'] == 2
+    assert metadata['target_count'] == len(selection) * data.context_length
+    assert [batch[0].shape[0] for batch in batches] == [2, 1]
+    flattened = torch.cat([batch[0][:, 0] for batch in batches]).tolist()
+    expected = [int(data.rows['val'][index, 0]) for index in selection]
+    assert flattened == expected
 
 
 def test_recurrent_generation_labels_and_fixed_schedule(prepared_data):

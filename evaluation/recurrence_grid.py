@@ -13,8 +13,10 @@ import random
 import statistics
 
 import torch
+import torch.nn.functional as F
 
 from data_loader import ChessData, file_hash
+from evaluation.panels import fixed_panel_batches, load_panel
 from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
 from recurrence.schedule import RecurrenceSchedule
 from training_utils import provenance
@@ -39,7 +41,7 @@ def distinct_schedules(u_t, u_d, seeds):
 def compute_estimate(config, schedule, length):
     """Forward matrix-multiply FLOPs per sequence; multiply-add counts as two."""
     d = config.n_embd
-    blocks = config.n_prelude + schedule.rounds * config.n_core + schedule.u_t + 1 + config.n_coda
+    blocks = config.n_prelude + schedule.rounds * (config.n_buffer + config.n_core) + (schedule.u_t + 1) * config.n_source + config.n_coda
     # A write after pass i is consumed from pass i+1 onward, even while held.
     def reads(mask):
         return len(mask) - mask.index(True) if any(mask) else 0
@@ -54,15 +56,91 @@ def compute_estimate(config, schedule, length):
 
 def trajectory_diagnostics(model, x, y, schedule):
     """One eval-mode backward probe; autograd.grad leaves parameter .grad untouched."""
-    core_end = model.config.n_prelude + model.config.n_core - 1
-    norms = {'core_output_rms': [], 'source_output_rms': []}
+    core_end = model.config.core_end
+    source_index = model.config.source_index
+    norms = {
+        'prelude_output_rms': [], 'core_output_rms': [], 'source_output_rms': [],
+        'mixer_input_rms': {'temporal': [], 'depth': []},
+        'mixer_output_rms': {'temporal': [], 'depth': []},
+        'successive_pass_relative_change': {'core': [], 'source': []},
+        'sampled_cross_token_cosine_similarity': {'core': [], 'source': []},
+        'gate_value_contributions': {'temporal': [], 'depth': []},
+    }
     handles = []
-    for index, key in [(core_end, 'core_output_rms'), (core_end + 1, 'source_output_rms')]:
-        def record(module, inputs, output, key=key):
-            if not torch.isfinite(output).all():
-                raise FloatingPointError(f'Non-finite {key}')
-            norms[key].append(output.detach().float().square().mean().sqrt().item())
-        handles.append(model.transformer.h[index].register_forward_hook(record))
+    previous = {'core': None, 'source': None}
+
+    def rms(value):
+        value = value.detach().float()
+        if not torch.isfinite(value).all():
+            raise FloatingPointError('Non-finite diagnostic activation')
+        return value.square().mean().sqrt().item()
+
+    def sampled_cosine(value):
+        value = value.detach().float()
+        if value.shape[1] < 2:
+            return None
+        stride = max(1, (value.shape[1] - 1) // 128)
+        left, right = value[:, :-1:stride], value[:, 1::stride]
+        return F.cosine_similarity(left, right, dim=-1).mean().item()
+
+    def relative(value, previous_value):
+        if previous_value is None:
+            return None
+        value = value.detach().float()
+        previous_value = previous_value.detach().float()
+        return ((value - previous_value).square().mean().sqrt() /
+                (previous_value.square().mean().sqrt() + 1e-8)).item()
+
+    def record_block(group, output):
+        if group == 'prelude':
+            norms['prelude_output_rms'].append(rms(output))
+            return
+        norms[f'{group}_output_rms'].append(rms(output))
+        norms['successive_pass_relative_change'][group].append(relative(output, previous[group]))
+        norms['sampled_cross_token_cosine_similarity'][group].append(sampled_cosine(output))
+        previous[group] = output.detach()
+
+    if model.config.n_prelude:
+        handles.append(model.transformer.h[model.config.n_prelude - 1].register_forward_hook(
+            lambda module, inputs, output: record_block('prelude', output)))
+    handles.append(model.transformer.h[core_end].register_forward_hook(
+        lambda module, inputs, output: record_block('core', output)))
+    handles.append(model.transformer.h[source_index].register_forward_hook(
+        lambda module, inputs, output: record_block('source', output)))
+
+    def record_temporal(module, inputs, output):
+        prelude, shifted_memory = inputs
+        with torch.no_grad():
+            memory = module.memory_norm(shifted_memory)
+            anchor = module.prelude_norm(prelude)
+            alpha, beta = module.gates(torch.cat((memory, anchor), dim=-1)).sigmoid().chunk(2, dim=-1)
+            memory_value = module.memory_value(memory)
+            prelude_value = module.prelude_value(anchor)
+            memory_contribution = alpha * memory_value
+            prelude_contribution = beta * prelude_value
+            norms['mixer_input_rms']['temporal'].append(
+                dict(prelude=rms(prelude), shifted_memory=rms(shifted_memory)))
+            norms['mixer_output_rms']['temporal'].append(rms(output))
+            norms['gate_value_contributions']['temporal'].append(dict(
+                alpha_mean=alpha.float().mean().item(), beta_mean=beta.float().mean().item(),
+                memory_value_rms=rms(memory_value), prelude_value_rms=rms(prelude_value),
+                memory_contribution_rms=rms(memory_contribution),
+                prelude_contribution_rms=rms(prelude_contribution)))
+
+    def record_depth(module, inputs, output):
+        state, anchor = inputs
+        with torch.no_grad():
+            state_value = module.state_value(module.state_norm(state))
+            anchor_value = module.anchor_value(module.anchor_norm(anchor))
+            norms['mixer_input_rms']['depth'].append(
+                dict(state=rms(state), anchor=rms(anchor)))
+            norms['mixer_output_rms']['depth'].append(rms(output))
+            norms['gate_value_contributions']['depth'].append(dict(
+                state_value_rms=rms(state_value), anchor_value_rms=rms(anchor_value),
+                state_contribution_rms=rms(state_value), anchor_contribution_rms=rms(anchor_value)))
+
+    handles.append(model.temporal_mixer.register_forward_hook(record_temporal))
+    handles.append(model.depth_mixer.register_forward_hook(record_depth))
     try:
         with torch.enable_grad():
             _, loss = model(x, y, schedule=schedule)
@@ -73,7 +151,8 @@ def trajectory_diagnostics(model, x, y, schedule):
             if name.startswith('transformer.h.'):
                 index = int(name.split('.')[2])
                 group = ('prelude' if index < model.config.n_prelude else
-                         'core' if index <= core_end else 'source' if index == core_end + 1 else 'coda')
+                         'buffer' if index < model.config.core_start else
+                         'core' if index <= core_end else 'source' if index < model.config.coda_start else 'coda')
             else:
                 group = name.split('.')[0] if 'mixer' in name else 'embedding_and_head'
             groups.setdefault(group, None)
@@ -82,19 +161,29 @@ def trajectory_diagnostics(model, x, y, schedule):
                     raise FloatingPointError(f'Non-finite gradient: {name}')
                 groups[group] = (groups[group] or 0.0) + gradient.float().square().sum().item()
         return dict(**norms, gradient_l2={k: None if v is None else v ** .5 for k, v in groups.items()},
-                    loss=loss.item(), mode='eval', batch_count=1)
+                    loss=loss.item(), mode='eval', batch_count=1,
+                    diagnostic_scope='one fixed validation batch; observational eval-mode probe')
     finally:
         for handle in handles:
             handle.remove()
 
 
 def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
-                  mask_seeds=(11, 23, 37), training_probabilities=None, diagnostics=True):
+                  mask_seeds=(11, 23, 37), training_probabilities=None, diagnostics=True,
+                  fixed_batches=None, sampling=None):
     if batches < 1 or batch_size < 1 or not mask_seeds or len(set(mask_seeds)) != len(mask_seeds):
         raise ValueError('Positive batch counts and nonempty distinct mask seeds are required')
     device = next(model.parameters()).device
-    generator = torch.Generator().manual_seed(data_seed)
-    fixed = [data.batch('val', batch_size, 'cpu', generator) for _ in range(batches)]
+    if fixed_batches is None:
+        generator = torch.Generator().manual_seed(data_seed)
+        fixed = [data.batch('val', batch_size, 'cpu', generator) for _ in range(batches)]
+        sampling = sampling or 'fixed row-aligned batches sampled with replacement'
+    else:
+        fixed = list(fixed_batches)
+        if not fixed:
+            raise ValueError('fixed_batches must be nonempty')
+        batches = len(fixed)
+        sampling = sampling or 'caller-provided fixed batches'
     digest = hashlib.sha256()
     for x, y in fixed:
         digest.update(x.numpy().tobytes())
@@ -133,6 +222,7 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
                         training_probability=training_probabilities.get((u_t, u_d), 0.) if training_probabilities is not None else None,
                         possible_placements=math.comb(max(u_t, u_d), u_t) * math.comb(max(u_t, u_d), u_d),
                         placement_count=len(placements), evaluated_characters_per_placement=count,
+                        target_count=count,
                         **stats, placements=placements)
             cell['all_placements_evaluated'] = len(placements) == cell['possible_placements']
             cell['nll_delta_vs_00'] = stats['nll_mean'] - (cells[0]['nll_mean'] if cells else stats['nll_mean'])
@@ -144,9 +234,11 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
             cells.append(cell)
     finally:
         model.train(was_training)
+    target_count = sum(y.numel() for _, y in fixed)
     return dict(execution='training_graph', split='val', data_seed=data_seed, mask_seeds=list(mask_seeds),
-                sampling='fixed row-aligned batches sampled with replacement', batch_size=batch_size,
-                batches=batches, batch_sha256=digest.hexdigest(), context_length=data.context_length,
+                sampling=sampling, batch_size=batch_size,
+                batches=batches, batch_sha256=digest.hexdigest(), batch_fingerprint=digest.hexdigest(),
+                target_count=target_count, context_length=data.context_length,
                 variation='population standard deviation across distinct mask placements, not training seeds or batches',
                 compute_convention='Forward matmul estimate per sequence, multiply-add=2; dense T-by-T attention. '
                 'Includes transformer projections/MLPs, attention, temporal gates/values, depth values, LM head. '
@@ -154,7 +246,8 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
                 'not measured hardware FLOPs or a complete compute comparison.', cells=cells)
 
 
-def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, **kwargs):
+def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_file=None,
+                        panel_split='selection', **kwargs):
     checkpoint_path = Path(checkpoint_path)
     checkpoint_hash = file_hash(checkpoint_path)
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
@@ -164,11 +257,17 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, **kwargs
     data = ChessData(Path('data') / (dataset or config['dataset']), checkpoint['model_args']['block_size'])
     if data.manifest_hash != checkpoint['manifest_hash'] or data.meta != checkpoint['meta']:
         raise ValueError('Evaluation data or vocabulary differs from the training checkpoint')
-    model = Recurrent2DGPT(RecurrentGPTConfig(**checkpoint['model_args'])).to(device)
+    model = Recurrent2DGPT(RecurrentGPTConfig.from_checkpoint(checkpoint['model_args'])).to(device)
     model.load_state_dict(checkpoint['model'])
     probabilities = {(t, d): config['recurrence_probabilities'][i][j]
                      for i, t in enumerate(config['recurrence_support'])
                      for j, d in enumerate(config['recurrence_support'])}
+    panel = None
+    if panel_file:
+        panel = load_panel(panel_file, data, split=panel_split)
+        fixed, fixed_metadata = fixed_panel_batches(data, panel, kwargs.pop('batch_size', 2))
+        kwargs.update(fixed_batches=fixed, batch_size=fixed_metadata['batch_size'], data_seed=None,
+                      sampling=fixed_metadata['sampling'])
     report = evaluate_grid(model, data, training_probabilities=probabilities, **kwargs)
     if file_hash(checkpoint_path) != checkpoint_hash:
         raise ValueError('Checkpoint changed during evaluation; use a retained step checkpoint')
@@ -177,6 +276,14 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, **kwargs
                   model_args=checkpoint['model_args'], training_seed=config['seed'],
                   training_schedule_seed=config['recurrence_seed'], device=device,
                   dtype='float32', provenance=provenance())
+    report['dataset_identity'] = dict(dataset=config['dataset'], manifest_hash=data.manifest_hash,
+                                      validation_row_count=len(data.rows['val']),
+                                      training_row_count=len(data.rows['train']))
+    if panel:
+        report.update(panel_file=panel['path'], panel_file_sha256=panel['sha256'],
+                      panel_split=panel['split'], row_indices=panel['row_indices'],
+                      row_count=panel['row_count'], target_count=report['target_count'],
+                      batch_fingerprint=report['batch_sha256'], fixed_panel=fixed_metadata)
     return report
 
 
@@ -189,6 +296,8 @@ def main():
     parser.add_argument('--batches', type=int, default=8)
     parser.add_argument('--batch-size', type=int, default=2)
     parser.add_argument('--data-seed', type=int, default=2027)
+    parser.add_argument('--panel-file', help='Frozen validation panel JSON')
+    parser.add_argument('--panel-split', choices=['selection', 'confirmation'], default='selection')
     parser.add_argument('--mask-seeds', type=int, nargs='+', default=[11, 23, 37])
     parser.add_argument('--num-threads', type=int, default=4)
     parser.add_argument('--no-diagnostics', action='store_true')
@@ -201,6 +310,7 @@ def main():
     torch.set_num_threads(args.num_threads)
     report = evaluate_checkpoint(args.checkpoint, device=args.device, dataset=args.dataset,
                                  batches=args.batches, batch_size=args.batch_size, data_seed=args.data_seed,
+                                 panel_file=args.panel_file, panel_split=args.panel_split,
                                  mask_seeds=args.mask_seeds, diagnostics=not args.no_diagnostics)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')

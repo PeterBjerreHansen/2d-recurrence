@@ -16,7 +16,7 @@ def main():
     dist.init_process_group('gloo')
     rank = int(os.environ['RANK'])
     torch.manual_seed(13)
-    raw = Recurrent2DGPT(RecurrentGPTConfig(n_layer=4, n_prelude=1, n_core=1,
+    raw = Recurrent2DGPT(RecurrentGPTConfig(n_layer=4, n_prelude=1, n_buffer=0, n_core=1,
                                            n_coda=1, n_head=2, n_embd=16, block_size=8))
     reference = copy.deepcopy(raw)
     model = DistributedDataParallel(raw, find_unused_parameters=True)

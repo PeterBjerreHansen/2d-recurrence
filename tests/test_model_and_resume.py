@@ -36,3 +36,30 @@ def test_resume_matches_uninterrupted_training(prepared_data, tmp_path):
         torch.testing.assert_close(a['model'][key], b['model'][key], rtol=0, atol=0)
     assert a['best_val_loss'] == b['best_val_loss']
     assert torch.equal(a['rng_by_rank'][0]['batches'], b['rng_by_rank'][0]['batches'])
+
+
+def test_generation_defaults_beside_checkpoint_and_preserves_existing_output(prepared_data, tmp_path, monkeypatch):
+    import json
+    import pickle
+    import sys
+    from dataclasses import asdict
+    import pytest
+    from model import GPT, GPTConfig
+    import sample
+
+    with (prepared_data / 'meta.pkl').open('rb') as stream:
+        meta = pickle.load(stream)
+    config = GPTConfig(n_layer=2, n_head=2, n_embd=8, block_size=12, vocab_size=meta['vocab_size'])
+    model = GPT(config)
+    checkpoint = tmp_path / 'ckpt.pt'
+    torch.save(dict(config={'architecture': 'baseline'}, model_args=asdict(config),
+                    model=model.state_dict(), meta=meta, iter_num=0, manifest_hash='fixture'), checkpoint)
+    monkeypatch.setattr(sys, 'argv', ['sample.py', '--checkpoint', str(checkpoint),
+                                    '--num-samples', '1', '--max-new-tokens', '1'])
+    sample.main()
+    output = tmp_path / 'generation-ckpt.json'
+    assert json.loads(output.read_text())['checkpoint'] == str(checkpoint)
+    before = output.read_bytes()
+    with pytest.raises(SystemExit):
+        sample.main()
+    assert output.read_bytes() == before

@@ -1,11 +1,13 @@
-# Shared eight-block backbone: 2 prelude + 4 core + 1 source + 1 coda.
+# Default A: prelude + buffer + four core blocks + source + coda.
 architecture = 'recurrent'
-out_dir = 'out-stage09-seed1337'
+out_dir = 'experiments/long_runs/separated/results'
 dataset = 'smoke_real'
 n_layer = 8
 n_head = 8
 n_embd = 512
-n_prelude = 2
+n_prelude = 1
+n_buffer = 1
+n_source = 1
 n_core = 4
 n_coda = 1
 block_size = 1023
@@ -26,7 +28,3 @@ compile = False
 device = 'mps'
 dtype = 'float32'
 num_threads = 4
-# Keep steps 0/25/50/75/100 for a fixed-data nine-cell learning curve.
-# About 2 GB per seed including the latest checkpoint; artifacts stay local.
-seed = 1337
-keep_checkpoints = True

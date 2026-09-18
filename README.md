@@ -1,99 +1,93 @@
 # Two-axis recurrent ChessGPT
 
-Stages 0–9 implement the ordinary character-level chess baseline and two-axis recurrent training and evaluation. Both use the eight-layer, eight-head, width-512 Karvonen/nanoGPT backbone with learned positions and tied embedding/unembedding weights. The recurrent model partitions those blocks into 2 prelude, 4 shared core, 1 temporal source, and 1 coda. See [the proposal](proposal.md), [implementation plan](implementation_plan.md), and [recurrence contract](docs/RECURRENCE_CONTRACT.md).
+A character-level chess language model combining temporal feedback across positions with recurrent depth. The default is **variation A**: one prelude block, one block between temporal and depth injection, four recurrent-core blocks, one temporal-source block, and one coda block. The eight-block backbone has width 512, eight heads, learned positions, and tied embedding/unembedding weights.
 
-This is a local fork retaining the upstream Git ancestry and MIT license. [Upstream provenance](docs/upstream.json) records the reference revision. `model.py` retains its transformer computation; GPT-2 checkpoint import was removed. The training loop keeps AdamW, cosine decay, gradient accumulation, mixed precision, optional compilation, and DDP, with complete resume state and explicit data validation added.
+```text
+embeddings -> L1 -> temporal mix -> L2 -> depth mix -> L3-L6 -> L7 -> L8 -> head
+                      ^                    ^           |      |
+                      |                    +-- depth --+      |
+                      +-------- shifted temporal memory -----+
+```
 
-## Setup and quick verification
+Temporal memory comes from L7 and depth state from L6. Every available state is read; randomized masks control writes only. The prelude runs once per training trajectory. The buffer and core run on each pass; L7 runs for temporal writes and final prediction, and L8 runs only for final prediction. The [contract](docs/RECURRENCE_CONTRACT.md) contains the detailed sketch, equations, initialization, and masking semantics. See also the [proposal](proposal.md) and [implementation plan](implementation_plan.md).
 
-Use Python 3.11 and [uv](https://docs.astral.sh/uv/). `uv.lock` records the tested dependency versions.
+A is the practical default after a near-tied [A/B comparison](experiments/ablations/architecture_sites/REPORT.md). B was slightly better at late predictive NLL, but below the predeclared selection margin. The implementation retains both layouts and configurable boundaries; the result does not establish a universal advantage for separation.
+
+## Setup and training
+
+Use Python 3.11 and uv. The lockfile records dependencies. Commands run from the repository root.
 
 ```sh
-uv sync --python 3.11
+uv sync --frozen --python 3.11
 uv run pytest -q
 uv run python data/chess_v1/prepare.py --file lichess_100mb_blocks.zip --max-rows 4096 --out-dir data/smoke_real
-uv run python train.py configs/smoke.py
-uv run python sample.py --checkpoint out-smoke/ckpt.pt --num-samples 10 --output out-smoke/generation.json
+uv run python train.py configs/recurrent.py
 ```
 
-The smoke run deliberately uses a smaller model and context to test the pipeline. Its generation quality is not an architecture result. The preparation command downloads the approximately 55 MB reference archive, then takes the first 4,096 rows before applying the upstream shuffled split. Prepared data directories are immutable: use a different output directory to change a version rather than overwriting it.
+Reuse an existing prepared dataset only if its manifest matches; preparation refuses to overwrite one. `configs/recurrent.py` is a bounded MPS pilot of default A, with results under `experiments/long_runs/separated/results/`. For CUDA, explicitly override the device; CPU and MPS require float32. Keep compilation off for variable recurrence schedules. This pilot is not a new long-training recommendation.
 
-## Eight-layer baseline
+For a small CPU pipeline check, use `experiments/smoke/configs/baseline.py` or `experiments/smoke/configs/recurrent.py`. These preserve historical small test architectures. `configs/baseline_chessgpt.py` retains the ordinary eight-layer reference and its long CUDA schedule; do not mistake it for a quick test.
 
-For a short initial run of the full model on Apple Silicon:
+## Configurable architecture
+
+The five counts follow physical block order: prelude, buffer, core, source, coda. They sum to `n_layer`; the core must be nonempty. Other segments may be empty or contain several blocks.
+
+| Layout | `n_prelude` | `n_buffer` | `n_core` | `n_source` | `n_coda` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Default A | 1 | 1 | 4 | 1 | 1 |
+| B, coincident | 1 | 0 | 6 | 0 | 1 |
+| Original experiments | 2 | 0 | 4 | 1 | 1 |
+
+Changing counts moves source/destination boundaries within the ordered architecture. Empty buffer means adjacent injection sites; empty source means both candidates are the core output. These are not new module types or independent duplicated weights. Historical configs explicitly pin their layout.
+
+## Experiments and results
+
+The [experiment index](experiments/README.md) is the entry point for protocols, configs, scripts, reports, and retained artifacts.
+
+```text
+experiments/
+  ablations/architecture_sites/   # A versus B; configs/, run.py, REPORT.md, results/
+  sweeps/recurrence_grid/         # initial nine-cell evaluation, two seeds, results/
+  long_runs/
+    recurrence_pilot/            # 1k-update pilot continuation, results/
+    baseline/                    # LR selection + selected 10k run, results/
+    separated/                   # current default-A pilot, results/ when run
+  smoke/                         # pipeline checks, validation notes, results/
+```
+
+Each experiment owns its `results/`; there is no global results directory. Code, configs, protocols, and concise reports are tracked; checkpoints, logs, plots, and raw reports stay local and ignored. Shared datasets remain in `data/`. Original paths embedded in historical checkpoints and receipts are intentionally unchanged; [relocations.json](experiments/relocations.json) records where they moved. The architecture ablation retains its original transfer archive, which can reproduce the pre-cleanup source snapshot.
+
+Reusable metrics live in `evaluation/`. Experiment-specific analysis lives with its experiment. For example, rebuild the completed A/B summary on CPU without provisioning a GPU:
 
 ```sh
-uv run python train.py configs/baseline_pilot.py
-uv run python sample.py --checkpoint out-baseline-pilot/ckpt.pt --device=mps --num-samples 20 --output out-baseline-pilot/generation.json
+uv run python -m experiments.ablations.architecture_sites.run summarize
 ```
 
-This configuration uses the verified subset, full 1,023-character context, 100 optimizer updates, microbatch size 2, four accumulation steps, float32, and MPS. It is an initial pipeline and learning check, not a full-corpus reproduction. Results and limits of the validation performed during implementation are recorded in [stage validation](docs/STAGE_01_VALIDATION.md).
+This reads the preserved protocol/checkpoints and writes derived summaries under that experiment's `results/analysis/`, preserving the original decision. The runner requires the frozen CUDA environment for new training/evaluation; use a fresh `--results-dir` inside the experiment for an explicitly specified rerun. It does not automatically launch additional runs.
 
-For the full reference dataset and CUDA configuration:
+## Evaluation and execution modes
+
+Training samples exact update counts from a configured distribution and randomly places the writes. The default pilot uses counts in `{0,1,3}`. For each pair, the model performs `max(U_T,U_D)+1` passes, trains only the final prediction, and retains gradients through all held states. Evaluation uses independent fixed schedules without advancing training RNG.
 
 ```sh
-uv run python data/chess_v1/prepare.py
-uv run python train.py configs/baseline_chessgpt.py --batch_size=20 --gradient_accumulation_steps=5
+uv run python -m evaluation.recurrence_grid \
+  --checkpoint experiments/ablations/architecture_sites/results/separated/ckpt-step010000.pt \
+  --panel-file experiments/ablations/architecture_sites/panel.json \
+  --device=mps --output experiments/ablations/architecture_sites/results/recheck-mps.json
 ```
 
-The default archive is approximately 3.17 GB compressed; preparation also needs space for extracted/cached rows and token files. The full configuration retains the upstream 600,000-update schedule. Adjust hardware settings explicitly rather than treating this as a quick test. The example preserves an effective batch of 100 rows by accumulating five microbatches of 20. `gradient_accumulation_steps` is a global count divided across DDP ranks, as in upstream. It must be divisible by world size. CPU and MPS use `--dtype=float32`; use `--compile=False` on MPS. The CUDA path has not been exercised on this Mac.
+A provided panel evaluates every specified row exactly once. Without a panel the evaluator samples fixed batches with replacement. All nine pilot cells use identical batches; asymmetric cells have three distinct mask placements, and deterministic cells are evaluated once. Placement variation is not variation across training seeds. Reported FLOPs estimate forward matrix multiplications, not total training compute. State/gradient diagnostics probe one fixed batch without altering model gradients.
 
-To test two CPU DDP workers locally without depending on hostname resolution:
+All current recurrent evaluation and generation uses the **parallel training graph**. Generation must specify `--execution=training_graph` and recomputes the prefix using a fixed write schedule. Live temporal-feedback generation remains planned; in A it will run L2 once before the depth loop and L7 once after it. Do not interpret training update counts as live inference loop counts.
 
-```sh
-uv run torchrun --nnodes=1 --nproc_per_node=2 --master_addr=127.0.0.1 --master_port=29671 train.py configs/smoke.py --backend=gloo --gradient_accumulation_steps=2 --out_dir=out-ddp --max_iters=2 --eval_iters=1
-```
+Generation samples without a legal-move mask and stops at the first completed illegal or malformed move, with no retry or repair. Reports retain the offending text, board, legal continuation length, and stop reason. Unfinished moves at a length/context limit count as truncation. Game separators are distinct from valid terminal board positions or declared results. Generation output defaults beside its checkpoint and refuses to overwrite an existing report.
 
-## Data contract
+## Data and reproducibility
 
-Preparation retains the reference vocabulary and `uint8` representation. Every stored row has 1,024 characters and starts with `;`. Training takes 1,023 inputs and their shifted targets from that row. Shorter smoke-test contexts still sample at the 1,024-character storage stride. Rows can contain multiple games separated by `;`; causal attention across those internal boundaries is preserved as in the reference. The manifest records how often this occurs.
+The reference vocabulary uses `uint8` character IDs. Stored rows contain 1,024 characters; normal inputs and targets contain 1,023. Short test contexts preserve the storage stride. Internal game markers retain inherited causal context. The split uses seed 2357 and 1% validation; preparation rejects malformed rows, unknown characters, and exact overlap between splits. It does not assert game-disjoint generalization. Training validates the manifest, vocabulary, and data hashes.
 
-The shuffled split uses seed 2357 and 1% validation. Preparation rejects unknown characters, malformed row sizes, and exact rows shared between splits. It reports duplicates within a split but does not claim that all games or related openings are disjoint. `manifest.json` records the dataset revision, source and output hashes, vocabulary, preparation code identity, split details, and boundary behavior. Training verifies the files against that manifest before use. For offline fixtures, preparation also accepts `--input path/to/rows.jsonl` or CSV with a `transcript` column.
+Checkpoints include model, optimizer, scaler, completed update count, random generators, recurrence sampler, configuration, dataset/panel identity, and environment provenance. Resume with the same config plus `--init_from=resume`; `max_iters` is an absolute stopping step. Moving a panel without changing its content is allowed. Other training-setting changes are rejected. Raising the stopping step does not extend the LR decay schedule.
 
-## Evaluation policy
+New checkpoints store the complete layout. Old checkpoints are loaded with their original missing-field defaults, not today's A defaults. Resume equivalence is tested on CPU; CUDA can introduce small numerical differences. Under DDP, rank zero broadcasts each microbatch schedule and global accumulation must divide evenly across workers. Load only trusted checkpoints and vocabulary files.
 
-Generation samples characters without a legal-move mask. Once a move boundary is reached, `python-chess` checks the complete move. The first illegal or malformed move ends the sample; there is no retry or repair. Reports preserve the text, failing move, board before failure, legal continuation length, and stopping reason. Legal-move rate includes the failed completed attempt in its denominator. A length/context limit with an unfinished move is recorded as truncation, not as an illegal move.
-
-The upstream `;` game separator ends a sample with `game_boundary`; this is recorded separately from a terminal chess position or declared result. PGN parse success alone is not evidence of a complete legal game. `valid_termination` requires a terminal board or declared result, and the report retains the exact reason. No draw claim or resignation is inferred from a separator.
-
-Training logs fixed-batch train/validation NLL and character accuracy to `metrics.jsonl`. Generation is a separate command with explicit prompt, temperature, top-k, seed, and limits. `--temperature=0` selects greedy decoding; the default is unfiltered temperature-1 sampling. `--prompts` accepts a JSON list. Prompts must start at a game boundary and end at whitespace or a bare move number, such as `;1.` or `;1.e4 e5 2.`. The evaluator stops at the model context limit rather than discarding old board context.
-
-## Checkpoints and resume
-
-```sh
-uv run python train.py configs/baseline_pilot.py --init_from=resume
-uv run python train.py configs/baseline_pilot.py --init_from=resume --eval_only=True
-```
-
-`ckpt.pt` stores model, optimizer, scaler, completed update count, per-rank random-generator states, batch-generator state, vocabulary, dataset-manifest hash, configuration, and code/environment provenance. Saves are atomic. `max_iters` is the total desired completed updates, not additional updates. Resuming with the same limit performs no extra training. A longer continuation can set a larger `max_iters` while retaining the original learning-rate schedule; changing that schedule constitutes a new experiment and is rejected by exact resume.
-
-Resume requires the same model, dataset, training settings, device, and world size. Logging/evaluation intervals and the total stopping step may change. CPU exact resume is tested against uninterrupted training with dropout. GPU backends can have additional numerical nondeterminism. Load only trusted local checkpoints and vocabulary files, which use Python serialization. `run.json`, append-only `events.jsonl`, and checkpoint provenance record the configuration and source state for each invocation.
-
-## Recurrent training
-
-After preparing the smoke dataset above, run a small CPU check or the full-width pilot:
-
-```sh
-uv run python train.py configs/recurrent_smoke.py
-uv run python train.py configs/recurrent_2d_pilot.py
-```
-
-The pilot samples exact temporal/depth write counts from $\{0,1,3\}^2$ and randomly places the writes. All available states are read on every pass, including when held. Training uses final-pass cross entropy with full gradients through every pass. Evaluation uses the explicit fixed pair `eval_u_t=3`, `eval_u_d=3` and an independent fixed mask RNG. It does not consume training schedules.
-
-Recurrent checkpoints include the sampler state and accumulated pair/pass histograms. The ordinary resume command applies unchanged. Under DDP, rank zero broadcasts each microbatch schedule; global accumulation must be divisible by world size. Use `compile=False` for recurrent training.
-
-These runs execute the parallel training graph. Recurrent generation requires explicit `--execution=training_graph`; it recomputes the prefix for each character with a fixed write schedule. Live temporal-feedback generation remains Stage 14. [Stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) records the semantic, resume, distributed, and device checks.
-
-## Stage 9: nine-cell evaluation
-
-```sh
-uv run python train.py configs/stage09_mps.py
-uv run python -m evaluation.recurrence_grid --checkpoint out-stage09-seed1337/ckpt-step000100.pt --device=mps --output out-stage09-seed1337/grid-step000100.json
-uv run python sample.py --checkpoint out-stage09-seed1337/ckpt-step000100.pt --device=mps --execution=training_graph --u-t=3 --u-d=3 --output out-stage09-seed1337/generation-3-3.json
-```
-
-`stage09_mps.py` retains checkpoints at steps 0, 25, 50, 75, and 100. Checkpoints and reports stay in ignored output directories. The evaluator writes detailed JSON and a flat CSV. Every cell uses identical fixed validation batches, sampled with replacement. Defaults use eight batches of two rows, data seed 2027, and mask seeds 11/23/37. The two asymmetric cells `(1,3)` and `(3,1)` each have three distinct placements; all other pilot cells have one. The default evaluates all placements, without repeating deterministic cells to manufacture replication. Standard deviations describe variation across placements only.
-
-Reports include paired NLL differences and argmax prediction changes relative to `(0,0)` in the same checkpoint. That reference is not a separately trained baseline. Forward matrix-multiply FLOPs include actual held-state reads; the report lists excluded operations, so these estimates must not be presented as complete compute accounting. State RMS by pass and parameter-group gradient norms come from one separate eval-mode backward probe per cell, using the first fixed batch and first placement. Unused groups have null gradients. Diagnostics leave model weights and `.grad` buffers unchanged. `--no-diagnostics` skips these probes.
-
-The experiment workflow and exact commands are in [the MPS agent handoff](docs/STAGE09_MPS_HANDOFF.md). [Stage 9 validation](docs/STAGE_09_VALIDATION.md) separates implemented tooling from experiments still to run.
+The project retains Karvonen/nanoGPT ancestry and the MIT license. [Upstream provenance](docs/upstream.json) records the reference revision; the ordinary transformer computation remains in `model.py`.

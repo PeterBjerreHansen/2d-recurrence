@@ -15,7 +15,7 @@ PROBABILITIES = [[.10, .12, .04], [.12, .26, .08], [.04, .08, .16]]
 
 
 def tiny_model(**overrides):
-    return Recurrent2DGPT(RecurrentGPTConfig(n_layer=4, n_prelude=1, n_core=1,
+    return Recurrent2DGPT(RecurrentGPTConfig(n_layer=4, n_prelude=1, n_buffer=0, n_core=1,
                                             n_coda=1, n_embd=16, n_head=2,
                                             block_size=12, **overrides))
 
@@ -168,7 +168,7 @@ def test_invalid_counts(counts):
 def test_recurrent_training_exact_resume(prepared_data, tmp_path):
     config = dict(architecture='recurrent', recurrence_support=SUPPORT,
                   recurrence_probabilities=PROBABILITIES, recurrence_seed=19,
-                  n_layer=4, n_prelude=1, n_core=1, n_coda=1, n_head=2, n_embd=16,
+                  n_layer=4, n_prelude=1, n_buffer=0, n_core=1, n_coda=1, n_head=2, n_embd=16,
                   dataset=str(prepared_data), block_size=12, batch_size=2,
                   gradient_accumulation_steps=3, max_iters=4, eval_interval=2,
                   eval_iters=2, eval_u_t=3, eval_u_d=1, log_interval=2,

@@ -1,6 +1,8 @@
 # Stages 2–8 validation
 
-Implemented on `mvp-2d-recurrence`. The frozen `baseline-chessgpt` branch and `baseline-stage01` tag remain unchanged. The proposal and implementation plan remain in the repository. The maintained execution and initialization reference is [RECURRENCE_CONTRACT.md](RECURRENCE_CONTRACT.md).
+Historical record of the completed experiment. Paths below follow the current repository layout; recorded configurations, measurements, and raw artifact provenance retain their original meaning. See the experiment README for current commands.
+
+Implemented on `mvp-2d-recurrence`. The frozen `baseline-chessgpt` branch and `baseline-stage01` tag remain unchanged. The proposal and implementation plan remain in the repository. The maintained execution and initialization reference is [RECURRENCE_CONTRACT.md](../../docs/RECURRENCE_CONTRACT.md).
 
 ## Scope
 
@@ -27,13 +29,13 @@ The distributed tests launch two local Gloo workers. They verify actual reductio
 Both manual runs use the prepared 4,096-row real-data subset described in [stages 0–1 validation](STAGE_01_VALIDATION.md). The CPU smoke uses four small blocks, width 32, context 32, and 12 optimizer updates. Fixed $(3,3)$ validation NLL fell from 3.4584 to 3.3330.
 
 ```sh
-uv run python train.py configs/recurrent_smoke.py
-uv run python train.py configs/recurrent_2d_pilot.py --out_dir=out-recurrent-mps-validation --max_iters=4 --eval_interval=2 --eval_iters=1 --log_interval=1 --warmup_iters=0
+uv run python train.py experiments/smoke/experiments/smoke/configs/recurrent_pilot.py
+uv run python train.py experiments/smoke/configs/recurrent_pilot.py --out_dir=experiments/smoke/results/recurrent-mps-validation --max_iters=4 --eval_interval=2 --eval_iters=1 --log_interval=1 --warmup_iters=0
 ```
 
 The MPS check uses all eight blocks, width 512, eight heads, context 1,023, batch size 2, and four accumulated microbatches per optimizer update. Fixed $(3,3)$ validation NLL was 3.7204 initially, 4.1273 after two updates, and 3.3338 after four. These few updates, with warmup disabled for this check, establish execution and finite learning behavior only. They do not establish a benefit from recurrence or a reliable learning curve. The committed pilot retains its ten-step warmup.
 
-Local ignored artifacts are `out-recurrent-smoke/` and `out-recurrent-mps-validation/`, including configuration, provenance, metrics, and checkpoints. The checks were run with CPU/Gloo and Apple MPS, using PyTorch 2.14.0. CUDA/NCCL and mixed precision have not been exercised here. The frozen baseline checkpoint also remains loadable by the refactored trainer.
+Local ignored artifacts are `experiments/smoke/results/recurrent-smoke/` and `experiments/smoke/results/recurrent-mps-validation/`, including configuration, provenance, metrics, and checkpoints. The checks were run with CPU/Gloo and Apple MPS, using PyTorch 2.14.0. CUDA/NCCL and mixed precision have not been exercised here. The frozen baseline checkpoint also remains loadable by the refactored trainer.
 
 ## Simplification review
 

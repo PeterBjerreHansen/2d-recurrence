@@ -39,9 +39,16 @@ class ChessData:
                 raise ValueError(f'{split}: file hash differs from the manifest')
             self.rows[split] = np.memmap(path, dtype=np.uint8, mode='r').reshape(-1, self.row_size)
 
-    def batch(self, split, batch_size, device, generator):
+    def batch(self, split, batch_size, device, generator, allowed_indices=None):
         rows = self.rows[split]
-        indices = torch.randint(len(rows), (batch_size,), generator=generator).numpy()
+        if allowed_indices is None:
+            indices = torch.randint(len(rows), (batch_size,), generator=generator).numpy()
+        else:
+            allowed = torch.as_tensor(list(allowed_indices), dtype=torch.long)
+            if allowed.numel() == 0:
+                raise ValueError('allowed_indices must be nonempty')
+            choices = torch.randint(allowed.numel(), (batch_size,), generator=generator)
+            indices = allowed[choices].numpy()
         block = np.array(rows[indices, :self.context_length + 1], dtype=np.int64)
         x, y = torch.from_numpy(block[:, :-1].copy()), torch.from_numpy(block[:, 1:].copy())
         if str(device).startswith('cuda'):

@@ -1,6 +1,8 @@
 # Shared eight-block backbone: 2 prelude + 4 core + 1 source + 1 coda.
 architecture = 'recurrent'
-out_dir = 'out-recurrent-pilot'
+n_buffer = 0
+n_source = 1  # Historical layout; do not inherit the new A default.
+out_dir = 'experiments/sweeps/recurrence_grid/results/seed1337'
 dataset = 'smoke_real'
 n_layer = 8
 n_head = 8
@@ -26,3 +28,7 @@ compile = False
 device = 'mps'
 dtype = 'float32'
 num_threads = 4
+# Keep steps 0/25/50/75/100 for a fixed-data nine-cell learning curve.
+# About 2 GB per seed including the latest checkpoint; artifacts stay local.
+seed = 1337
+keep_checkpoints = True

@@ -1,5 +1,5 @@
 # Karvonen's 8-layer chess configuration. Unspecified optimizer settings match train.py.
-out_dir = 'out-baseline'
+out_dir = 'experiments/long_runs/reference/results'
 dataset = 'chess_v1'
 n_layer = 8
 n_head = 8

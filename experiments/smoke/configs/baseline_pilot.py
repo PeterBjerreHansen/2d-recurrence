@@ -1,6 +1,6 @@
 # Short initial run of the full 8-layer, width-512 model on this Mac.
 # Uses the verified real-data subset; this is not a full-corpus reproduction.
-out_dir = 'out-baseline-pilot'
+out_dir = 'experiments/smoke/results/baseline-pilot'
 dataset = 'smoke_real'
 n_layer = 8
 n_head = 8

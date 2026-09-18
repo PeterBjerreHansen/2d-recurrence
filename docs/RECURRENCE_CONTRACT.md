@@ -1,35 +1,64 @@
 # Recurrent training contract
 
-This is the implementation reference for stages 2–8. The model is a causal character-level language model. Its stored block order remains identical to the baseline: two prelude blocks, four shared core blocks, one temporal-source block, and one coda block, followed by final normalization and the tied LM head. Small tests may change the block counts; the source remains one block. Prelude and coda may be empty, but the core must contain at least one block.
+Variation A is the default: one prelude block, one block between temporal and depth injection, four recurrent-core blocks, one temporal-source block, and one coda block. Width is 512, with eight attention heads, final LayerNorm, and tied embedding/unembedding weights. This is a practical choice after a near-tied A/B comparison, not a finding that separation is intrinsically safer or more accurate. Historical experiments retain their original configurations.
+
+```text
+embeddings -> L1 -> fixed p
+                       |
+shifted temporal ----> T -> L2 -> anchor q
+memory from L7                       |
+held depth from L6 ----------------> D -> L3-L6 -> h
+                                                   | depth write, if scheduled
+                                                   v
+                                                  L7 -> temporal write, if scheduled
+                                                   |
+                                          final pass only: L8 -> norm -> head
+```
+
+## Configurable sites
+
+The implementation uses one ordered `ModuleList` and five block counts. It does not create separate model classes for each layout. Counts select the source and destination boundaries without changing the mixers or write-mask semantics:
+
+| Field | Role | Default A | B | Original experiments |
+| --- | --- | ---: | ---: | ---: |
+| `n_prelude` | Blocks before temporal injection | 1 | 1 | 2 |
+| `n_buffer` | Blocks between temporal and depth injection | 1 | 0 | 0 |
+| `n_core` | Blocks after depth injection through the depth source | 4 | 6 | 4 |
+| `n_source` | Blocks between the depth and temporal sources | 1 | 0 | 1 |
+| `n_coda` | Blocks after the temporal source | 1 | 1 | 1 |
+
+Counts must be nonnegative integers, sum to `n_layer`, and leave a nonempty core. A zero buffer makes the destinations adjacent; a zero source makes both state candidates the same core output. Buffer and source segments may contain more than one block. Temporal injection always precedes depth injection, and the temporal source is at or after the depth source. Arbitrary crossed connections are outside this interface.
+
+In one-based block numbering, temporal injection is after `n_prelude`; depth injection is after `n_prelude + n_buffer`; the depth source is after those blocks plus `n_core`; the temporal source is after those blocks plus `n_source`. Thus A injects temporal state after L1 and depth state after L2, and reads sources after L6 and L7. B injects both after L1 and takes both candidates after L7. At zero updates, every layout executes the same ordinary backbone once in physical block order.
 
 ## Schedule and reads
 
-For nonnegative integer update counts $U_T,U_D$, execute $B=\max(U_T,U_D)+1$ core passes. Each write mask contains $B-1$ Boolean entries, with exactly $U_T$ or $U_D$ true entries sampled uniformly without replacement. There is no final-pass write slot. Counts and pass length are derived from the masks rather than separately mutable schedule fields.
+For nonnegative update counts $U_T,U_D$, execute $B=\max(U_T,U_D)+1$ core passes. Each mask contains $B-1$ Boolean entries, with exactly its specified count of true entries, sampled uniformly without replacement. There is no final-pass write slot. Counts and pass length are derived from the masks.
 
-Compute the prelude $p=P(x)$ once. Both states start absent for every forward call. Every pass reads every available state. Masks control only writes after core computation; a held tensor retains its value and gradient connection. States do not persist between training microbatches. The learned model receives no iteration index, update count, mask embedding, or state-age input.
+Compute $p=P(x)$ once and start both states absent on every forward call. Each pass reads every available state. Masks control only writes; held tensors retain their values and gradient connections. No iteration index, update count, mask embedding, or state age is supplied to the model. There is no implicit carry of the latest core output around the masks.
 
-## Temporal mixer
+## Temporal mixing and the buffer
 
-If temporal memory exists, set $r_b=\operatorname{ShiftRight}(m_T)$ and $a_b=T(p,r_b)$; otherwise use $a_b=p$. Shift the stored memory by exactly one position for each read, without modifying it. At position zero, return raw $p$ because no predecessor exists. Other zero-valued memories remain valid inputs. Preserve the inherited causal context across game markers inside a data row.
+If temporal state exists, set $r_b=\operatorname{ShiftRight}(m_T)$ and $a_b=T(p,r_b)$; otherwise use $a_b=p$. Shift the stored memory once for each read without modifying it. At position zero, bypass temporal mixing and return raw $p$ because no predecessor exists. A zero-valued memory elsewhere remains a valid input. Preserve causal context across internal game markers within a row.
 
-Use $(\alpha,\beta)=\sigma(G([N_r(r);N_p(p)]))$ and $T(p,r)=\alpha\odot W_mN_r(r)+\beta\odot W_pN_p(p)$. The gate reads normalized sources before value projection. Coefficients are feature-wise and unconstrained in their sum. The MVP uses a single dense $2D\rightarrow2D$ gate followed by sigmoid; an extra hidden layer is not required by the contract. Its weights start at zero and its biases give $\alpha=0.1$, $\beta=0.9$. Both bias-free value projections start as identity matrices.
+Use $(\alpha,\beta)=\sigma(G([N_r(r);N_p(p)]))$ and $T(p,r)=\alpha\odot W_mN_r(r)+\beta\odot W_pN_p(p)$. The controller reads normalized sources before value projection. The feature-wise coefficients need not sum to one. The gate is one dense $2D\rightarrow2D$ map with zero initial weights and biases giving $\alpha=0.1$, $\beta=0.9$. Both bias-free value projections start as identity matrices.
 
-## Depth mixer and state writes
+Then compute the depth anchor $q_b=Q(a_b)$ through the buffer segment. For A, $Q$ is L2; with `n_buffer=0`, $Q$ is the identity. The buffer runs on every training pass, including when temporal memory is absent or held. Position-zero bypass applies only to the temporal mixer, not to the buffer.
 
-If depth state exists, compute $z_b=W_hN_h(h_D)+W_aN_a(a_b)$; otherwise use $z_b=a_b$. Execute $h_b=R(z_b)$ using the same core blocks on every pass. The two bias-free depth projections start at $0.5I$ each. They remain unconstrained learned matrices, not a convex gate. Normalization uses the baseline LayerNorm implementation (epsilon $10^{-5}$, learned scale, optional bias controlled by the backbone configuration). These initializations are experimental defaults, not claims of optimality or convergence.
+## Depth mixing and writes
 
-After a nonfinal pass, assign $h_D\leftarrow h_b$ when the depth mask is true. Assign $m_T\leftarrow S(h_b)$ when the temporal mask is true. The source $S$ is a normal transformer block with parameters distinct from the core and coda, reused across all temporal writes. It stores its raw output with no additional writer. If a write mask is false, leave that state untouched, including leaving it absent before its first write. There is no additional carry of the last core output that bypasses the masks.
+If depth state exists, compute $z_b=W_hN_h(h_D)+W_aN_a(q_b)$; otherwise use $z_b=q_b$. Execute $h_b=R(z_b)$ using the shared core. Depth projections start at $0.5I$ each and remain unconstrained learned matrices. Normalization is baseline LayerNorm with epsilon $10^{-5}$, learned scale, and optional backbone-controlled bias.
 
-After the final pass, compute logits through $C(S(h_B))$, final normalization, and the LM head. This final source computation is part of prediction, not a counted state write. A trajectory therefore executes the source $U_T+1$ times and each coda block once. Backpropagate final-output cross entropy through the complete trajectory and all held-state reads; do not detach states or add intermediate losses.
+After a nonfinal pass, store $h_D\leftarrow h_b$ when its write mask is true. Store $m_T\leftarrow S(h_b)$ when its write mask is true, where $S$ is the source segment or identity when empty. A source segment is executed on a nonfinal pass only if its output is consumed by a temporal write. Both writes happen after all reads. With a shared source, different write masks can still give the stored states different ages.
 
-## Exact reductions and execution scope
+After the final pass, compute logits through $C(S(h_B))$, final normalization, and the head. Backpropagate final-output cross entropy through the complete trajectory and all held-state reads. There are no detached states or intermediate losses. The model performs $L_P+B(L_Q+L_R)+(U_T+1)L_S+L_C$ transformer-block applications. A uses $3+5B+U_T$; B uses $2+6B$.
 
-$(0,0)$ is the ordinary backbone executed once in block order. $(U_T>0,0)$ never creates depth state. $(0,U_D>0)$ never creates temporal memory. A hybrid creates both, including when one state is refreshed once and read repeatedly alongside the other evolving state.
+## Execution scope
 
-This is exact execution of the parallel Jacobi-style training graph. It is not live-feedback generation. In that later inference mode, the temporal source and coda run once per token after all depth iterations. Do not treat a training-graph pass count as a token-time inference setting or silently use the ordinary sampler on recurrent checkpoints.
+This implements the parallel Jacobi-style training graph. Live-feedback generation is still a separate planned mode. For A at token time, mix incoming temporal memory into the prelude and run the buffer once; hold that resulting depth anchor fixed while iterating only the core. Then run the source and coda once. With $J$ core calls, A uses $4+4J$ block applications; B uses $2+6J$. Shared-source B emits the final core state directly. These block counts do not establish measured decoding latency.
 
-## Reproducibility and distributed training
+## Reproducibility
 
-The sampler owns a dedicated RNG and checkpoints its state, support, probability matrix, draw count, and pair/pass histograms. Under DDP, rank zero samples one schedule per microbatch and broadcasts it to all ranks. Only rank zero advances the sampler; its saved state is authoritative on resume. Microbatches in the same accumulated optimizer update can have different schedules.
+The sampler checkpoints its RNG, support, probability matrix, draw count, and histograms. Under DDP, rank zero samples each microbatch schedule and broadcasts it. Accumulated microbatches can have different schedules. Evaluation uses independent fixed schedules and does not advance training RNG. Eager execution handles schedule-dependent unused parameters.
 
-Some schedules bypass mixer parameters. DDP must therefore handle unused parameters on each iteration; a static graph cannot be assumed. The MVP uses eager execution rather than compiling many schedule-dependent graphs. Evaluation uses its own fixed schedule RNG and explicit update pair, without advancing the training sampler. Checkpoint resume preserves the training schedule sequence as well as model, optimizer, and random-generator state.
+New checkpoints store every block count explicitly. Load old checkpoints through `RecurrentGPTConfig.from_checkpoint`: omitted buffer/source counts mean zero/one, preserving the original semantics rather than adopting today's defaults. Resume checks normalized model configurations, all training settings, dataset identity, panel content hash, and world size. Moving a panel file without changing its bytes is allowed. CPU exact resume is tested; GPU kernels may introduce numerical nondeterminism. Raw historical artifacts retain their original paths and hashes; the repository relocation map is in `experiments/relocations.json`.

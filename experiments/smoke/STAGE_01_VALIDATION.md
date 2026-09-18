@@ -1,5 +1,7 @@
 # Stage 0 and 1 validation
 
+Historical record of the completed experiment. Paths below follow the current repository layout; recorded configurations, measurements, and raw artifact provenance retain their original meaning. See the experiment README for current commands.
+
 The implementation retains the Karvonen/nanoGPT transformer computation and adds verified row-aligned data preparation, explicit generation stopping, and complete checkpoint state. The full eight-layer model has 25,714,688 parameters including learned positions. With copied weights, its logits and loss matched the pinned upstream model exactly on a CPU input.
 
 The automated suite covers row alignment under shorter contexts, shifted targets, data integrity, refusal to overwrite a dataset version, rejection of train/validation overlap and invalid characters, legal/malformed/illegal move handling, checkmate, castling, promotion, prompt accounting, causal model behavior, tied weights, and exact checkpoint resume with dropout. The initial run passed 14 tests.
@@ -25,4 +27,4 @@ The 100-update run completed on MPS with the full eight-layer model, width 512, 
 
 Twenty temperature-1 continuations from `;1.` with seeds 1337–1356 produced 38 legal moves across 58 completed move attempts (65.5%). Mean legal continuation was 1.9 moves. Nine samples stopped on malformed moves and eleven on illegal moves; none completed a valid game. These are early learning results, not a trained chess-playing benchmark. The same untrained architecture and initialization produced no legal moves under the same evaluation settings.
 
-Loading the final checkpoint in evaluation-only mode reproduced the final NLL and accuracy. [Machine-readable results](baseline_pilot_results.json) record evaluations, sampling settings, data manifest, and checkpoint checksum. The default full-corpus training run remains unexecuted. The working branch is `mvp-2d-recurrence`; its baseline implementation starts from the same frozen commit, with validation documentation recorded afterward.
+Loading the final checkpoint in evaluation-only mode reproduced the final NLL and accuracy. [Machine-readable results](results/baseline_pilot_results.json) record evaluations, sampling settings, data manifest, and checkpoint checksum. The default full-corpus training run remains unexecuted. The working branch is `mvp-2d-recurrence`; its baseline implementation starts from the same frozen commit, with validation documentation recorded afterward.

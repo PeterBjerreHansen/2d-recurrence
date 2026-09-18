@@ -1,6 +1,6 @@
 """ChessGPT baseline and two-axis recurrent training, adapted from Karvonen/nanoGPT.
 
-    uv run python train.py configs/smoke.py
+    uv run python train.py experiments/smoke/configs/baseline.py
     uv run python train.py configs/baseline_chessgpt.py --batch_size=16
     uv run torchrun --standalone --nproc_per_node=2 train.py --gradient_accumulation_steps=2
 
@@ -26,16 +26,17 @@ from recurrence.schedule import RecurrenceScheduleSampler, sample_schedule
 from training_utils import append_json, atomic_save, capture_rng, provenance, restore_rng
 
 DEFAULTS = dict(
-    out_dir='out-baseline', dataset='chess_v1', init_from='scratch',
+    out_dir='experiments/long_runs/reference/results', dataset='chess_v1', init_from='scratch',
     eval_interval=4000, eval_iters=100, log_interval=50, eval_only=False,
     n_layer=8, n_head=8, n_embd=512, block_size=1023, bias=False, dropout=0.0,
     batch_size=100, gradient_accumulation_steps=1, learning_rate=3e-4,
     max_iters=600000, weight_decay=0.1, beta1=0.9, beta2=0.95, grad_clip=1.0,
     decay_lr=True, warmup_iters=2000, lr_decay_iters=600000, min_lr=3e-5,
     backend='nccl', device='cuda', dtype='bfloat16', compile=True, seed=1337,
-    num_threads=4, architecture='baseline', n_prelude=2, n_core=4, n_coda=1,
+    num_threads=4, architecture='baseline', n_prelude=1, n_core=4, n_coda=1, n_buffer=1, n_source=1,
     recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729,
-    eval_u_t=0, eval_u_d=0, keep_checkpoints=False,
+    eval_u_t=0, eval_u_d=0, keep_checkpoints=False, checkpoint_steps=None,
+    eval_panel_path='',
 )
 
 
@@ -48,6 +49,28 @@ def get_lr(step, config):
         return config['min_lr']
     ratio = (step - config['warmup_iters']) / (config['lr_decay_iters'] - config['warmup_iters'])
     return config['min_lr'] + 0.5 * (1 + math.cos(math.pi * ratio)) * (config['learning_rate'] - config['min_lr'])
+
+
+def aggregate_gradient_stats(model, scaler, optimizer, grad_clip, step):
+    """Unscale, validate, and clip one accumulated optimizer update."""
+    if grad_clip or scaler.is_enabled():
+        scaler.unscale_(optimizer)
+    gradients = [parameter.grad for parameter in model.parameters() if parameter.grad is not None]
+    if any(not torch.isfinite(gradient).all() for gradient in gradients):
+        raise FloatingPointError(f'Non-finite gradient before optimizer step at step {step}')
+    if grad_clip:
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        grad_norm_value = float(grad_norm.detach().cpu())
+        clip_coefficient = min(1.0, grad_clip / (grad_norm_value + 1e-6))
+        clipped = grad_norm_value > grad_clip
+    else:
+        squared_norm = sum(gradient.detach().float().square().sum().item() for gradient in gradients)
+        grad_norm_value = math.sqrt(squared_norm)
+        clip_coefficient, clipped = 1.0, False
+    if not math.isfinite(grad_norm_value):
+        raise FloatingPointError(f'Non-finite aggregate gradient norm before optimizer step at step {step}')
+    return dict(grad_norm_pre_clip=grad_norm_value,
+                applied_clip_coefficient=clip_coefficient, gradients_clipped=clipped)
 
 
 def train(config):
@@ -68,6 +91,11 @@ def train(config):
             raise ValueError(f'{key} must be positive')
     if config['max_iters'] < 0 or config['warmup_iters'] < 0:
         raise ValueError('Iteration counts must be nonnegative')
+    if config['checkpoint_steps'] is not None:
+        if (not config['checkpoint_steps'] or
+                any(type(step) is not int or step < 0 for step in config['checkpoint_steps']) or
+                len(set(config['checkpoint_steps'])) != len(config['checkpoint_steps'])):
+            raise ValueError('checkpoint_steps must be a nonempty list of distinct nonnegative integers')
     if config['decay_lr'] and config['lr_decay_iters'] <= config['warmup_iters']:
         raise ValueError('lr_decay_iters must exceed warmup_iters')
     torch.set_num_threads(config['num_threads'])
@@ -102,6 +130,12 @@ def train(config):
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     data = ChessData(Path('data') / config['dataset'], config['block_size'])
+    panel = None
+    panel_indices = None
+    if config['eval_panel_path']:
+        from evaluation.panels import load_panel
+        panel = load_panel(config['eval_panel_path'], data, split='selection')
+        panel_indices = panel['row_indices']
     out = Path(config['out_dir'])
     out.mkdir(parents=True, exist_ok=True)
     if config['init_from'] == 'scratch' and (out / 'ckpt.pt').exists():
@@ -109,19 +143,26 @@ def train(config):
     model_args = {key: config[key] for key in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'dropout']}
     model_args['vocab_size'] = data.meta['vocab_size']
     if recurrent:
-        model_args.update({key: config[key] for key in ['n_prelude', 'n_core', 'n_coda']})
+        model_args.update({key: config[key] for key in ['n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda']})
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
     if config['init_from'] == 'resume':
         checkpoint = torch.load(out / 'ckpt.pt', map_location='cpu', weights_only=False)
-        if checkpoint['model_args'] != model_args:
+        saved_args = checkpoint['model_args']
+        same_model = (RecurrentGPTConfig.from_checkpoint(saved_args) == RecurrentGPTConfig(**model_args)
+                      if recurrent else saved_args == model_args)
+        if not same_model:
             raise ValueError('Resume model configuration differs from checkpoint')
         if checkpoint['manifest_hash'] != data.manifest_hash:
             raise ValueError('Resume dataset differs from checkpoint')
         if checkpoint['world_size'] != world_size:
             raise ValueError('Exact resume requires the same world size')
-        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints'}
-        for key in DEFAULTS.keys() - mutable:
+        if checkpoint.get('eval_panel_sha256') != (panel['sha256'] if panel else None):
+            raise ValueError('Resume evaluation panel differs from checkpoint')
+        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'eval_panel_path'}
+        # Layout equivalence was checked from model_args, including legacy omissions.
+        layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
+        for key in DEFAULTS.keys() - mutable - layout_keys:
             if config[key] != checkpoint['config'].get(key, DEFAULTS[key]):
                 raise ValueError(f'Resume changes {key}; use a new run for changed training settings')
         step, best_val = checkpoint['iter_num'], checkpoint['best_val_loss']
@@ -148,12 +189,19 @@ def train(config):
         restore_rng(checkpoint['rng_by_rank'][rank], train_rng, device)
     del checkpoint
     run_info = provenance()
+    if panel:
+        run_info.update(eval_panel_path=panel['path'], eval_panel_sha256=panel['sha256'],
+                        eval_panel_split=panel['split'], eval_panel_row_count=panel['row_count'])
     effective_batch = config['batch_size'] * accumulation * world_size
     if master:
         record = dict(config=config, model_args=model_args, provenance=run_info, world_size=world_size,
                       manifest_hash=data.manifest_hash, effective_batch_size=effective_batch,
                       parameter_count=sum(p.numel() for p in raw_model.parameters()),
-                      characters_per_step=effective_batch * config['block_size'], resume_step=step)
+                      characters_per_step=effective_batch * config['block_size'], resume_step=step,
+                      eval_panel_path=panel['path'] if panel else '',
+                      eval_panel_sha256=panel['sha256'] if panel else None,
+                      eval_panel_split=panel['split'] if panel else None,
+                      eval_panel_row_indices=panel['row_indices'] if panel else None)
         (out / 'run.json').write_text(json.dumps(record, indent=2) + '\n')
         append_json(out / 'events.jsonl', dict(event='start', **record))
 
@@ -172,7 +220,8 @@ def train(config):
             schedule_rng = random.Random(config['recurrence_seed'] + (10000 if split == 'train' else 20000))
             total_loss, correct, total = 0.0, 0, 0
             for _ in range(config['eval_iters']):
-                x, y = data.batch(split, config['batch_size'], device, generator)
+                x, y = data.batch(split, config['batch_size'], device, generator,
+                                  allowed_indices=panel_indices if split == 'val' else None)
                 kwargs = dict(schedule=sample_schedule(config['eval_u_t'], config['eval_u_d'], schedule_rng)) if recurrent else {}
                 with context():
                     logits, loss = raw_model(x, y, **kwargs)
@@ -197,9 +246,14 @@ def train(config):
                              iter_num=step, best_val_loss=best_val, last_eval_step=last_eval_step,
                              rng_by_rank=states, world_size=world_size, manifest_hash=data.manifest_hash,
                              meta=data.meta, provenance=run_info,
+                             eval_panel_path=panel['path'] if panel else '',
+                             eval_panel_sha256=panel['sha256'] if panel else None,
+                             eval_panel_split=panel['split'] if panel else None,
+                             eval_panel_row_indices=panel['row_indices'] if panel else None,
                              recurrence_sampler=sampler.state_dict() if sampler else None)
             atomic_save(payload, out / 'ckpt.pt')
-            if config['keep_checkpoints']:
+            if (config['keep_checkpoints'] and
+                    (config['checkpoint_steps'] is None or step in config['checkpoint_steps'])):
                 atomic_save(payload, out / f'ckpt-step{step:06d}.pt')
 
     def next_schedule():
@@ -250,9 +304,7 @@ def train(config):
                 raise FloatingPointError(f'Non-finite loss at step {step}')
             loss_sum += loss.detach().item() / accumulation
             scaler.scale(scaled_loss).backward()
-        if config['grad_clip']:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config['grad_clip'])
+        gradient_stats = aggregate_gradient_stats(model, scaler, optimizer, config['grad_clip'], step)
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
@@ -262,10 +314,20 @@ def train(config):
             torch.cuda.synchronize()
         step += 1
         elapsed = time.perf_counter() - started
+        if (config['keep_checkpoints'] and config['checkpoint_steps'] is not None and
+                step in config['checkpoint_steps'] and step != last_eval_step):
+            # Retain requested curve snapshots even when they are not eval_interval boundaries.
+            # All ranks participate because save_checkpoint gathers RNG state under DDP.
+            save_checkpoint()
         if master and (step % config['log_interval'] == 0 or step == 1):
             print(f'step {step}: loss {loss_sum:.4f}, {elapsed:.3f}s', flush=True)
             append_json(out / 'metrics.jsonl', dict(event='train', step=step, nll=loss_sum, lr=lr,
-                                                   seconds=elapsed, schedules=schedules, characters_per_second=effective_batch * config['block_size'] / elapsed))
+                                                   seconds=elapsed, statistics='accumulated_update',
+                                                   **gradient_stats,
+                                                   characters_processed=step * effective_batch * config['block_size'],
+                                                   characters_this_update=effective_batch * config['block_size'],
+                                                   schedules=schedules, microbatch_schedules=schedules,
+                                                   characters_per_second=effective_batch * config['block_size'] / elapsed))
     if ddp:
         dist.destroy_process_group()
     return out / 'ckpt.pt'

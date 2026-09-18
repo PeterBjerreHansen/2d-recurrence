@@ -1,5 +1,5 @@
 # Fast pipeline verification only; not an architecture comparison.
-out_dir = 'out-smoke'
+out_dir = 'experiments/smoke/results/smoke'
 dataset = 'smoke_real'
 n_layer = 2
 n_head = 2

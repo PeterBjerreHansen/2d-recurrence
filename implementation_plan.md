@@ -1,10 +1,10 @@
 # Implementation Plan: Two-Axis Recurrent Character-Level Chess Transformer
 
-Stages 0–8 and the Stage 9 experiment tooling are implemented. See [stages 0–1 validation](docs/STAGE_01_VALIDATION.md) and [stages 2–8 validation](docs/STAGE_02_08_VALIDATION.md) for evidence and limits. The Stage 9 learning-curve experiments are ready to run; see [validation](docs/STAGE_09_VALIDATION.md) and the [MPS handoff](docs/STAGE09_MPS_HANDOFF.md). Live-feedback generation remains Stage 14.
+Stages 0–9 and the subsequent longer baseline and architecture A/B comparison are complete. Variation A is now the default; the model retains configurable ordered injection and source boundaries. See the [experiment index](experiments/README.md) for protocols, results, and historical validations. Live-feedback generation remains Stage 14.
 
 ## Governing contract
 
-The [project proposal](proposal.md#4-canonical-training-time-recurrence-contract) defines the architecture. The [recurrence contract](docs/RECURRENCE_CONTRACT.md) is the maintained implementation reference for code, tests, diagrams, and configuration terminology. The execution order is temporal mixing, depth mixing, shared core, then state writes. Depth writes store core output; temporal writes store the raw output of a dedicated temporal-source transformer block placed between the core and coda. Write masks never control reads.
+The [project proposal](proposal.md#4-canonical-training-time-recurrence-contract) defines the architecture. The [recurrence contract](docs/RECURRENCE_CONTRACT.md) is the maintained implementation reference for code, tests, diagrams, and configuration terminology. The default execution order is temporal mixing, buffer block, depth mixing, shared core, then state writes. Depth writes store core output; temporal writes store the raw output of a dedicated temporal-source transformer block placed between the core and coda. Write masks never control reads.
 
 Keep the implementation small enough to inspect the recurrent path in one file. The external repositories are references, not training frameworks to import wholesale. This plan preserves the staged approach: reproduce ordinary ChessGPT, establish a hybrid signal, and only then expand experiments and inference optimization.
 
@@ -18,11 +18,11 @@ Keep the implementation small enough to inspect the recurrent path in one file. 
 
 ## Stage 0: Bootstrap and freeze research contracts
 
-Implementation status: stages 0 and 1 are implemented and locally verified, including a bounded eight-layer pilot. See [validation results](docs/STAGE_01_VALIDATION.md) for evidence and the distinction from a full-corpus training run. Recurrence stages have not been implemented.
+Implementation status: stages 0 and 1 are implemented and locally verified, including a bounded eight-layer pilot. See [validation results](experiments/smoke/STAGE_01_VALIDATION.md) for evidence and the distinction from a full-corpus training run. Recurrence stages 2–9 have since been implemented.
 
 Use a fork of [Karvonen's train_ChessGPT](https://github.com/adamkarvonen/train_ChessGPT) as the starting codebase. Record the upstream commit and retain its license. Keep the chess model, training loop, character vocabulary, preparation script, block-aligned batch loader, sampling support, and configuration mechanism. Remove unrelated datasets, GPT-2 import paths, and unused notebooks or examples after checking that the retained path does not depend on them. Make small, traceable changes rather than rewriting the pipeline.
 
-Create `baseline-chessgpt` and `mvp-2d-recurrence` from the common cleaned baseline commit. The ordinary baseline uses eight layers, matching the later 2/4/1/1 partition in Stage 3. Freeze its training code and configuration after smoke tests, and continue recurrent development on the MVP branch.
+Create `baseline-chessgpt` and `mvp-2d-recurrence` from the common cleaned baseline commit. The ordinary baseline uses eight layers, matching the current 1/1/4/1/1 partition in Stage 3. Freeze its training code and configuration after smoke tests, and continue recurrent development on the MVP branch.
 
 ### Data defaults
 
@@ -62,7 +62,7 @@ Read every available state on every pass. A false write mask holds that state un
 
 When temporal memory exists, set $r_b=\operatorname{ShiftRight}(m_T)$ and $a_b=T_\theta(p,r_b)$; otherwise set $a_b=p$. Use gates $(\alpha_b,\beta_b)=\sigma(G_\theta([N_r(r_b);N_p(p)]))$ and $T_\theta(p,r_b)=\alpha_b\odot W_mN_r(r_b)+\beta_b\odot W_pN_p(p)$. At positions without valid predecessor memory, bypass the mixer exactly. The gate reads normalized sources before their value projections; the value path uses separate learned $W_m$ and $W_p$ projections of those same normalized sources.
 
-When depth state exists, set $z_b=W_hN_h(h_D)+W_aN_a(a_b)$; otherwise set $z_b=a_b$. Always compute $h_b=R(z_b)$. Write depth state as $h_D\leftarrow h_b$ when scheduled. Use a dedicated normal causal transformer block $S$ after the core and before the coda $C$. A scheduled temporal write computes $m_T\leftarrow S(h_b)$ and stores the raw output, without an additional writer projection or write-time normalization. Its parameters are distinct from the core and coda and shared across its training invocations. After the final pass, compute $C(S(h_B))$, final normalization, and the LM head; do not count this final source activation as another training update.
+Apply the buffer $q_b=Q(a_b)$ on every pass. When depth state exists, set $z_b=W_hN_h(h_D)+W_aN_a(q_b)$; otherwise set $z_b=q_b$. Always compute $h_b=R(z_b)$. Write depth state as $h_D\leftarrow h_b$ when scheduled. Use a dedicated normal causal transformer block $S$ after the core and before the coda $C$. A scheduled temporal write computes $m_T\leftarrow S(h_b)$ and stores the raw output, without an additional writer projection or write-time normalization. Its parameters are distinct from the core and coda and shared across its training invocations. After the final pass, compute $C(S(h_B))$, final normalization, and the LM head; do not count this final source activation as another training update.
 
 ### Canonical pseudocode
 
@@ -86,6 +86,7 @@ for b in range(rounds):
         shifted_memory = shift_right(temporal_state)
         anchor = temporal_mixer(p, shifted_memory)  # bypass position zero
 
+    anchor = buffer(anchor)  # L2 in A; identity for adjacent destinations
     if depth_state is None:
         core_input = anchor
     else:
@@ -111,18 +112,20 @@ No additional carry of `h` bypasses the stored states. Holding a state must neit
 
 | Counts | Required reduction |
 | --- | --- |
-| $(0,0)$ | Ordinary prelude/core/source/coda transformer; neither state is written or read. |
+| $(0,0)$ | Ordinary prelude/buffer/core/source/coda transformer; neither state is written or read. |
 | $(U_T>0,0)$ | Temporal-only execution; depth state remains absent. |
 | $(0,U_D>0)$ | Depth-only execution; temporal memory remains absent. |
 | $(U_T>0,U_D>0)$ | Hybrid execution; both states are consumed after their first writes. |
 
 Verify reductions numerically with matched weights and controlled dropout. For $(4,0)$, five passes can perform different computations because temporal inputs evolve. For $(4,1)$ with the depth write after pass one, subsequent passes read that fixed depth state alongside refreshed temporal memory. Do not equate update counts with read counts.
 
-## Stage 3: Refactor nanoGPT into prelude, core, source, and coda
+## Stage 3: Partition the backbone with configurable boundaries
 
-Partition the eight-layer backbone into two prelude blocks, four shared recurrent-core blocks, one dedicated temporal-source block, and one coda block. Retain width 512 and eight heads. At $(0,0)$ this is the ordinary eight-block transformer, followed by final LayerNorm and the tied unembedding matrix. Preserve configurable prelude, core, and coda counts; the MVP source is one normal causal transformer block, $L_S=1$, with the same width and block design as the backbone. It has its own parameters and is outside the depth loop. Preserve the baseline ModuleList and identify these block ranges without registering duplicate module aliases.
+Default A maps L1 to the prelude, L2 to the buffer between the two injections, L3–L6 to the depth core, L7 to the temporal-source segment, and L8 to the coda. Retain width 512, eight heads, learned positions, final LayerNorm, and tied unembedding. Preserve the baseline `ModuleList` and identify contiguous ranges without registering duplicate module aliases.
 
-Add token and learned position embeddings once before the prelude; do not re-add them inside recurrence. Before adding mixers, verify that one core call followed by source and coda matches the equivalent ordinary stack within floating-point tolerance. Keep the source in the final prediction path even for ordinary and depth-only models. Map baseline blocks 1–2 to the prelude, 3–6 to the core, 7 to the source, and 8 to the coda, preserving block order and weights for the equivalence check.
+Expose five nonnegative counts: `n_prelude`, `n_buffer`, `n_core`, `n_source`, and `n_coda`. Their sum is `n_layer` and the core must be nonempty. Zero buffer means adjacent injection sites; zero source means coincident state candidates. Larger buffer/source segments are allowed. Preserve temporal-before-depth ordering and place the temporal source at or after the depth source. This is sufficient flexibility for the current research without a graph configuration language.
+
+Add token and position embeddings once. Verify zero-update equivalence to the ordinary stack for several layouts, held-state gradients, and source/destination boundaries. New checkpoints must store explicit counts. Old checkpoints must load their original zero-buffer default through `RecurrentGPTConfig.from_checkpoint`; never reinterpret them under A.
 
 ## Stage 4: Implement the stochastic schedule sampler
 
@@ -142,11 +145,11 @@ Store the raw temporal-source output as memory. Run this block on each nonfinal 
 
 Implement the gate and projected-value equations from Stage 2, with feature-wise coefficients initialized approximately to $\alpha=0.1$ and $\beta=0.9$. Do not constrain their sum to one. Use separate bias-free $D\rightarrow D$ value projections $W_m$ and $W_p$; identity initialization is the MVP default recorded in the recurrence contract. The gate is a single dense affine map followed by sigmoid, with zero weights and biases that give the stated initial coefficients. The gate sees normalized sources before these projections. Reuse each normalized source for gate and value computation. An absent memory bypasses the entire mixer and returns raw $p$, including bypassing $W_pN_p(p)$.
 
-A held memory's normalized and projected forms can be reused within a forward trajectory if gradients and any stochastic operations are preserved. Treat this as an optimization of the direct equations. At inference, compute the fixed temporal anchor once before depth iteration. Do not cache training activations across optimizer steps.
+A held memory's normalized and projected forms can be reused within a forward trajectory if gradients and any stochastic operations are preserved. Treat this as an optimization of the direct equations. At inference, compute the temporal mixture and buffer once to obtain the fixed depth anchor before depth iteration. Do not cache training activations across optimizer steps.
 
 ## Stage 6: Implement depth recurrence
 
-Use $D_\theta(h_D,a)=W_hN_h(h_D)+W_aN_a(a)$ whenever depth state exists. The anchor $a$ is the result of temporal mixing when temporal memory is available, or the prelude representation otherwise. A false temporal write mask does not revert the anchor to raw $p$.
+Use $D_\theta(h_D,q)=W_hN_h(h_D)+W_aN_a(q)$ whenever depth state exists. The depth anchor is $q=Q(a)$: the buffer output after temporal mixing, or after raw prelude input when temporal memory is absent. A false temporal write mask does not revert the anchor to raw $p$.
 
 Initialize both depth projections to $0.5I$, as recorded in the recurrence contract. Do not add a sigmoid interpolation, per-loop gate, exit gate, or unconditional extra carry of the last core output in the MVP. The residual transformer core and learned projections provide the initial transformation. Use Huginn as a reference for shared core reuse and repeated access to an input anchor, without importing its large-scale training stack.
 
@@ -196,15 +199,15 @@ Once the pilot behaves sensibly, expand to $U_T,U_D\in\{0,\ldots,7\}$, giving up
 
 ## Stage 11: Component baselines
 
-Train ordinary, temporal-only, depth-only, and hybrid models as restrictions of the same implementation where possible. In the same-backbone regime, keep embedding width and physical prelude, core, source, and coda block counts identical while allowing each model the recurrent modules it needs. Separately construct an ordinary reference with approximately matching total parameters.
+Train ordinary, temporal-only, depth-only, and hybrid models as restrictions of the same implementation where possible. In the same-backbone regime, keep embedding width and physical prelude, buffer, core, source, and coda block counts identical while allowing each model the recurrent modules it needs. Separately construct an ordinary reference with approximately matching total parameters.
 
 Use multiple independent training seeds for affordable architecture comparisons, preferably at least three. Report between-run variance separately from within-run mask variance. These comparisons follow the hybrid pilot rather than becoming prerequisites for seeing an initial signal.
 
 ## Stage 12: Complete compute accounting
 
-Log $U_T$, $U_D$, $B$, shared-core block applications, characters processed, and optimizer steps. Report $L_P+B L_R+(U_T+1)L_S+L_C$ as a structural proxy, with $L_S=1$ for the MVP. The source executes once per nonfinal temporal write and once on the final prediction path; the coda executes once. Include complete analytic or profiler-based estimates covering the prelude, core attention and MLPs, temporal gates, read normalizations and value projections, depth projections and normalization, all source executions, the coda, and the head. Measure characters per second, optimizer steps per second, and wall-clock training time.
+Log $U_T$, $U_D$, $B$, shared-core block applications, characters processed, and optimizer steps. Report $L_P+B(L_Q+L_R)+(U_T+1)L_S+L_C$ as a structural proxy, with $L_S=1$ for the MVP. The source executes once per nonfinal temporal write and once on the final prediction path; the coda executes once. Include complete analytic or profiler-based estimates covering the prelude, core attention and MLPs, temporal gates, read normalizations and value projections, depth projections and normalization, all source executions, the coda, and the head. Measure characters per second, optimizer steps per second, and wall-clock training time.
 
-Account for actual reads as well as writes. A state written early is read more often than one first written late, even with the same update count. Mask placement can therefore change mixer cost while leaving core cost unchanged. Label comparisons by whether they match steps, characters, parameters, or FLOPs. For live-feedback inference with $J$ core calls, report $L_P+J L_R+L_S+L_C$ and the actual mixer operations separately from training update counts.
+Account for actual reads as well as writes. A state written early is read more often than one first written late, even with the same update count. Mask placement can therefore change mixer cost while leaving core cost unchanged. Label comparisons by whether they match steps, characters, parameters, or FLOPs. For live-feedback inference with $J$ core calls, report $L_P+L_Q+J L_R+L_S+L_C$ and the actual mixer operations separately from training update counts.
 
 ## Stage 13: Curriculum and supervision research
 
@@ -218,7 +221,7 @@ Only then specify an adaptive scheduler's objective, reward estimator, compute n
 
 ### Fixed-depth live execution
 
-For the current token $x_t$, compute its prelude representation using the causal prefix context and mix it with incoming memory $m_{t-1}$. Hold this memory and the resulting anchor fixed while the depth core iterates. Reset depth state to absent for each new token. The first core call uses the anchor directly; every additional call uses the preceding depth output mixed with that same anchor.
+For the current token $x_t$, compute its prelude representation using the causal prefix context and mix it with incoming memory $m_{t-1}$. Run the buffer once, then hold this memory and the resulting depth anchor fixed while the depth core iterates. Reset depth state to absent for each new token. The first core call uses the anchor directly; every additional call uses the preceding depth output mixed with that same anchor.
 
 After the final core call, run the temporal-source block once and store its raw output as $m_t$. Feed that same output into the coda, final normalization, and head to obtain logits for $x_{t+1}$. Neither the source nor coda is inside the depth loop. No additional writer projection is used. Sample the next token and process it with that emitted memory. This final temporal emission is an inference operation, not an extra counted training update. There are no temporal refinement passes within a token. A token without incoming memory bypasses temporal mixing.
 
@@ -228,7 +231,7 @@ Maintain two reference paths: exact full-sequence recomputation of the training 
 
 Before KV optimization, explicitly define prompt prefill, which memory is handed to continuation, positional handling, and the historical attention context used by each depth iteration. The temporal reference repository's handoff behavior is a precedent, not a substitute for specifying the hybrid. Do not silently combine KV state from one execution with memory from another. Cache identity must account for the relevant layer and recurrent execution; variable depth across tokens requires its own policy before adaptive stopping is enabled.
 
-Then implement and verify prelude, temporal-source, and coda KV caching, recurrent-core caching, temporal memory storage, and efficient loop execution. Keep the slow reference available as the correctness oracle for each mode.
+Then implement and verify prelude, buffer, temporal-source, and coda KV caching, recurrent-core caching, temporal memory storage, and efficient loop execution. Keep the slow reference available as the correctness oracle for each mode.
 
 ### Later exit gate
 
@@ -242,42 +245,40 @@ Start from stable, documented supervised checkpoints and use searchless self-pla
 
 Defer board-state probes, gate analysis, latent interventions, and mechanistic studies until recurrence produces a reproducible effect worth interpreting. Establish that both mechanisms affect performance, that the effect survives training-seed variation, and that its compute relationship is understood. Any specialization of temporal or depth states is an empirical finding, not a prescribed division of content.
 
-## Suggested repository structure
+## Repository structure
 
 ```text
-model.py                         # ordinary nanoGPT components
-models/recurrent_2d.py            # hybrid model, mixers, and temporal-source block
-recurrence/contract.py
-recurrence/schedule.py
-evaluation/chess.py
-evaluation/recurrence_grid.py
+models/recurrent_2d.py           # configurable layout and shared mixers
+recurrence/schedule.py          # write-count sampling and RNG state
+evaluation/                     # reusable evaluators, not experiment-specific reports
+configs/                        # current reusable reference/default configs
+experiments/
+  ablations/architecture_sites/ # A/B configs, runner, report, local results/
+  sweeps/recurrence_grid/        # initial evaluation surface, local results/
+  long_runs/
+    recurrence_pilot/           # 1k continuation, local results/
+    baseline/                   # LR selection and selected 10k continuation, local results/
+    separated/                  # current A pilot config and future local results/
+  smoke/                        # small pipeline checks and historical validations
+  relocations.json              # old paths in immutable provenance -> current locations
 data/chess_v1/prepare.py
-configs/baseline_chessgpt.py
-configs/recurrent_2d_pilot.py
-configs/recurrent_2d_full.py
 docs/RECURRENCE_CONTRACT.md
 proposal.md
 implementation_plan.md
-tests/test_baseline_equivalence.py
-tests/test_schedule.py
-tests/test_recurrence_ordering.py
-tests/test_temporal_causality.py
-tests/test_limiting_cases.py
-tests/test_state_hold.py
-tests/test_gradient_flow.py
-tests/test_checkpoint_resume.py
-tests/test_recurrence_grid.py
+tests/
 ```
+
+Experiment source and concise reports are tracked. Each experiment owns an ignored `results/` directory for checkpoints, logs, metrics, plots, and frozen receipts. Shared dataset versions remain under `data/`. Historical result files retain their original embedded paths and hashes; use the relocation map instead of rewriting scientific records.
 
 ## Coding order
 
 1. Bootstrap ChessGPT, freeze the data and evaluator, and create both branches from a common baseline commit. Smoke-test and launch the ordinary baseline.
-2. On the MVP branch, extract the recurrence contract, refactor prelude/core/source/coda, and prove $(0,0)$ equivalence.
+2. On the MVP branch, extract the recurrence contract, refactor prelude/buffer/core/source/coda, and prove $(0,0)$ equivalence.
 3. Implement the checkpointable sampler, temporal-source block and shifted reads, temporal mixer, depth mixer, and complete trajectory. Verify ordering, held-state reads and gradients, causality, reductions, and resume.
 4. Train and evaluate the $\{0,1,3\}^2$ pilot. Establish useful behavior before expanding to $\{0,\ldots,7\}^2$ or substantial component-baseline runs.
 5. Extend compute-controlled comparisons, curriculum and supervision experiments, and live-feedback inference according to the signal. Optimize fixed-depth inference before adding an exit gate.
 6. Pursue self-play and interpretability after supervised recurrence results justify them.
 
-## Decisions to resolve during implementation
+## Remaining decisions
 
-The recurrence semantics above are settled. Before coding the relevant components, specify the gate network's exact architecture, normalization types and epsilon values, and depth-projection initialization; the documents currently define their roles but not every parameterization. Stage 0 must verify and record the inherited source-row and game-boundary behavior, preserving the reference setup unless an actual issue requires a change. Stage 14 must settle prompt handoff and recurrent attention-cache semantics. These details should be recorded in the canonical contract when chosen, without silently importing defaults from an external repository.
+Mixer architecture, normalization, initialization, masking, and ordered site configuration are implemented and recorded in the contract. Variation A is the accepted default after the near-tied architecture comparison. A later training extension needs an explicit LR schedule beyond 10k updates. Stage 14 still needs prompt handoff and recurrent attention-cache semantics; fixed-depth live execution precedes cache optimization or an exit gate. No cleanup step launches a new experiment.

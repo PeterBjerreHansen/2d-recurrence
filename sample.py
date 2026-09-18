@@ -78,10 +78,15 @@ def main():
     parser.add_argument('--max-new-tokens', type=int, default=512)
     parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--top-k', type=int, default=0)
-    parser.add_argument('--output', default='out-evaluation/generation.json')
+    parser.add_argument('--output', help='Defaults to generation-<checkpoint stem>.json beside the checkpoint')
     args = parser.parse_args()
     if args.num_samples < 1:
         parser.error('--num-samples must be positive')
+    if args.output is None:
+        checkpoint_path = Path(args.checkpoint)
+        args.output = str(checkpoint_path.with_name(f'generation-{checkpoint_path.stem}.json'))
+    if Path(args.output).exists():
+        parser.error('Output exists; choose a new report path')
     torch.set_num_threads(args.num_threads)
     checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
     recurrent = checkpoint['config'].get('architecture', 'baseline') == 'recurrent'
@@ -90,7 +95,7 @@ def main():
     if not recurrent and args.execution == 'training_graph':
         parser.error('Training-graph recurrence requires a recurrent checkpoint')
     schedule = sample_schedule(args.u_t, args.u_d, random.Random(args.mask_seed)) if recurrent else None
-    model = (Recurrent2DGPT(RecurrentGPTConfig(**checkpoint['model_args'])) if recurrent
+    model = (Recurrent2DGPT(RecurrentGPTConfig.from_checkpoint(checkpoint['model_args'])) if recurrent
              else GPT(GPTConfig(**checkpoint['model_args']))).to(args.device)
     model.load_state_dict(checkpoint['model'])
     prompts = json.loads(Path(args.prompts).read_text()) if args.prompts else [args.prompt]

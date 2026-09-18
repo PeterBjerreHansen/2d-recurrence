@@ -1,6 +1,8 @@
 # Small executable contract check; not a scientific architecture comparison.
 architecture = 'recurrent'
-out_dir = 'out-recurrent-smoke'
+n_buffer = 0
+n_source = 1  # Historical layout; do not inherit the new A default.
+out_dir = 'experiments/smoke/results/recurrent-smoke'
 dataset = 'smoke_real'
 n_layer = 4
 n_head = 2

@@ -22,27 +22,31 @@ Karvonen's work studies learned chess structure and internal board representatio
 
 ## 3. Model architecture
 
-Use Karvonen's small eight-layer backbone with width 512 and eight attention heads. Partition it into two prelude blocks, four shared core blocks, one temporal-source block, and one coda block, followed by final LayerNorm and an unembedding matrix tied to the token embedding as in the reference. The ordinary baseline keeps the same eight blocks in sequence.
+Use Karvonen's small eight-layer backbone with width 512 and eight attention heads. Variation A is the default: one prelude block, one temporal-integration buffer block, four shared core blocks, one temporal-source block, and one coda block, followed by final LayerNorm and tied unembedding. A and B performed nearly on par in the [10k-update comparison](experiments/ablations/architecture_sites/REPORT.md). A is a practical default with cheaper depth iteration, not a demonstrated universal winner.
 
-The model consists of embedding, prelude, shared recurrent core, a dedicated temporal-source block $S$, coda $C$, and language-model head. The source is a normal causal transformer block with its own parameters, separate from both the recurrent core and the coda. The prelude runs once and produces the fixed sequence representation $p=P(x)$. Training executes the core $B$ times, runs $S$ for each scheduled temporal write, then runs $S$ and the coda on the final core output for prediction. At inference, only the core is depth-looped; $S$ and the coda each run once per token afterward. The recurrent states are temporal memory $m_T$ and depth state $h_D$.
-
-Every pass follows the same order: temporal mixing, depth mixing, core computation, then scheduled state writes. Depth state comes directly from the core output. Temporal state is the raw output of $S$, with no additional writer projection or normalization. The source output also feeds the coda, so it participates in next-token prediction as well as temporal feedback. The prelude representation remains available throughout. The only recurrent paths between core passes are the two stored states; the latest core output is not carried forward through an additional implicit path.
+The prelude produces fixed $p=P(x)$. Each training pass mixes temporal memory into $p$, applies the buffer $Q$, mixes depth state into that result, and runs the shared core $R$. The depth source is the core output; the temporal source is the raw output of $S$. The source also feeds the coda $C$ for final prediction. Only stored states connect successive passes. Masks control writes, never reads.
 
 ```text
-tokens + positions -> Prelude -> fixed p
-                                    |
-latest m_T -> ShiftRight -> Temporal mixer -> a_b
-                                             |
-latest h_D ----------------------------> Depth mixer -> Core R -> h_b
-                                                                   |
-                              depth write, if scheduled: h_D <- h_b
-                              temporal write, if scheduled:
-                                  h_b -> Temporal source S -> m_T
-
-Read every available state on every pass; masks control writes only.
-Final pass: h_B -> Temporal source S -> Coda C -> norm -> LM head
-Inference: run S once after depth refinement; its output is outgoing memory.
+tokens + positions -> L1 (prelude) -> fixed p
+                                          |
+latest m_T from L7 -> ShiftRight --------> T -> L2 (buffer) -> q_b
+                                                               |
+latest h_D from L6 -------------------------------------------> D
+                                                               |
+                                                        L3-L6 (core)
+                                                               |
+                                                   h_b -> depth write
+                                                               |
+                                                       L7 (source)
+                                                               |
+                                                      temporal write
+                                                               |
+                                         final pass: L8 -> norm -> head
 ```
+
+Read every available state on every pass. Run L7 on nonfinal passes only when a temporal write consumes it; run it once after the final pass for prediction. At live inference, L1, temporal mixing, and L2 produce a fixed anchor before looping L3–L6; L7 and L8 then run once.
+
+Five configurable block counts determine the sites: `n_prelude`, `n_buffer`, `n_core`, `n_source`, and `n_coda`. They sum to the total backbone depth. A uses `(1,1,4,1,1)` in that order; B uses `(1,0,6,0,1)`; the historical original uses `(2,0,4,1,1)`. An empty buffer gives adjacent destinations, and an empty source segment gives coincident source candidates. This supports moving the ordered boundaries without adding a general routing graph. See the [contract](docs/RECURRENCE_CONTRACT.md) for exact boundary definitions and checkpoint compatibility.
 
 ## 4. Canonical training-time recurrence contract
 
@@ -66,13 +70,13 @@ The shift satisfies $\operatorname{ShiftRight}(m_T)[0]=0$ and $\operatorname{Shi
 
 ### 4.3 Depth mixing and core computation
 
-If depth state exists, compute $z_b=D_\theta(h_D,a_b)$ with $D_\theta(h_D,a_b)=W_hN_h(h_D)+W_aN_a(a_b)$. Otherwise use $z_b=a_b$. The depth mixer has no explicit sigmoid gate in the MVP. Its read condition depends only on state availability, not on the depth write mask. Execute $h_b=R(z_b)$ on every pass.
+First compute $q_b=Q(a_b)$ through the buffer; $Q$ is L2 in A and identity if empty. If depth state exists, compute $z_b=D_\theta(h_D,q_b)$ with $D_\theta(h_D,q_b)=W_hN_h(h_D)+W_aN_a(q_b)$. Otherwise use $z_b=q_b$. The depth mixer has no explicit sigmoid gate in the MVP. Its read condition depends only on state availability, not on the depth write mask. Execute $h_b=R(z_b)$ on every pass.
 
 ### 4.4 Writes, output, and gradients
 
-Use one dedicated temporal-source block $S$ in the MVP. It consumes the core output and produces the raw residual-stream state used as temporal memory, before the coda or final normalization. It is an ordinary causal transformer block, including its standard internal normalization, attention, MLP, and residual connections. Its parameters are distinct from the core and coda and shared across its training-time invocations.
+Default A uses one dedicated temporal-source block $S$. Configurable variants may use a longer source segment or identity for coincident sources. It consumes the core output and produces the raw residual-stream state used as temporal memory, before the coda or final normalization. It is an ordinary causal transformer block, including its standard internal normalization, attention, MLP, and residual connections. Its parameters are distinct from the core and coda and shared across its training-time invocations.
 
-After a nonfinal pass, set $h_D\leftarrow h_b$ if $M_D[b]=1$ and set $m_T\leftarrow S(h_b)$ if $M_T[b]=1$. Otherwise hold the corresponding state unchanged, including leaving it absent if it has not yet been written. Both writes derive from the current core output and occur after all reads, but they store different representations. Evaluate $S$ on a nonfinal pass only when a temporal write is scheduled. Store its output directly, without an additional writer projection or write-time normalization. Depth feedback remains the pre-source core output; source output never replaces depth state.
+After a nonfinal pass, set $h_D\leftarrow h_b$ if $M_D[b]=1$ and set $m_T\leftarrow S(h_b)$ if $M_T[b]=1$. Otherwise hold the corresponding state unchanged, including leaving it absent if it has not yet been written. Both writes derive from the current core output and occur after all reads, but they store different representations. Evaluate $S$ on a nonfinal pass only when a temporal write is scheduled. Store its output directly, without an additional writer projection or write-time normalization. Depth feedback remains the pre-source core output; in A, source output never replaces depth state.
 
 After pass $B$, compute logits from $C(S(h_B))$ through final normalization and the language-model head. The final source and coda execution creates no counted training update. Initially train with final-pass next-character cross entropy only and backpropagate through the complete trajectory, including every reuse of held states. Do not detach memory or depth state, truncate gradients, or run early passes without gradients.
 
@@ -80,7 +84,7 @@ After pass $B$, compute logits from $C(S(h_B))$ through final normalization and 
 
 | Update counts | Execution |
 | --- | --- |
-| $(0,0)$ | One core pass; both recurrent states remain absent. Equivalent to the ordinary prelude/core/source/coda transformer. |
+| $(0,0)$ | One core pass; both recurrent states remain absent. Equivalent to the ordinary prelude/buffer/core/source/coda transformer. |
 | $(U_T>0,0)$ | Temporal-only recurrence; depth state remains absent. |
 | $(0,U_D>0)$ | Depth-only recurrence; temporal memory remains absent. |
 | $(U_T>0,U_D>0)$ | Both states are written and consumed by later passes. |
@@ -136,11 +140,11 @@ The architectural comparison requires separately trained ordinary, temporal-only
 
 ## 10. Parameter controls
 
-Report both same-backbone and parameter-matched comparisons. The same-backbone regime keeps embedding width $D$ and prelude, core, source, and coda block counts $L_P,L_R,L_S,L_C$ identical, while allowing the recurrent models their gates, read-side normalizations, and value and depth projections. Keep the source block in the prediction path for every same-backbone baseline, including ordinary and depth-only models, even when no temporal feedback is used. The agreed 2/4/1/1 partition totals eight blocks and matches the ordinary reference backbone; the source is allocated within those eight blocks. The parameter-matched regime constructs an ordinary reference transformer with approximately the same total trainable parameter count. These answer different questions and neither replaces the other.
+Report both same-backbone and parameter-matched comparisons. The same-backbone regime keeps embedding width $D$ and prelude, buffer, core, source, and coda block counts $L_P,L_Q,L_R,L_S,L_C$ identical, while allowing the recurrent models their gates, read-side normalizations, and value and depth projections. Keep the source block in the prediction path for every same-backbone baseline, including ordinary and depth-only models, even when no temporal feedback is used. The default 1/1/4/1/1 partition totals eight blocks; buffer and source are allocated within those eight blocks. The parameter-matched regime constructs an ordinary reference transformer with approximately the same total trainable parameter count. These answer different questions and neither replaces the other.
 
 ## 11. Compute controls
 
-Report the structural proxy $L_P+B L_R+(U_T+1)L_S+L_C$ alongside complete analytic or profiler-based FLOP estimates and measured throughput. Here $L_S=1$ for the MVP. The source runs $U_T+1$ times: once per nonfinal temporal write and once on the final prediction path. The coda runs once. At inference with $J$ core calls, the corresponding block count is $L_P+J L_R+L_S+L_C$. Complete estimates must include attention, MLPs, temporal gates, read-side normalization and value projections, depth projections and normalization, and output computation.
+Report the structural proxy $L_P+B(L_Q+L_R)+(U_T+1)L_S+L_C$ alongside complete analytic or profiler-based FLOP estimates and measured throughput. Here $L_Q=L_S=1$ for default A. The buffer runs each training pass and once per token before live depth iteration. The source runs $U_T+1$ times: once per nonfinal temporal write and once on the final prediction path. The coda runs once. At inference with $J$ core calls, the corresponding block count is $L_P+L_Q+J L_R+L_S+L_C$. Complete estimates must include attention, MLPs, temporal gates, read-side normalization and value projections, depth projections and normalization, and output computation.
 
 Update counts alone do not determine mixer cost: every available state is read on every later pass, including passes where it is held. The position of the first write therefore affects the number of mixer applications. Account for actual schedule execution, not just $U_T$ and $U_D$. Label equal-step, equal-character, equal-parameter, and equal-FLOP comparisons explicitly.
 
@@ -160,9 +164,9 @@ The MVP prioritizes validation NLL, character accuracy, PGN validity, legal-move
 
 ## 14. Live feedback inference and later optimization
 
-At token position $t$, compute the prelude representation for $x_t$ and mix it with incoming memory $m_{t-1}$. Hold that memory and the resulting temporal anchor fixed throughout the token's depth computation. Initialize depth state as absent, execute the core once, then use successive core outputs as depth state for any additional iterations. The number of core calls is an inference depth budget, separate from the training update counts.
+At token position $t$, compute the prelude representation for $x_t$ and mix it with incoming memory $m_{t-1}$. Run the buffer on the temporal mixture, then hold that memory and the resulting depth anchor fixed throughout the token's depth computation. Initialize depth state as absent, execute the core once, then use successive core outputs as depth state for any additional iterations. The number of core calls is an inference depth budget, separate from the training update counts.
 
-After the final depth iteration, run the temporal-source block once and store its raw output as $m_t$. Feed that same output through the coda, final normalization, and head to produce logits. The source is outside the depth loop and is not rerun as depth state is refined. There is no additional temporal writer transformation. Sample $x_{t+1}$ from those logits; its processing consumes $m_t$. No temporal refresh loop occurs within a token. The first token without incoming memory bypasses temporal mixing. This combines live feedback generation with ordinary recurrent-depth execution; the [feedback-inference reference](https://github.com/PeterBjerreHansen/multipass-transformer-memory/blob/main/docs/FEEDBACK_INFERENCE.md) provides the temporal precedent.
+After the final depth iteration, run the temporal-source block once and store its raw output as $m_t$. Feed that same output through the coda, final normalization, and head to produce logits. For A, the source is outside the depth loop and is not rerun as depth state is refined; with an empty source segment, the final core output is emitted directly. There is no additional temporal writer transformation. Sample $x_{t+1}$ from those logits; its processing consumes $m_t$. No temporal refresh loop occurs within a token. The first token without incoming memory bypasses temporal mixing. This combines live feedback generation with ordinary recurrent-depth execution; the [feedback-inference reference](https://github.com/PeterBjerreHansen/multipass-transformer-memory/blob/main/docs/FEEDBACK_INFERENCE.md) provides the temporal precedent.
 
 Implement fixed-depth semantics before optimizing KV caches for the prelude, core, source, and coda, temporal memory storage, or loop execution. Maintain separate reference paths for exact training-graph recomputation and live-feedback execution. Optimized logits must match the reference for the same semantics; divergence between the two execution modes is a measurement, not automatically a cache bug. Specify prompt prefill, memory handoff, and depth-indexed cache behavior before implementing optimized decoding.
 
