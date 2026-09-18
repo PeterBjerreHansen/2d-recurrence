@@ -114,6 +114,7 @@ def test_snapshot_checkpoint_evaluation_and_manifest_guard(prepared_data, tmp_pa
     report = evaluate_checkpoint(latest.parent / 'ckpt-step000002.pt', batches=1, batch_size=1)
     assert report['checkpoint_step'] == 2
     assert report['training_seed'] == 1337
+    assert report['recurrence_mode'] == 'hybrid'
     assert sum(c['training_probability'] for c in report['cells']) == pytest.approx(1.)
     broken = torch.load(latest, weights_only=False)
     broken['manifest_hash'] = 'wrong'

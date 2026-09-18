@@ -287,10 +287,10 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_fi
     if file_hash(checkpoint_path) != checkpoint_hash:
         raise ValueError('Checkpoint changed during evaluation; use a retained step checkpoint')
     report.update(checkpoint=str(checkpoint_path.resolve()), checkpoint_sha256=checkpoint_hash,
-                          checkpoint_step=checkpoint['iter_num'], manifest_hash=data.manifest_hash,
-                          model_args=checkpoint['model_args'], training_seed=config['seed'],
-                          recurrence_mode=RecurrentGPTConfig.from_checkpoint(checkpoint['model_args']).recurrence_mode,
-                          training_schedule_seed=config['recurrence_seed'], device=device,
+                  checkpoint_step=checkpoint['iter_num'], manifest_hash=data.manifest_hash,
+                  model_args=checkpoint['model_args'], training_seed=config['seed'],
+                  recurrence_mode=RecurrentGPTConfig.from_checkpoint(checkpoint['model_args']).recurrence_mode,
+                  training_schedule_seed=config['recurrence_seed'], device=device,
                   dtype='float32', provenance=provenance())
     report['dataset_identity'] = dict(dataset=config['dataset'], manifest_hash=data.manifest_hash,
                                       validation_row_count=len(data.rows['val']),

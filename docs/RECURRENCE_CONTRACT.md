@@ -29,6 +29,31 @@ The implementation uses one ordered `ModuleList` and five block counts. It does 
 
 Counts must be nonnegative integers, sum to `n_layer`, and leave a nonempty core. A zero buffer makes the destinations adjacent; a zero source makes both state candidates the same core output. Buffer and source segments may contain more than one block. Temporal injection always precedes depth injection, and the temporal source is at or after the depth source. Arbitrary crossed connections are outside this interface.
 
+## Recurrence modes
+
+`recurrence_mode` selects which axes are available without introducing separate
+model classes:
+
+| Mode | Available axis | Structural modules |
+| --- | --- | --- |
+| `hybrid` | temporal and depth | `TemporalMixer` and `DepthMixer` |
+| `temporal` | temporal only | `TemporalMixer`; no `DepthMixer` |
+| `depth` | depth only | `DepthMixer`; no `TemporalMixer` |
+
+`hybrid` is the compatibility default. Historical recurrent checkpoints that
+do not contain `recurrence_mode` load as hybrid. Specialized models are exact
+limiting cases of hybrid for compatible schedules: temporal models accept only
+`(U_T, 0)`, and depth models accept only `(0, U_D)`. Inactive axes are rejected
+by both training configuration validation and the model forward boundary.
+
+The `(0, 0)` schedule remains the ordinary physical backbone path for all
+modes. Source and coda blocks remain part of the prediction path even when
+temporal recurrence is disabled. Matched component-ablation schedules use the
+same active-axis count `K` for both axes and therefore update the active state
+after every nonfinal pass; this matches pass-count distributions but is not a
+FLOP-matched comparison. Inactive mixers are absent from specialized
+state-dicts, parameter counts, and optimizer groups.
+
 The implementation exposes half-open segment boundaries (`core_start:core_stop`,
 `source_start:source_stop`, and `coda_start:n_layer`). The separately named
 `temporal_source_output_index` identifies the block whose output is stored as

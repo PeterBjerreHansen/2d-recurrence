@@ -137,7 +137,8 @@ def main():
             result = dict(label=label, checkpoint=str(Path(path).resolve()),
                           checkpoint_sha256=checkpoint_hash,
                           checkpoint_step=checkpoint['iter_num'], architecture='recurrent',
-                          training_seed=checkpoint['config']['seed'], report=report)
+                          training_seed=checkpoint['config']['seed'],
+                          recurrence_mode=model.config.recurrence_mode, report=report)
         else:
             metrics = evaluate_baseline(model, fixed, args.device)
             result = dict(label=label, checkpoint=str(Path(path).resolve()),

@@ -10,6 +10,7 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 | [Architecture sites](ablations/architecture_sites/README.md) | Retained completed A/B comparison; A is the practical default |
 | [Deep-supervision pilot](ablations/deep_supervision/README.md) | Retained cross-backend observations, not a controlled overhead comparison |
 | [Baseline LR selection](sweeps/baseline_lr_selection/README.md) | Retained LR sweep and selected 10k continuation |
+| [Recurrence axis ablation](ablations/recurrence_axes/README.md) | New temporal-only, depth-only, and matched hybrid scaffold; not launched |
 | [Archived early pilots](archive/early_pilots/README.md) | Reports and small artifacts retained; obsolete scripts and checkpoints deleted |
 | [Smoke checks](smoke/README.md) | Small reproducible pipeline checks and historical validation notes |
 
@@ -29,4 +30,4 @@ The architecture ablation, LR sweep, and supervision pilot keep their source, re
 
 The early 100/1,000-update pilots and old smoke checkpoints were retired to reduce clutter. Their reports and small artifacts remain, but obsolete launch scripts and large checkpoints do not. [relocations.json](relocations.json) preserves old paths and marks retired records. Historical JSON and checkpoint contents are not rewritten to look like new runs.
 
-After the first 1B pair: validate live feedback, evaluate a wider update grid, then define separately trained temporal-only and depth-only comparisons with the same pass-count distribution. These require additional implementation; no runnable config here pretends those modes are ready.
+After the first 1B pair: validate live feedback and evaluate a wider update grid. The separately trained temporal-only and depth-only component scaffold now exists under `ablations/recurrence_axes/`, but it is not a final frozen protocol and no expensive run is launched automatically.
