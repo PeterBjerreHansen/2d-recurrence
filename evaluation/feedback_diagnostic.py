@@ -67,6 +67,7 @@ def run_batch(model, x, y, device, permutation=None):
 
 
 def evaluate_intervention(model, data, device):
+    require_temporal_feedback(model)
     target_indices, _ = exact_validation_batches(data, 1)
     normal_rows = []
     corrupt_rows = []

@@ -90,12 +90,12 @@ def test_feedback_diagnostic_requires_temporal_recurrence():
         require_temporal_feedback(tiny_config(recurrence_mode='depth'))
 
 
-@pytest.mark.parametrize('mode, schedule_counts, inactive_prefix', [
-    ('temporal', (1, 0), 'depth_mixer.'),
-    ('depth', (0, 1), 'temporal_mixer.'),
+@pytest.mark.parametrize('mode, inactive_prefix', [
+    ('temporal', 'depth_mixer.'),
+    ('depth', 'temporal_mixer.'),
 ])
 def test_specialized_models_omit_inactive_mixer_and_reject_incompatible_schedule(
-        mode, schedule_counts, inactive_prefix):
+        mode, inactive_prefix):
     model = Recurrent2DGPT(tiny_config(recurrence_mode=mode))
     names = list(model.state_dict())
     assert not any(name.startswith(inactive_prefix) for name in names)
@@ -103,7 +103,8 @@ def test_specialized_models_omit_inactive_mixer_and_reject_incompatible_schedule
     assert any(name.startswith(active_prefix) for name in names)
     x = torch.randint(32, (1, 8))
     with pytest.raises(ValueError, match='recurrence_mode'):
-        model(x, x, schedule=sample_schedule(*(schedule_counts[::-1]), random.Random(2)))
+        incompatible = (0, 1) if mode == 'temporal' else (1, 0)
+        model(x, x, schedule=sample_schedule(*incompatible, random.Random(2)))
 
 
 def _copy_common_state(source, target):
@@ -170,10 +171,11 @@ def test_specialized_parameter_counts_are_structural():
     temporal_count = sum(parameter.numel() for parameter in temporal.parameters())
     depth_count = sum(parameter.numel() for parameter in depth.parameters())
     hybrid_count = sum(parameter.numel() for parameter in hybrid.parameters())
-    assert temporal_count > temporal_count - temporal_mixer_count
-    assert depth_count > depth_count - depth_mixer_count
-    assert hybrid_count == temporal_count + depth_mixer_count
-    assert hybrid_count == depth_count + temporal_mixer_count
+    shared_count = temporal_count - temporal_mixer_count
+    assert depth_count - depth_mixer_count == shared_count
+    assert hybrid_count == shared_count + temporal_mixer_count + depth_mixer_count
+    assert temporal_count == shared_count + temporal_mixer_count
+    assert depth_count == shared_count + depth_mixer_count
 
 
 @pytest.mark.parametrize('mode', ['temporal', 'depth', 'hybrid'])
@@ -226,7 +228,8 @@ def test_specialized_training_resume_is_exact(mode, prepared_data, tmp_path):
     full = torch.load(full_path, weights_only=False)
     resumed = torch.load(resumed_path, weights_only=False)
     assert full['model_args']['recurrence_mode'] == resumed['model_args']['recurrence_mode'] == mode
-    assert not any(name.startswith('depth_mixer.') for name in full['model']) if mode == 'temporal' else not any(name.startswith('temporal_mixer.') for name in full['model'])
+    inactive_prefix = 'depth_mixer.' if mode == 'temporal' else 'temporal_mixer.'
+    assert not any(name.startswith(inactive_prefix) for name in full['model'])
     for key in full['model']:
         torch.testing.assert_close(full['model'][key], resumed['model'][key], rtol=0, atol=0)
     torch.testing.assert_close(full['optimizer'], resumed['optimizer'], rtol=0, atol=0)
