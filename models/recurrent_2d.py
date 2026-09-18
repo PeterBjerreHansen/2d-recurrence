@@ -13,6 +13,31 @@ from model import GPT, GPTConfig, LayerNorm
 from recurrence.schedule import RecurrenceSchedule
 
 
+RECURRENCE_MODES = frozenset({'hybrid', 'temporal', 'depth'})
+
+
+def validate_recurrence_mode(mode):
+    if mode not in RECURRENCE_MODES:
+        raise ValueError("recurrence_mode must be one of 'hybrid', 'temporal', or 'depth'")
+
+
+def validate_recurrence_counts(mode, u_t, u_d):
+    validate_recurrence_mode(mode)
+    if mode == 'temporal' and u_d:
+        raise ValueError(f"recurrence_mode='temporal' cannot execute depth recurrence (U_D={u_d})")
+    if mode == 'depth' and u_t:
+        raise ValueError(f"recurrence_mode='depth' cannot execute temporal recurrence (U_T={u_t})")
+
+
+def validate_recurrence_distribution(mode, support, probabilities):
+    """Reject probability mass on an axis unavailable to the selected mode."""
+    validate_recurrence_mode(mode)
+    for u_t, row in zip(support, probabilities):
+        for u_d, probability in zip(support, row):
+            if probability and ((mode == 'temporal' and u_d) or (mode == 'depth' and u_t)):
+                validate_recurrence_counts(mode, u_t, u_d)
+
+
 @dataclass
 class RecurrentGPTConfig(GPTConfig):
     n_prelude: int = 1
@@ -20,8 +45,10 @@ class RecurrentGPTConfig(GPTConfig):
     n_coda: int = 1
     n_buffer: int = 1
     n_source: int = 1
+    recurrence_mode: str = 'hybrid'
 
     def __post_init__(self):
+        validate_recurrence_mode(self.recurrence_mode)
         counts = (self.n_prelude, self.n_buffer, self.n_core, self.n_source, self.n_coda)
         if any(type(n) is not int or n < 0 for n in counts) or self.n_core == 0:
             raise ValueError('Block counts must be nonnegative integers with a nonempty core')
@@ -31,7 +58,16 @@ class RecurrentGPTConfig(GPTConfig):
     @classmethod
     def from_checkpoint(cls, model_args):
         """Missing layout fields in old checkpoints mean the original layout."""
-        return cls(**{'n_prelude': 2, 'n_buffer': 0, 'n_source': 1, **model_args})
+        return cls(**{'n_prelude': 2, 'n_buffer': 0, 'n_source': 1,
+                      'recurrence_mode': 'hybrid', **model_args})
+
+    @property
+    def uses_temporal_recurrence(self):
+        return self.recurrence_mode in ('hybrid', 'temporal')
+
+    @property
+    def uses_depth_recurrence(self):
+        return self.recurrence_mode in ('hybrid', 'depth')
 
     @property
     def core_start(self):

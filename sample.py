@@ -9,8 +9,18 @@ import torch
 
 from evaluation.chess import MoveValidator
 from model import GPT, GPTConfig
-from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
+from models.recurrent_2d import (Recurrent2DGPT, RecurrentGPTConfig,
+                                 validate_recurrence_counts, validate_recurrence_mode)
 from recurrence.schedule import sample_schedule
+
+
+def effective_generation_counts(mode, u_t=None, u_d=None):
+    validate_recurrence_mode(mode)
+    defaults = {'hybrid': (3, 3), 'temporal': (3, 0), 'depth': (0, 3)}[mode]
+    u_t = defaults[0] if u_t is None else u_t
+    u_d = defaults[1] if u_d is None else u_d
+    validate_recurrence_counts(mode, u_t, u_d)
+    return u_t, u_d
 
 
 @torch.no_grad()
@@ -67,8 +77,8 @@ def main():
     parser.add_argument('--checkpoint', required=True, help='Trusted local training checkpoint')
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--execution', choices=['baseline', 'training_graph'])
-    parser.add_argument('--u-t', type=int, default=3)
-    parser.add_argument('--u-d', type=int, default=3)
+    parser.add_argument('--u-t', type=int)
+    parser.add_argument('--u-d', type=int)
     parser.add_argument('--mask-seed', type=int, default=11)
     parser.add_argument('--num-threads', type=int, default=4)
     parser.add_argument('--prompt', default=';1.')
@@ -94,6 +104,9 @@ def main():
         parser.error('Recurrent checkpoints require --execution=training_graph; live feedback remains stage 14.')
     if not recurrent and args.execution == 'training_graph':
         parser.error('Training-graph recurrence requires a recurrent checkpoint')
+    if recurrent:
+        args.u_t, args.u_d = effective_generation_counts(
+            checkpoint['model_args'].get('recurrence_mode', 'hybrid'), args.u_t, args.u_d)
     schedule = sample_schedule(args.u_t, args.u_d, random.Random(args.mask_seed)) if recurrent else None
     model = (Recurrent2DGPT(RecurrentGPTConfig.from_checkpoint(checkpoint['model_args'])) if recurrent
              else GPT(GPTConfig(**checkpoint['model_args']))).to(args.device)

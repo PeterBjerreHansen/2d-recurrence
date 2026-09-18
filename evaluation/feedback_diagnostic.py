@@ -20,6 +20,12 @@ from training_utils import provenance
 SCHEDULE = RecurrenceSchedule((True,), (False,))
 
 
+def require_temporal_feedback(model_or_config):
+    config = getattr(model_or_config, 'config', model_or_config)
+    if not config.uses_temporal_recurrence:
+        raise ValueError('Feedback corruption diagnostic requires temporal feedback')
+
+
 def donor_permutation(target_count):
     """Return [donor0, donor1, ..., target0, target1, ...] for batch swapping."""
     if target_count < 1:
@@ -126,6 +132,7 @@ def main():
         checkpoint, checkpoint_hash, data, model, recurrent = load_model(path, args.device)
         if not recurrent:
             raise ValueError('Feedback corruption requires a recurrent checkpoint')
+        require_temporal_feedback(model)
         indices, _ = exact_validation_batches(data, 2)
         if fixed_metadata is None:
             fixed_metadata = dict(split='val', row_indices=indices, row_count=len(indices),

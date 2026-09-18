@@ -24,6 +24,18 @@ from training_utils import provenance
 PILOT_SUPPORT = (0, 1, 3)
 
 
+def supported_evaluation_cells(config, support=PILOT_SUPPORT):
+    """Return the recurrence cells available to a configured model mode."""
+    support = tuple(support)
+    if config.recurrence_mode == 'hybrid':
+        return list(itertools.product(support, repeat=2))
+    if config.recurrence_mode == 'temporal':
+        return [(u_t, 0) for u_t in support]
+    if config.recurrence_mode == 'depth':
+        return [(0, u_d) for u_d in support]
+    raise ValueError(f'Unsupported recurrence_mode: {config.recurrence_mode}')
+
+
 def distinct_schedules(u_t, u_d, seeds):
     """Sample placements without replacement; deterministic cells run only once."""
     slots = max(u_t, u_d)
@@ -139,14 +151,16 @@ def trajectory_diagnostics(model, x, y, schedule):
                 state_value_rms=rms(state_value), anchor_value_rms=rms(anchor_value),
                 state_contribution_rms=rms(state_value), anchor_contribution_rms=rms(anchor_value)))
 
-    handles.append(model.temporal_mixer.register_forward_hook(record_temporal))
-    handles.append(model.depth_mixer.register_forward_hook(record_depth))
+    if model.config.uses_temporal_recurrence:
+        handles.append(model.temporal_mixer.register_forward_hook(record_temporal))
+    if model.config.uses_depth_recurrence:
+        handles.append(model.depth_mixer.register_forward_hook(record_depth))
     try:
         with torch.enable_grad():
             _, loss = model(x, y, schedule=schedule)
             named = list(model.named_parameters())
             gradients = torch.autograd.grad(loss, [p for _, p in named], allow_unused=True)
-        groups = {}
+        groups = {'temporal_mixer': None, 'depth_mixer': None}
         for (name, _), gradient in zip(named, gradients):
             if name.startswith('transformer.h.'):
                 index = int(name.split('.')[2])
@@ -193,7 +207,7 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
     model.eval()
     cells, baseline_predictions = [], []
     try:
-        for u_t, u_d in itertools.product(PILOT_SUPPORT, repeat=2):
+        for u_t, u_d in supported_evaluation_cells(model.config):
             placements = []
             for seed, schedule in distinct_schedules(u_t, u_d, mask_seeds):
                 total_loss, correct, changed, count = 0., 0, 0, 0
@@ -273,9 +287,10 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_fi
     if file_hash(checkpoint_path) != checkpoint_hash:
         raise ValueError('Checkpoint changed during evaluation; use a retained step checkpoint')
     report.update(checkpoint=str(checkpoint_path.resolve()), checkpoint_sha256=checkpoint_hash,
-                  checkpoint_step=checkpoint['iter_num'], manifest_hash=data.manifest_hash,
-                  model_args=checkpoint['model_args'], training_seed=config['seed'],
-                  training_schedule_seed=config['recurrence_seed'], device=device,
+                          checkpoint_step=checkpoint['iter_num'], manifest_hash=data.manifest_hash,
+                          model_args=checkpoint['model_args'], training_seed=config['seed'],
+                          recurrence_mode=RecurrentGPTConfig.from_checkpoint(checkpoint['model_args']).recurrence_mode,
+                          training_schedule_seed=config['recurrence_seed'], device=device,
                   dtype='float32', provenance=provenance())
     report['dataset_identity'] = dict(dataset=config['dataset'], manifest_hash=data.manifest_hash,
                                       validation_row_count=len(data.rows['val']),

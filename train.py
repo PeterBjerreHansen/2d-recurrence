@@ -21,7 +21,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from data_loader import ChessData
 from model import GPT, GPTConfig
-from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
+from models.recurrent_2d import (Recurrent2DGPT, RecurrentGPTConfig,
+                                 validate_recurrence_counts, validate_recurrence_distribution,
+                                 validate_recurrence_mode)
 from recurrence.schedule import RecurrenceScheduleSampler, sample_schedule
 from training_utils import append_json, atomic_save, capture_rng, provenance, restore_rng
 
@@ -34,7 +36,7 @@ DEFAULTS = dict(
     decay_lr=True, warmup_iters=2000, lr_decay_iters=600000, min_lr=3e-5,
     backend='nccl', device='cuda', dtype='bfloat16', compile=True, seed=1337,
     num_threads=4, architecture='baseline', n_prelude=1, n_core=4, n_coda=1, n_buffer=1, n_source=1,
-    recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729,
+    recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729, recurrence_mode='hybrid',
     eval_u_t=0, eval_u_d=0, keep_checkpoints=False, checkpoint_steps=None,
     eval_panel_path='', deep_supervision=False, deep_supervision_lambda=0.25,
     training_budget_seconds=0.0,
@@ -91,10 +93,16 @@ def train(config):
         raise ValueError('deep_supervision_lambda must be a finite nonnegative number')
     if recurrent and config['compile']:
         raise ValueError('Use compile=False for variable recurrent schedules in the MVP')
-    sampler = RecurrenceScheduleSampler(config['recurrence_support'], config['recurrence_probabilities'],
-                                         config['recurrence_seed']) if recurrent else None
     if recurrent:
+        validate_recurrence_mode(config['recurrence_mode'])
+        sampler = RecurrenceScheduleSampler(config['recurrence_support'], config['recurrence_probabilities'],
+                                             config['recurrence_seed'])
+        validate_recurrence_distribution(config['recurrence_mode'], config['recurrence_support'],
+                                         config['recurrence_probabilities'])
+        validate_recurrence_counts(config['recurrence_mode'], config['eval_u_t'], config['eval_u_d'])
         sample_schedule(config['eval_u_t'], config['eval_u_d'], random.Random(0))
+    else:
+        sampler = None
     if config['init_from'] not in ['scratch', 'resume']:
         raise ValueError('init_from must be scratch or resume')
     for key in ['batch_size', 'gradient_accumulation_steps', 'eval_interval', 'eval_iters', 'log_interval', 'num_threads']:
@@ -156,7 +164,8 @@ def train(config):
     model_args = {key: config[key] for key in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'dropout']}
     model_args['vocab_size'] = data.meta['vocab_size']
     if recurrent:
-        model_args.update({key: config[key] for key in ['n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda']})
+        model_args.update({key: config[key] for key in ['n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda',
+                                                        'recurrence_mode']})
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
     training_seconds = 0.0
