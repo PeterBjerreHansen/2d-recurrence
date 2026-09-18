@@ -127,13 +127,21 @@ class TemporalMixer(nn.Module):
             self.gates.bias[width:].fill_(math.log(0.9 / 0.1))
 
     def forward(self, prelude, shifted_memory):
-        memory = self.memory_norm(shifted_memory)
-        anchor = self.prelude_norm(prelude)
-        alpha, beta = self.gates(torch.cat((memory, anchor), dim=-1)).sigmoid().chunk(2, dim=-1)
-        mixed = alpha * self.memory_value(memory) + beta * self.prelude_value(anchor)
+        mixed = self._mix(prelude, shifted_memory)
         # Stored rows have no predecessor at position zero. Other zero-valued
         # memories are valid inputs, not a sentinel for absent state.
         return torch.cat((prelude[:, :1], mixed[:, 1:]), dim=1)
+
+    def _mix(self, prelude, memory):
+        memory = self.memory_norm(memory)
+        anchor = self.prelude_norm(prelude)
+        alpha, beta = self.gates(torch.cat((memory, anchor), dim=-1)).sigmoid().chunk(2, dim=-1)
+        return alpha * self.memory_value(memory) + beta * self.prelude_value(anchor)
+
+    def forward_step(self, prelude, previous_memory):
+        if prelude.ndim != 3 or previous_memory.ndim != 3 or prelude.shape[1] != 1 or previous_memory.shape[1] != 1:
+            raise ValueError('TemporalMixer.forward_step expects [batch, 1, width] tensors')
+        return self._mix(prelude, previous_memory)
 
 
 class DepthMixer(nn.Module):

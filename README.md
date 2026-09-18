@@ -80,7 +80,15 @@ uv run python -m evaluation.recurrence_grid \
 
 A provided panel evaluates every specified row exactly once. Without a panel the evaluator samples fixed batches with replacement. All nine pilot cells use identical batches; asymmetric cells have three distinct mask placements, and deterministic cells are evaluated once. Placement variation is not variation across training seeds. Reported FLOPs estimate forward matrix multiplications, not total training compute. State/gradient diagnostics probe one fixed batch without altering model gradients.
 
-All current recurrent evaluation and generation uses the **parallel training graph**. Generation must specify `--execution=training_graph` and recomputes the prefix using a fixed write schedule. Live temporal-feedback generation remains planned; in A it will run L2 once before the depth loop and L7 once after it. Do not interpret training update counts as live inference loop counts.
+Recurrent evaluation and generation support both the **parallel training graph**
+and fixed-depth **live** execution. Training-graph generation must specify
+`--execution=training_graph` and recomputes the prefix using a fixed write
+schedule. Live generation uses sequential prompt prefill, temporal feedback,
+and incremental KV caches; use `--execution=live --depth-steps J` for depth or
+hybrid checkpoints. The [live inference contract](docs/INFERENCE_CONTRACT.md)
+defines prompt handoff, cache policies, and the distinction between the two
+executions. Do not interpret training update counts as live inference loop
+counts.
 
 Generation samples without a legal-move mask and stops at the first completed illegal or malformed move, with no retry or repair. Reports retain the offending text, board, legal continuation length, and stop reason. Unfinished moves at a length/context limit count as truncation. Game separators are distinct from valid terminal board positions or declared results. Generation output defaults beside its checkpoint and refuses to overwrite an existing report.
 

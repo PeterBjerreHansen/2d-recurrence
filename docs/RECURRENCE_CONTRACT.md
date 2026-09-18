@@ -88,7 +88,14 @@ After the final pass, compute logits through $C(S(h_B))$, final normalization, a
 
 ## Execution scope
 
-This implements the parallel Jacobi-style training graph. Live-feedback generation is still a separate planned mode. For A at token time, mix incoming temporal memory into the prelude and run the buffer once; hold that resulting depth anchor fixed while iterating only the core. Then run the source and coda once. With $J$ core calls, A uses $4+4J$ block applications; B uses $2+6J$. Shared-source B emits the final core state directly. These block counts do not establish measured decoding latency.
+This implements the parallel Jacobi-style training graph. Fixed-depth
+live-feedback generation is a separate execution path documented in
+[`INFERENCE_CONTRACT.md`](INFERENCE_CONTRACT.md). For A at token time, mix
+incoming temporal memory into the prelude and run the buffer once; hold that
+resulting depth anchor fixed while iterating only the core. Then run the source
+and coda once. With $J$ core calls, A uses $4+4J$ block applications; B uses
+$2+6J$. Shared-source B emits the final core state directly. These block
+counts do not establish measured decoding latency.
 
 ## Reproducibility
 

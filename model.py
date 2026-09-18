@@ -75,6 +75,24 @@ class CausalSelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
         return y
 
+    def forward_step(self, x, cache, *, commit=True):
+        """Attend to cached history plus one current token."""
+        if x.ndim != 3 or x.shape[1] != 1:
+            raise ValueError('CausalSelfAttention.forward_step expects [batch, 1, channels] input')
+        B, _, C = x.size()
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        head_dim = C // self.n_head
+        q = q.view(B, 1, self.n_head, head_dim).transpose(1, 2)
+        k = k.view(B, 1, self.n_head, head_dim).transpose(1, 2)
+        v = v.view(B, 1, self.n_head, head_dim).transpose(1, 2)
+        keys, values = cache.candidates(k, v)
+        y = F.scaled_dot_product_attention(
+            q, keys, values, dropout_p=self.dropout if self.training else 0, is_causal=False)
+        if commit:
+            cache.append(k, v)
+        y = y.transpose(1, 2).contiguous().view(B, 1, C)
+        return self.resid_dropout(self.c_proj(y))
+
 class MLP(nn.Module):
 
     def __init__(self, config):
@@ -102,6 +120,11 @@ class Block(nn.Module):
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+    def forward_step(self, x, cache, *, commit=True):
+        x = x + self.attn.forward_step(self.ln_1(x), cache, commit=commit)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -153,6 +176,17 @@ class GPT(nn.Module):
         if not 1 <= length <= self.config.block_size:
             raise ValueError('Input length must be between 1 and the context limit')
         positions = torch.arange(length, dtype=torch.long, device=idx.device)
+        return self.transformer.drop(self.transformer.wte(idx) + self.transformer.wpe(positions))
+
+    def embed_step(self, idx, position):
+        """Embed one token at an absolute physical sequence position."""
+        if idx.ndim == 1:
+            idx = idx[:, None]
+        if idx.ndim != 2 or idx.shape[1] != 1:
+            raise ValueError('embed_step expects [batch] or [batch, 1] token IDs')
+        if not 0 <= position < self.config.block_size:
+            raise ValueError('Physical position exceeds the model context limit')
+        positions = torch.full((idx.shape[0], 1), position, dtype=torch.long, device=idx.device)
         return self.transformer.drop(self.transformer.wte(idx) + self.transformer.wpe(positions))
 
     def readout(self, h, targets=None):

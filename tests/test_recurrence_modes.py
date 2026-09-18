@@ -9,7 +9,7 @@ from data_loader import ChessData
 from model import GPT, GPTConfig
 from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
 from recurrence.schedule import sample_schedule
-from sample import effective_generation_counts
+from sample import effective_training_graph_counts
 from train import train
 
 
@@ -73,14 +73,14 @@ def test_mode_aware_evaluation_domains(mode, expected):
     ('depth', (0, 3)),
 ])
 def test_mode_aware_generation_defaults(mode, expected):
-    assert effective_generation_counts(mode) == expected
+    assert effective_training_graph_counts(mode) == expected
 
 
 def test_generation_defaults_preserve_explicit_other_axis():
-    assert effective_generation_counts('temporal', u_t=1) == (1, 0)
-    assert effective_generation_counts('depth', u_d=1) == (0, 1)
-    assert effective_generation_counts('hybrid', u_t=1) == (1, 3)
-    assert effective_generation_counts('hybrid', u_d=1) == (3, 1)
+    assert effective_training_graph_counts('temporal', u_t=1) == (1, 0)
+    assert effective_training_graph_counts('depth', u_d=1) == (0, 1)
+    assert effective_training_graph_counts('hybrid', u_t=1) == (1, 3)
+    assert effective_training_graph_counts('hybrid', u_d=1) == (3, 1)
 
 
 def test_feedback_diagnostic_requires_temporal_recurrence():

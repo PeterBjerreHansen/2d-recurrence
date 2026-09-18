@@ -281,7 +281,7 @@ Experiment source and concise reports are tracked. Each experiment owns an ignor
 
 ## Remaining decisions
 
-Mixer architecture, normalization, initialization, masking, and ordered site configuration are implemented and recorded in the contract. Variation A is the accepted default after the near-tied architecture comparison. A later training extension needs an explicit LR schedule beyond 10k updates. Stage 14 still needs prompt handoff and recurrent attention-cache semantics; fixed-depth live execution precedes cache optimization or an exit gate. No cleanup step launches a new experiment.
+Mixer architecture, normalization, initialization, masking, and ordered site configuration are implemented and recorded in the contract. Variation A is the accepted default after the near-tied architecture comparison. A later training extension needs an explicit LR schedule beyond 10k updates. Stage 14 fixed-depth live execution, slow-reference validation, recurrent attention-cache semantics, prompt handoff, and cache reporting are implemented. Adaptive exit remains a later extension. No cleanup step launches a new experiment.
 
 ## Immediate experimental progression
 
