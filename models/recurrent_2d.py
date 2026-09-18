@@ -157,8 +157,10 @@ class DepthMixer(nn.Module):
 class Recurrent2DGPT(GPT):
     def __init__(self, config):
         super().__init__(config)
-        self.temporal_mixer = TemporalMixer(config.n_embd, config.bias)
-        self.depth_mixer = DepthMixer(config.n_embd, config.bias)
+        self.temporal_mixer = (TemporalMixer(config.n_embd, config.bias)
+                               if config.uses_temporal_recurrence else None)
+        self.depth_mixer = (DepthMixer(config.n_embd, config.bias)
+                            if config.uses_depth_recurrence else None)
 
     def temporal_source(self, h):
         # With zero source blocks, temporal and depth candidates share the core output.
@@ -179,6 +181,7 @@ class Recurrent2DGPT(GPT):
                 return_components=False):
         if not isinstance(schedule, RecurrenceSchedule):
             raise TypeError('An explicit RecurrenceSchedule is required')
+        validate_recurrence_counts(self.config.recurrence_mode, schedule.u_t, schedule.u_d)
         if (isinstance(deep_supervision_lambda, bool) or
                 not isinstance(deep_supervision_lambda, (int, float)) or
                 not math.isfinite(deep_supervision_lambda) or
@@ -197,10 +200,18 @@ class Recurrent2DGPT(GPT):
         depth_state = None
         intermediate_losses = []
         for b in range(schedule.rounds):
-            anchor = p if temporal_state is None else self.temporal_mixer(p, shift_right(temporal_state))
+            if temporal_state is None:
+                anchor = p
+            else:
+                assert self.temporal_mixer is not None
+                anchor = self.temporal_mixer(p, shift_right(temporal_state))
             for index in range(self.config.n_prelude, core_start):
                 anchor = blocks[index](anchor)
-            h = anchor if depth_state is None else self.depth_mixer(depth_state, anchor)
+            if depth_state is None:
+                h = anchor
+            else:
+                assert self.depth_mixer is not None
+                h = self.depth_mixer(depth_state, anchor)
             for index in range(core_start, core_stop):
                 h = blocks[index](h)
             if b < schedule.rounds - 1:
