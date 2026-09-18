@@ -30,7 +30,7 @@ def main():
     files.update(Path('data/chess_v1') / name for name in ('prepare.py', 'meta.pkl'))  # Test fixtures.
     files.add(Path('docs/upstream.json'))
     files.add(panel_path)
-    files.add(Path('experiments/long_runs/baseline/panel.json'))
+    files.add(Path('experiments/sweeps/baseline_lr_selection/panel.json'))
     files.add(Path('experiments/relocations.json'))
     files.update(Path('data/chess_long_v1') / name for name in ('train.bin', 'val.bin', 'meta.pkl', 'manifest.json'))
     for path in files:

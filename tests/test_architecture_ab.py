@@ -17,8 +17,14 @@ from train import train
 def make_model(variant):
     settings = dict(n_layer=8, n_prelude=1, n_coda=1, n_head=2, n_embd=8,
                     block_size=6, vocab_size=32, dropout=0.0)
-    settings.update(dict(n_buffer=1, n_core=4, n_source=1) if variant == 'separated'
-                    else dict(n_buffer=0, n_core=6, n_source=0))
+    layouts = {
+        'separated': dict(n_buffer=1, n_core=4, n_source=1),
+        'coincident': dict(n_buffer=0, n_core=6, n_source=0),
+        # C keeps a destination buffer but shares the core output as both
+        # state candidates, isolating the buffer relative to B.
+        'buffered_coincident': dict(n_buffer=1, n_core=5, n_source=0),
+    }
+    settings.update(layouts[variant])
     return Recurrent2DGPT(RecurrentGPTConfig(**settings))
 
 
@@ -100,6 +106,30 @@ def test_zero_updates_and_source_diagnostics(variant):
         assert diag['source_output_rms'] == diag['core_output_rms']
 
 
+@pytest.mark.parametrize('variant', ['separated', 'coincident', 'buffered_coincident'])
+def test_zero_updates_equivalence_a_b_c_including_gradients(variant):
+    """Every named layout reduces exactly to the ordinary stack at zero updates."""
+    torch.manual_seed(41)
+    model = make_model(variant)
+    base = GPT(GPTConfig(n_layer=8, n_head=2, n_embd=8, block_size=6, vocab_size=32))
+    model.transformer.load_state_dict(base.transformer.state_dict())
+    x = torch.randint(32, (2, 6))
+    schedule = RecurrenceSchedule((), ())
+
+    expected_logits, expected_loss = base(x, x)
+    actual_logits, actual_loss = model(x, x, schedule=schedule)
+    torch.testing.assert_close(actual_logits, expected_logits, rtol=0, atol=0)
+    torch.testing.assert_close(actual_loss, expected_loss, rtol=0, atol=0)
+
+    expected_loss.backward()
+    actual_loss.backward()
+    actual_parameters = dict(model.named_parameters())
+    for name, parameter in base.named_parameters():
+        torch.testing.assert_close(actual_parameters[name].grad, parameter.grad, rtol=0, atol=0)
+    assert all(parameter.grad is None for parameter in model.temporal_mixer.parameters())
+    assert all(parameter.grad is None for parameter in model.depth_mixer.parameters())
+
+
 @pytest.mark.parametrize('variant', ['separated', 'coincident'])
 def test_exact_resume_for_both_architectures(variant, prepared_data, tmp_path):
     config = configuration(variant)
@@ -176,12 +206,15 @@ def test_runner_scores_late_checkpoints_and_checks_report_identity(tmp_path, mon
 def test_new_default_and_legacy_checkpoint_layouts_are_distinct():
     current = RecurrentGPTConfig()
     assert (current.n_prelude, current.n_buffer, current.n_core, current.n_source, current.n_coda) == (1, 1, 4, 1, 1)
+    assert current.temporal_source_output_index == current.source_index == current.coda_start - 1
     original = RecurrentGPTConfig.from_checkpoint(dict(n_layer=8, n_prelude=2, n_core=4, n_coda=1))
-    assert original.n_buffer == 0 and original.source_index == 6
+    assert original.n_buffer == 0
+    assert original.temporal_source_output_index == original.source_index == 6
     a = RecurrentGPTConfig.from_checkpoint(dict(n_layer=8, n_prelude=1, n_buffer=1, n_core=4, n_coda=1))
     b = RecurrentGPTConfig.from_checkpoint(dict(n_layer=8, n_prelude=1, n_core=6, n_source=0, n_coda=1))
     assert a == current
-    assert b.n_buffer == 0 and b.core_end == b.source_index == 6
+    assert b.n_buffer == 0
+    assert b.core_end == b.temporal_source_output_index == b.source_index == 6
 
 
 @pytest.mark.parametrize('counts', [(1, 2, 2, 2, 1), (0, 1, 3, 0, 0), (2, 0, 2, 3, 1)])

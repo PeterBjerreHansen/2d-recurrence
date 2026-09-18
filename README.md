@@ -9,7 +9,7 @@ embeddings -> L1 -> temporal mix -> L2 -> depth mix -> L3-L6 -> L7 -> L8 -> head
                       +-------- shifted temporal memory -----+
 ```
 
-Temporal memory comes from L7 and depth state from L6. Every available state is read; randomized masks control writes only. The prelude runs once per training trajectory. The buffer and core run on each pass; L7 runs for temporal writes and final prediction, and L8 runs only for final prediction. The [contract](docs/RECURRENCE_CONTRACT.md) contains the detailed sketch, equations, initialization, and masking semantics. See also the [proposal](proposal.md) and [implementation plan](implementation_plan.md).
+Temporal memory comes from L7 and depth state from L6. Every available state is read; randomized masks control writes only. The prelude runs once per training trajectory. The buffer and core run on each pass; L7 runs for temporal writes and final prediction, and L8 runs only for final prediction. The [contract](docs/RECURRENCE_CONTRACT.md) contains the detailed sketch, equations, initialization, and masking semantics. See also the [proposal](docs/proposal.md) and [implementation plan](docs/implementation_plan.md).
 
 A is the practical default after a near-tied [A/B comparison](experiments/ablations/architecture_sites/REPORT.md). B was slightly better at late predictive NLL, but below the predeclared selection margin. The implementation retains both layouts and configurable boundaries; the result does not establish a universal advantage for separation.
 
@@ -20,13 +20,13 @@ Use Python 3.11 and uv. The lockfile records dependencies. Commands run from the
 ```sh
 uv sync --frozen --python 3.11
 uv run pytest -q
-uv run python data/chess_v1/prepare.py --file lichess_100mb_blocks.zip --max-rows 4096 --out-dir data/smoke_real
-uv run python train.py configs/recurrent.py
+uv run python data/chess_v1/prepare.py --file lichess_100mb_blocks.zip --out-dir data/chess_long_v1
+uv run python train.py configs/local/recurrent_mps.py
 ```
 
-Reuse an existing prepared dataset only if its manifest matches; preparation refuses to overwrite one. `configs/recurrent.py` is a bounded MPS pilot of default A, with results under `experiments/long_runs/separated/results/`. For CUDA, explicitly override the device; CPU and MPS require float32. Keep compilation off for variable recurrence schedules. This pilot is not a new long-training recommendation.
+Reuse a prepared dataset only if its manifest matches. The MPS config is a bounded batch-8 local check, not the serious comparison profile. Use `configs/local/transformer_mps.py` for its ordinary-model counterpart. CPU smoke checks remain under `experiments/smoke/configs/`.
 
-For a small CPU pipeline check, use `experiments/smoke/configs/baseline.py` or `experiments/smoke/configs/recurrent.py`. These preserve historical small test architectures. `configs/baseline_chessgpt.py` retains the ordinary eight-layer reference and its long CUDA schedule; do not mistake it for a quick test.
+The serious CUDA settings, full-corpus protocol, supervision ablation and queued 1B/64B pairs are described in the [experiment index](experiments/README.md). Start with the [execution handoff](experiments/ablations/supervision_compute/HANDOFF.md). These runs use effective batch 100; creating configs does not launch training.
 
 ## Configurable architecture
 
@@ -46,13 +46,15 @@ The [experiment index](experiments/README.md) is the entry point for protocols, 
 
 ```text
 experiments/
-  ablations/architecture_sites/   # A versus B; configs/, run.py, REPORT.md, results/
-  sweeps/recurrence_grid/         # initial nine-cell evaluation, two seeds, results/
-  long_runs/
-    recurrence_pilot/            # 1k-update pilot continuation, results/
-    baseline/                    # LR selection + selected 10k run, results/
-    separated/                   # current default-A pilot, results/ when run
-  smoke/                         # pipeline checks, validation notes, results/
+  serious.py                     # shared frozen batch-100 CUDA profile
+  run_serious.py                  # benchmark, time-matched ablation, decision, paired runs
+  ablations/architecture_sites/  # retained A/B evidence
+  ablations/deep_supervision/     # retained cross-backend pilot
+  ablations/supervision_compute/ # new controlled objective comparison
+  sweeps/baseline_lr_selection/  # retained LR selection and 10k continuation
+  long_runs/{model}_{1B,64B}/     # transformer and recurrent_a, each with local results/
+  archive/early_pilots/           # reports and small artifacts; checkpoints retired
+  smoke/                         # runnable small checks and validation notes
 ```
 
 Each experiment owns its `results/`; there is no global results directory. Code, configs, protocols, and concise reports are tracked; checkpoints, logs, plots, and raw reports stay local and ignored. Shared datasets remain in `data/`. Original paths embedded in historical checkpoints and receipts are intentionally unchanged; [relocations.json](experiments/relocations.json) records where they moved. The architecture ablation retains its original transfer archive, which can reproduce the pre-cleanup source snapshot.
@@ -67,7 +69,7 @@ This reads the preserved protocol/checkpoints and writes derived summaries under
 
 ## Evaluation and execution modes
 
-Training samples exact update counts from a configured distribution and randomly places the writes. The default pilot uses counts in `{0,1,3}`. For each pair, the model performs `max(U_T,U_D)+1` passes, trains only the final prediction, and retains gradients through all held states. Evaluation uses independent fixed schedules without advancing training RNG.
+Training samples exact update counts from a configured distribution and randomly places the writes. The default schedule uses counts in `{0,1,3}`. For each pair, the model performs `max(U_T,U_D)+1` passes, trains only the final prediction, and retains gradients through all held states. Evaluation uses independent fixed schedules without advancing training RNG.
 
 ```sh
 uv run python -m evaluation.recurrence_grid \

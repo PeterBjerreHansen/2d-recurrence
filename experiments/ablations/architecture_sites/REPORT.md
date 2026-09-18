@@ -83,7 +83,7 @@ Using unique optimizer updates, separated clipped 425/10,000 updates (`4.25%`), 
 
 ## Preserved local MPS reference
 
-The existing `experiments/long_runs/baseline/results/lr3e-4` artifacts were not modified. They use MPS and the original recurrent shape (2 prelude, 4 core, 1 coda), so they are secondary and not an exact architecture match. They use the same selection panel and evaluator. At `(3,3)` selection NLL:
+The existing `experiments/sweeps/baseline_lr_selection/results/lr3e-4` artifacts were not modified. They use MPS and the original recurrent shape (2 prelude, 4 core, 1 coda), so they are secondary and not an exact architecture match. They use the same selection panel and evaluator. At `(3,3)` selection NLL:
 
 | Updates | Local MPS reference | CUDA separated | CUDA coincident |
 | ---: | ---: | ---: | ---: |

@@ -34,6 +34,12 @@ def test_aggregate_gradient_stats_logs_actual_clipping_and_rejects_nonfinite():
         aggregate_gradient_stats(model, scaler, optimizer, 1.0, 1)
 
 
+@pytest.mark.parametrize('weight', [True, False])
+def test_train_rejects_boolean_deep_supervision_weight(weight):
+    with pytest.raises(ValueError, match='deep_supervision_lambda'):
+        train({'deep_supervision_lambda': weight})
+
+
 def test_panel_restricts_routine_validation_and_resume_rejects_changed_panel(prepared_data, tmp_path,
                                                                                monkeypatch):
     data = ChessData(prepared_data, 8)

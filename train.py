@@ -1,7 +1,7 @@
 """ChessGPT baseline and two-axis recurrent training, adapted from Karvonen/nanoGPT.
 
     uv run python train.py experiments/smoke/configs/baseline.py
-    uv run python train.py configs/baseline_chessgpt.py --batch_size=16
+    uv run python -m experiments.run_serious pair --billions 1
     uv run torchrun --standalone --nproc_per_node=2 train.py --gradient_accumulation_steps=2
 
 Gradient accumulation is a global count split across DDP ranks, as in upstream.
@@ -26,7 +26,7 @@ from recurrence.schedule import RecurrenceScheduleSampler, sample_schedule
 from training_utils import append_json, atomic_save, capture_rng, provenance, restore_rng
 
 DEFAULTS = dict(
-    out_dir='experiments/long_runs/reference/results', dataset='chess_v1', init_from='scratch',
+    out_dir='experiments/manual/results', dataset='chess_v1', init_from='scratch',
     eval_interval=4000, eval_iters=100, log_interval=50, eval_only=False,
     n_layer=8, n_head=8, n_embd=512, block_size=1023, bias=False, dropout=0.0,
     batch_size=100, gradient_accumulation_steps=1, learning_rate=3e-4,
@@ -36,7 +36,8 @@ DEFAULTS = dict(
     num_threads=4, architecture='baseline', n_prelude=1, n_core=4, n_coda=1, n_buffer=1, n_source=1,
     recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729,
     eval_u_t=0, eval_u_d=0, keep_checkpoints=False, checkpoint_steps=None,
-    eval_panel_path='',
+    eval_panel_path='', deep_supervision=False, deep_supervision_lambda=0.25,
+    training_budget_seconds=0.0,
 )
 
 
@@ -77,7 +78,17 @@ def train(config):
     config = {**DEFAULTS, **config}
     if config['architecture'] not in ['baseline', 'recurrent']:
         raise ValueError('architecture must be baseline or recurrent')
+    budget = config['training_budget_seconds']
+    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget < 0:
+        raise ValueError('training_budget_seconds must be finite and nonnegative')
     recurrent = config['architecture'] == 'recurrent'
+    if config['deep_supervision'] and not recurrent:
+        raise ValueError('Deep supervision is currently supported for recurrent training only')
+    if (isinstance(config['deep_supervision_lambda'], bool) or
+            not isinstance(config['deep_supervision_lambda'], (int, float)) or
+            not math.isfinite(config['deep_supervision_lambda']) or
+            config['deep_supervision_lambda'] < 0):
+        raise ValueError('deep_supervision_lambda must be a finite nonnegative number')
     if recurrent and config['compile']:
         raise ValueError('Use compile=False for variable recurrent schedules in the MVP')
     sampler = RecurrenceScheduleSampler(config['recurrence_support'], config['recurrence_probabilities'],
@@ -111,6 +122,8 @@ def train(config):
         elif device != 'cpu':
             raise ValueError('DDP is supported on CPU or CUDA')
         dist.init_process_group(backend=config['backend'])
+    if budget and ddp:
+        raise ValueError('Time-budget training currently requires a single process')
     master = rank == 0
     if config['gradient_accumulation_steps'] % world_size:
         raise ValueError('Global gradient_accumulation_steps must be divisible by world size')
@@ -146,6 +159,7 @@ def train(config):
         model_args.update({key: config[key] for key in ['n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda']})
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
+    training_seconds = 0.0
     if config['init_from'] == 'resume':
         checkpoint = torch.load(out / 'ckpt.pt', map_location='cpu', weights_only=False)
         saved_args = checkpoint['model_args']
@@ -167,6 +181,7 @@ def train(config):
                 raise ValueError(f'Resume changes {key}; use a new run for changed training settings')
         step, best_val = checkpoint['iter_num'], checkpoint['best_val_loss']
         last_eval_step = checkpoint['last_eval_step']
+        training_seconds = checkpoint.get('training_seconds', 0.0)
     model = (Recurrent2DGPT(RecurrentGPTConfig(**model_args)) if recurrent
              else GPT(GPTConfig(**model_args))).to(device)
     if checkpoint:
@@ -244,6 +259,7 @@ def train(config):
             payload = dict(model=raw_model.state_dict(), optimizer=optimizer.state_dict(),
                              scaler=scaler.state_dict(), model_args=model_args, config=config,
                              iter_num=step, best_val_loss=best_val, last_eval_step=last_eval_step,
+                             training_seconds=training_seconds,
                              rng_by_rank=states, world_size=world_size, manifest_hash=data.manifest_hash,
                              meta=data.meta, provenance=run_info,
                              eval_panel_path=panel['path'] if panel else '',
@@ -265,7 +281,8 @@ def train(config):
 
     model.train()
     while True:
-        if config['eval_only'] or ((step % config['eval_interval'] == 0 or step == config['max_iters']) and step != last_eval_step):
+        exhausted = bool(budget and training_seconds >= budget)
+        if config['eval_only'] or ((step % config['eval_interval'] == 0 or step == config['max_iters'] or exhausted) and step != last_eval_step):
             # All ranks participate; raw-model evaluation avoids DDP synchronization asymmetry.
             metrics = evaluate()
             best_val = min(best_val, metrics['val_nll'])
@@ -276,9 +293,11 @@ def train(config):
                 append_json(out / 'metrics.jsonl', dict(event='evaluation', step=step, **label, **metrics))
             if not config['eval_only']:
                 save_checkpoint()
-        if config['eval_only'] or step >= config['max_iters']:
+        if config['eval_only'] or step >= config['max_iters'] or exhausted:
             break
-        lr = get_lr(step, config)
+        # A time-matched run decays by consumed training budget, not update count.
+        lr_step = config['lr_decay_iters'] * training_seconds / budget if budget else step
+        lr = get_lr(lr_step, config)
         for group in optimizer.param_groups:
             group['lr'] = lr
         if device_type == 'mps':
@@ -287,6 +306,9 @@ def train(config):
             torch.cuda.synchronize()
         started = time.perf_counter()
         loss_sum = 0.0
+        final_loss_sum = 0.0
+        intermediate_loss_sum = 0.0
+        intermediate_weight = 0.0
         schedules = []
         for micro_step in range(accumulation):
             if ddp:
@@ -298,11 +320,22 @@ def train(config):
                 kwargs['schedule'] = schedule
                 schedules.append(dict(u_t=schedule.u_t, u_d=schedule.u_d, rounds=schedule.rounds))
             with context():
-                _, loss = model(x, y, **kwargs)
+                if recurrent:
+                    _, loss, components = model(
+                        x, y, deep_supervision=config['deep_supervision'],
+                        deep_supervision_lambda=config['deep_supervision_lambda'],
+                        return_components=True, **kwargs)
+                else:
+                    _, loss = model(x, y, **kwargs)
+                    components = dict(final_loss=loss, intermediate_loss=None)
                 scaled_loss = loss / accumulation
             if not torch.isfinite(loss):
                 raise FloatingPointError(f'Non-finite loss at step {step}')
             loss_sum += loss.detach().item() / accumulation
+            final_loss_sum += components['final_loss'].detach().item() / accumulation
+            if components['intermediate_loss'] is not None:
+                intermediate_loss_sum += components['intermediate_loss'].detach().item() / accumulation
+                intermediate_weight += 1 / accumulation
             scaler.scale(scaled_loss).backward()
         gradient_stats = aggregate_gradient_stats(model, scaler, optimizer, config['grad_clip'], step)
         scaler.step(optimizer)
@@ -314,6 +347,7 @@ def train(config):
             torch.cuda.synchronize()
         step += 1
         elapsed = time.perf_counter() - started
+        training_seconds += elapsed
         if (config['keep_checkpoints'] and config['checkpoint_steps'] is not None and
                 step in config['checkpoint_steps'] and step != last_eval_step):
             # Retain requested curve snapshots even when they are not eval_interval boundaries.
@@ -322,7 +356,12 @@ def train(config):
         if master and (step % config['log_interval'] == 0 or step == 1):
             print(f'step {step}: loss {loss_sum:.4f}, {elapsed:.3f}s', flush=True)
             append_json(out / 'metrics.jsonl', dict(event='train', step=step, nll=loss_sum, lr=lr,
-                                                   seconds=elapsed, statistics='accumulated_update',
+                                                   final_nll=final_loss_sum,
+                                                   intermediate_nll=(intermediate_loss_sum / intermediate_weight
+                                                                     if intermediate_weight else None),
+                                                   deep_supervision=config['deep_supervision'],
+                                                   deep_supervision_lambda=config['deep_supervision_lambda'],
+                                                   seconds=elapsed, training_seconds=training_seconds, statistics='accumulated_update',
                                                    **gradient_stats,
                                                    characters_processed=step * effective_batch * config['block_size'],
                                                    characters_this_update=effective_batch * config['block_size'],

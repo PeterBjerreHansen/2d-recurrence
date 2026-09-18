@@ -66,6 +66,73 @@ def test_zero_updates_exactly_matches_baseline_and_gradients():
     assert model.lm_head.weight is model.transformer.wte.weight
 
 
+def test_deep_supervision_is_normalized_and_has_no_one_pass_term():
+    torch.manual_seed(31)
+    model = tiny_model()
+    reference = copy.deepcopy(model)
+    x = torch.randint(32, (2, 12))
+    two_pass = RecurrenceSchedule((True,), (True,))
+
+    plain_logits, plain_loss = reference(x, x, schedule=two_pass)
+    logits, objective, components = model(
+        x, x, schedule=two_pass, deep_supervision=True,
+        deep_supervision_lambda=.25, return_components=True)
+    torch.testing.assert_close(logits, plain_logits, rtol=0, atol=0)
+    torch.testing.assert_close(components['final_loss'], plain_loss, rtol=0, atol=0)
+    assert components['intermediate_passes'] == 1
+    expected = (plain_loss + .25 * components['intermediate_loss']) / 1.25
+    torch.testing.assert_close(objective, expected, rtol=0, atol=0)
+
+    one_reference_logits, one_reference_loss = reference(
+        x, x, schedule=RecurrenceSchedule((), ()))
+    one_pass_logits, one_pass_loss, one_pass_components = model(
+        x, x, schedule=RecurrenceSchedule((), ()), deep_supervision=True,
+        deep_supervision_lambda=.25, return_components=True)
+    assert one_pass_components['intermediate_loss'] is None
+    assert one_pass_components['intermediate_passes'] == 0
+    torch.testing.assert_close(one_pass_logits, one_reference_logits, rtol=0, atol=0)
+    torch.testing.assert_close(one_pass_loss, one_pass_components['final_loss'], rtol=0, atol=0)
+    torch.testing.assert_close(one_pass_loss, one_reference_loss, rtol=0, atol=0)
+
+
+def test_zero_auxiliary_weight_skips_auxiliary_forwards_and_rng_consumption():
+    torch.manual_seed(37)
+    model = tiny_model(dropout=0.2).train()
+    reference = copy.deepcopy(model).train()
+    x = torch.randint(32, (2, 12))
+    schedule = RecurrenceSchedule((False,), (True,))
+    calls = Counter()
+    handle = model.transformer.h[model.config.temporal_source_output_index].register_forward_hook(
+        lambda module, args, output: calls.update(['temporal_source']))
+    rng_state = torch.get_rng_state()
+    try:
+        torch.set_rng_state(rng_state)
+        expected_logits, expected_loss = reference(x, x, schedule=schedule)
+        expected_rng_state = torch.get_rng_state()
+        torch.set_rng_state(rng_state)
+        actual_logits, actual_loss, components = model(
+            x, x, schedule=schedule, deep_supervision=True,
+            deep_supervision_lambda=0.0, return_components=True)
+        actual_rng_state = torch.get_rng_state()
+    finally:
+        handle.remove()
+    torch.testing.assert_close(actual_logits, expected_logits, rtol=0, atol=0)
+    torch.testing.assert_close(actual_loss, expected_loss, rtol=0, atol=0)
+    assert torch.equal(actual_rng_state, expected_rng_state)
+    assert calls['temporal_source'] == 1
+    assert components['intermediate_loss'] is None
+    assert components['intermediate_passes'] == 0
+
+
+@pytest.mark.parametrize('weight', [True, False])
+def test_boolean_deep_supervision_weight_is_rejected(weight):
+    model = tiny_model()
+    x = torch.randint(32, (2, 12))
+    with pytest.raises(ValueError, match='deep_supervision_lambda'):
+        model(x, x, schedule=RecurrenceSchedule((True,), (True,)),
+              deep_supervision=True, deep_supervision_lambda=weight)
+
+
 @pytest.mark.parametrize('masks', [((True, True, True), (True, False, False)),
                                   ((True, False, False), (True, True, True)),
                                   ((False, False, True), (True, True, True)),

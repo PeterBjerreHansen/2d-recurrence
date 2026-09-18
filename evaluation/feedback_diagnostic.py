@@ -39,7 +39,7 @@ def run_batch(model, x, y, device, permutation=None):
     handle = None
     call_count = {'value': 0}
     if permutation is not None:
-        source_index = model.config.source_index
+        source_index = model.config.temporal_source_output_index
         source = model.transformer.h[source_index]
 
         def swap_first_source_output(module, inputs, output):

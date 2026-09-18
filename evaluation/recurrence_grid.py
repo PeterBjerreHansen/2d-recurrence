@@ -57,7 +57,7 @@ def compute_estimate(config, schedule, length):
 def trajectory_diagnostics(model, x, y, schedule):
     """One eval-mode backward probe; autograd.grad leaves parameter .grad untouched."""
     core_end = model.config.core_end
-    source_index = model.config.source_index
+    source_index = model.config.temporal_source_output_index
     norms = {
         'prelude_output_rms': [], 'core_output_rms': [], 'source_output_rms': [],
         'mixer_input_rms': {'temporal': [], 'depth': []},
@@ -152,7 +152,8 @@ def trajectory_diagnostics(model, x, y, schedule):
                 index = int(name.split('.')[2])
                 group = ('prelude' if index < model.config.n_prelude else
                          'buffer' if index < model.config.core_start else
-                         'core' if index <= core_end else 'source' if index < model.config.coda_start else 'coda')
+                         'core' if index < model.config.core_stop else
+                         'source' if index < model.config.source_stop else 'coda')
             else:
                 group = name.split('.')[0] if 'mixer' in name else 'embedding_and_head'
             groups.setdefault(group, None)

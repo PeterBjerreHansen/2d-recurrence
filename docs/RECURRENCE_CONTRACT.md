@@ -29,6 +29,14 @@ The implementation uses one ordered `ModuleList` and five block counts. It does 
 
 Counts must be nonnegative integers, sum to `n_layer`, and leave a nonempty core. A zero buffer makes the destinations adjacent; a zero source makes both state candidates the same core output. Buffer and source segments may contain more than one block. Temporal injection always precedes depth injection, and the temporal source is at or after the depth source. Arbitrary crossed connections are outside this interface.
 
+The implementation exposes half-open segment boundaries (`core_start:core_stop`,
+`source_start:source_stop`, and `coda_start:n_layer`). The separately named
+`temporal_source_output_index` identifies the block whose output is stored as
+temporal memory; when `n_source=0`, it is the final core block. The older
+`source_index` property remains a compatibility alias. Diagnostic hooks should
+use `temporal_source_output_index` so the temporal-memory source is not confused
+with the coda.
+
 In one-based block numbering, temporal injection is after `n_prelude`; depth injection is after `n_prelude + n_buffer`; the depth source is after those blocks plus `n_core`; the temporal source is after those blocks plus `n_source`. Thus A injects temporal state after L1 and depth state after L2, and reads sources after L6 and L7. B injects both after L1 and takes both candidates after L7. At zero updates, every layout executes the same ordinary backbone once in physical block order.
 
 ## Schedule and reads
