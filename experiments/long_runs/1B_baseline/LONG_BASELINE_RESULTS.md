@@ -26,7 +26,7 @@ No 64B run was launched.
 - Mask-placement seeds: 11, 23, and 37. The evaluator labels these as population variation across placements, not variation across training seeds.
 - The model, optimizer, recurrence distribution, objective, and learning-rate schedule were kept fixed. The recurrent 1B member used the locked final-only supervision choice.
 
-The full provenance receipts are in [`environment.json`](../experiments/ablations/supervision_compute/results/environment.json), [`protocol.json`](../experiments/ablations/supervision_compute/results/protocol.json), [`panel.json`](../experiments/ablations/supervision_compute/results/panel.json), and [`decision.json`](../experiments/ablations/supervision_compute/results/decision.json).
+The full provenance receipts are in [`environment.json`](../../ablations/supervision_compute/results/environment.json), [`protocol.json`](../../ablations/supervision_compute/results/protocol.json), [`panel.json`](../../ablations/supervision_compute/results/panel.json), and [`decision.json`](../../ablations/supervision_compute/results/decision.json).
 
 ## Supervision selection
 
@@ -46,7 +46,7 @@ The two ablations were then trained for the frozen equal-time budget:
 | Final-only | 2,188.406 | 2,397 | 245,213,100 | 0.446943 |
 | Deep supervision | 2,187.651 | 2,089 | 213,704,700 | 0.472899 |
 
-Final-only won the predeclared selection comparison. The recorded reason and report hashes are in [`decision.json`](../experiments/ablations/supervision_compute/results/decision.json).
+Final-only won the predeclared selection comparison. The recorded reason and report hashes are in [`decision.json`](../../ablations/supervision_compute/results/decision.json).
 
 ### Selection-panel NLL grids
 
@@ -68,7 +68,7 @@ Deep supervision:
 | 1 | 0.481404 | 0.473683 | 0.475157 |
 | 3 | 0.482249 | 0.474441 | **0.472899** |
 
-The final-only and deep selection reports are [`evaluation-selection.json`](../experiments/ablations/supervision_compute/results/final/evaluation-selection.json) and [`evaluation-selection.json`](../experiments/ablations/supervision_compute/results/deep/evaluation-selection.json), respectively. The selected final-only confirmation report is [`evaluation-confirmation.json`](../experiments/ablations/supervision_compute/results/final/evaluation-confirmation.json).
+The final-only and deep selection reports are [`evaluation-selection.json`](../../ablations/supervision_compute/results/final/evaluation-selection.json) and [`evaluation-selection.json`](../../ablations/supervision_compute/results/deep/evaluation-selection.json), respectively. The selected final-only confirmation report is [`evaluation-confirmation.json`](../../ablations/supervision_compute/results/final/evaluation-confirmation.json).
 
 ## 1B pair
 
@@ -88,25 +88,25 @@ For clarity, the recurrent selection grid's key cells are:
 | `(0,3)` depth-only | 0.308493 | 0.884084 |
 | `(3,3)` combined refinement | 0.302989 | 0.885707 |
 
-The confirmation grid gives the same ordering: `(0,0)` 0.323541, `(1,0)` 0.308446, `(0,3)` 0.306195, and `(3,3)` 0.301109. The complete selection and confirmation reports are in the [`transformer_1B/results`](../experiments/long_runs/transformer_1B/results/) and [`recurrent_a_1B/results`](../experiments/long_runs/recurrent_a_1B/results/) directories.
+The confirmation grid gives the same ordering: `(0,0)` 0.323541, `(1,0)` 0.308446, `(0,3)` 0.306195, and `(3,3)` 0.301109. The complete selection and confirmation reports are in the [`transformer_1B/results`](transformer_1B/results/) and [`recurrent_a_1B/results`](recurrent_a_1B/results/) directories.
 
 ## Interpretation and diagnostics
 
 - The ablation decides the supervision objective, not whether recurrence is useful. Final-only is cheaper and performed better at matched time, so the recurrent 1B continuation used final-only loss.
 - In the longer recurrent pilot, temporal-only execution improves over `(0,0)`, depth-only also improves, and `(3,3)` is best. This is a training-graph execution comparison from one recurrent checkpoint; it is not a new architecture or a new training sweep.
-- The recurrent `(3,3)` selection cell has prediction-change rate 0.047780 and the confirmation cell 0.047600. This confirms that the live-feedback path changes predictions, but diagnostic gradient or prediction changes alone are not proof of useful recurrence; the matched baseline comparison supplies the useful-evidence test here.
+- The recurrent `(3,3)` selection cell has prediction-change rate 0.047780 and the confirmation cell 0.047600. This confirms that the recurrent training-graph path changes predictions, but diagnostic gradient or prediction changes alone are not proof of useful recurrence; the matched baseline comparison supplies the useful-evidence test here.
 - Placement variation is limited to the three declared mask seeds. Nonzero placement standard deviations occur in cells with multiple possible write placements; they must not be reported as seed error bars.
 - The evaluation reports mark the recurrent measurements as `execution: training_graph`. They do not claim that a generated training graph is equivalent to live external feedback beyond the model semantics defined in the recurrence contract.
 
 ## Interruptions and resumability
 
-The first spot VM was preempted during the deep-supervision ablation; deep resumed from a durable checkpoint and completed. A later spot VM was preempted during recurrent 1B training; rerunning the exact pair command verified the completed transformer and resumed recurrent from its durable checkpoint. No completed checkpoint was overwritten. The durable run logs are in [`remote_logs`](../experiments/ablations/supervision_compute/results/remote_logs/).
+The first spot VM was preempted during the deep-supervision ablation; deep resumed from a durable checkpoint and completed. A later spot VM was preempted during recurrent 1B training; rerunning the exact pair command verified the completed transformer and resumed recurrent from its durable checkpoint. No completed checkpoint was overwritten. The durable run logs are in [`remote_logs`](../../ablations/supervision_compute/results/remote_logs/).
 
 ## Raw artifacts
 
-- [`supervision_compute/results`](../experiments/ablations/supervision_compute/results/)
-- [`transformer_1B/results`](../experiments/long_runs/transformer_1B/results/)
-- [`recurrent_a_1B/results`](../experiments/long_runs/recurrent_a_1B/results/)
+- [`supervision_compute/results`](../../ablations/supervision_compute/results/)
+- [`transformer_1B/results`](transformer_1B/results/)
+- [`recurrent_a_1B/results`](recurrent_a_1B/results/)
 - [`LONG_BASELINE_CURVES.png`](LONG_BASELINE_CURVES.png)
 - [`LONG_BASELINE_GRID.png`](LONG_BASELINE_GRID.png)
 

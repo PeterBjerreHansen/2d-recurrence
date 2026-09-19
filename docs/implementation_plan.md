@@ -1,6 +1,6 @@
 # Implementation Plan: Two-Axis Recurrent Character-Level Chess Transformer
 
-Stages 0–9 and the subsequent longer baseline and architecture A/B comparison are complete. Variation A is now the default; the model retains configurable ordered injection and source boundaries. See the [experiment index](../experiments/README.md) for protocols, results, and historical validations. Live-feedback generation remains Stage 14.
+Stages 0–9, the subsequent longer baseline and architecture A/B comparison, and the fixed-depth portion of Stage 14 are complete. Variation A is now the default; the model retains configurable ordered injection and source boundaries. See the [experiment index](../experiments/README.md) for protocols, results, and historical validations. Adaptive live-depth exit remains future work.
 
 ## Governing contract
 
@@ -185,7 +185,7 @@ Use small deterministic models and controlled dropout for semantic tests. The fo
 | Gradients | Compare a held-state trajectory against an explicit unrolled reference and confirm gradients reach the original state-producing core or temporal-source execution through later reads. Check finite gradients through all used modules; do not demand gradients through unused branches in reductions. |
 | Support and resume | Execute every pilot cell and several valid schedules with finite activations, losses, gradients, and correct shapes. Check model, optimizer, and sampler resume, including DDP schedule agreement. |
 
-Add tests for inference semantics when that implementation is introduced. These should compare optimized and reference implementations of the same mode, not require equality between live feedback and the training graph.
+Inference semantics are covered by tests comparing optimized and reference implementations of the same mode; they do not require equality between live feedback and the training graph.
 
 ## Stage 9: Hybrid signs-of-life experiments
 
@@ -219,6 +219,10 @@ Only then specify an adaptive scheduler's objective, reward estimator, compute n
 
 ## Stage 14: Live feedback inference and optimization
 
+Status: fixed-depth live execution, slow-reference validation, recurrent
+attention-cache semantics, prompt handoff, and cache reporting are implemented.
+Adaptive exit and broader live-checkpoint experiments remain future work.
+
 ### Fixed-depth live execution
 
 For the current token $x_t$, compute its prelude representation using the causal prefix context and mix it with incoming memory $m_{t-1}$. Run the buffer once, then hold this memory and the resulting depth anchor fixed while the depth core iterates. Reset depth state to absent for each new token. The first core call uses the anchor directly; every additional call uses the preceding depth output mixed with that same anchor.
@@ -227,11 +231,11 @@ After the final core call, run the temporal-source block once and store its raw 
 
 ### References, prefill, and caching
 
-Maintain two reference paths: exact full-sequence recomputation of the training graph for a specified write schedule, and a slow live-feedback implementation preserving historical temporal memories while looping depth within each token. Disable dropout for numerical comparisons. Test each optimized path against its corresponding reference. Measure divergence between the two modes without treating it as an implementation failure by itself.
+The implementation maintains two reference paths: exact full-sequence recomputation of the training graph for a specified write schedule, and a slow live-feedback implementation preserving historical temporal memories while looping depth within each token. Disable dropout for numerical comparisons. Test each optimized path against its corresponding reference. Measure divergence between the two modes without treating it as an implementation failure by itself.
 
-Before KV optimization, explicitly define prompt prefill, which memory is handed to continuation, positional handling, and the historical attention context used by each depth iteration. The temporal reference repository's handoff behavior is a precedent, not a substitute for specifying the hybrid. Do not silently combine KV state from one execution with memory from another. Cache identity must account for the relevant layer and recurrent execution; variable depth across tokens requires its own policy before adaptive stopping is enabled.
+The [inference contract](INFERENCE_CONTRACT.md) defines prompt prefill, which memory is handed to continuation, positional handling, and the historical attention context used by each depth iteration. The temporal reference repository's handoff behavior is a precedent, not a substitute for specifying the hybrid. Do not silently combine KV state from one execution with memory from another. Cache identity accounts for the relevant layer and recurrent execution; variable depth across tokens requires its own policy before adaptive stopping is enabled.
 
-Then implement and verify prelude, buffer, temporal-source, and coda KV caching, recurrent-core caching, temporal memory storage, and efficient loop execution. Keep the slow reference available as the correctness oracle for each mode.
+The implementation verifies prelude, buffer, temporal-source, and coda KV caching, recurrent-core caching, temporal memory storage, and fixed-depth loop execution. Keep the slow reference available as the correctness oracle for each mode.
 
 ### Later exit gate
 
@@ -257,7 +261,7 @@ experiments/
   ablations/supervision_compute/ # immediate time-matched objective comparison
   ablations/deep_supervision/    # retained cross-backend pilot
   sweeps/baseline_lr_selection/  # retained LR experiment
-  long_runs/{model}_{1B,64B}/    # paired serious profiles, own results/
+  long_runs/{1B_baseline,64B_core}/ # paired serious profiles, own results/
   archive/early_pilots/          # reports only; obsolete checkpoints retired
   smoke/                        # small pipeline checks and historical validations
   relocations.json              # old paths in immutable provenance -> current locations
@@ -276,7 +280,7 @@ Experiment source and concise reports are tracked. Each experiment owns an ignor
 2. On the MVP branch, extract the recurrence contract, refactor prelude/buffer/core/source/coda, and prove $(0,0)$ equivalence.
 3. Implement the checkpointable sampler, temporal-source block and shifted reads, temporal mixer, depth mixer, and complete trajectory. Verify ordering, held-state reads and gradients, causality, reductions, and resume.
 4. Train and evaluate the $\{0,1,3\}^2$ pilot. Establish useful behavior before expanding to $\{0,\ldots,7\}^2$ or substantial component-baseline runs.
-5. Extend compute-controlled comparisons, curriculum and supervision experiments, and live-feedback inference according to the signal. Optimize fixed-depth inference before adding an exit gate.
+5. Use the completed fixed-depth live-inference path for checkpoint evaluation, then extend compute-controlled comparisons, curriculum and supervision experiments according to the signal. Optimize adaptive live-depth exit only after fixed-depth behavior is characterized.
 6. Pursue self-play and interpretability after supervised recurrence results justify them.
 
 ## Remaining decisions
@@ -285,4 +289,4 @@ Mixer architecture, normalization, initialization, masking, and ordered site con
 
 ## Immediate experimental progression
 
-The maintained run protocol is [the experiment index](../experiments/README.md), with commands in [the supervision handoff](../experiments/ablations/supervision_compute/HANDOFF.md). First benchmark and compare final-only versus normalized deep supervision at equal measured A6000 training time. Record the reviewed supervision default, then execute the data-matched transformer/A 1B pair. The 64B profiles are prepared future runs, not an automatic continuation. They use the full pinned Lichess corpus and effective batch 100; the MPS profiles are local checks. After the first substantial pair, validate live-feedback inference, expand the evaluation grid, and define separately trained temporal-only/depth-only controls with matching pass-count distributions and explicit compute accounting.
+The maintained run protocol is [the experiment index](../experiments/README.md), with commands in [the supervision handoff](../experiments/ablations/supervision_compute/HANDOFF.md). The measured supervision comparison and matched transformer/A 1B pair are complete; the final-only objective is recorded in [LONG_BASELINE_RESULTS.md](../experiments/long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). The 64B profiles are prepared future runs, not an automatic continuation. They use the full pinned Lichess corpus and effective batch 100; the MPS profiles are local checks. Next, validate live-feedback inference on the completed recurrent checkpoint, then decide whether to expand the evaluation grid or freeze separately trained temporal-only/depth-only controls with matching pass-count distributions and explicit compute accounting.

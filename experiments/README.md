@@ -4,9 +4,9 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 
 | Experiment | Status and role |
 | --- | --- |
-| [Supervision compute ablation](ablations/supervision_compute/README.md) | Next: equal measured A6000 training-time comparison, final-only versus normalized deep supervision |
-| [Transformer 1B](long_runs/transformer_1B/README.md) / [A 1B](long_runs/recurrent_a_1B/README.md) | Queued definitions; require a reviewed supervision decision; equal data exposure |
-| [Transformer 64B](long_runs/transformer_64B/README.md) / [A 64B](long_runs/recurrent_a_64B/README.md) | Future reference-scale profiles; never launched automatically |
+| [Supervision compute ablation](ablations/supervision_compute/README.md) | Completed equal measured A6000 training-time comparison; final-only supervision selected |
+| [Transformer 1B](long_runs/1B_baseline/transformer_1B/README.md) / [A 1B](long_runs/1B_baseline/recurrent_a_1B/README.md) | Completed matched 1B pair using the selected final-only objective |
+| [Transformer 64B](long_runs/64B_core/transformer_64B/README.md) / [A 64B](long_runs/64B_core/recurrent_a_64B/README.md) | Prepared reference-scale profiles; no 64B run launched |
 | [Architecture sites](ablations/architecture_sites/README.md) | Retained completed A/B comparison; A is the practical default |
 | [Deep-supervision pilot](ablations/deep_supervision/README.md) | Retained cross-backend observations, not a controlled overhead comparison |
 | [Baseline LR selection](sweeps/baseline_lr_selection/README.md) | Retained LR sweep and selected 10k continuation |
@@ -31,4 +31,4 @@ The architecture ablation, LR sweep, and supervision pilot keep their source, re
 
 The early 100/1,000-update pilots and old smoke checkpoints were retired to reduce clutter. Their reports and small artifacts remain, but obsolete launch scripts and large checkpoints do not. [relocations.json](relocations.json) preserves old paths and marks retired records. Historical JSON and checkpoint contents are not rewritten to look like new runs.
 
-After the first 1B pair: validate live feedback and evaluate a wider update grid. The separately trained temporal-only and depth-only component scaffold now exists under `ablations/recurrence_axes/`, but it is not a final frozen protocol and no expensive run is launched automatically.
+The 1B pair is complete and documented in [LONG_BASELINE_RESULTS.md](long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). Next, validate the implemented live-feedback path on the completed recurrent checkpoint and decide whether a wider update grid or a frozen recurrence-axis experiment is warranted. The separately trained temporal-only and depth-only component scaffold exists under `ablations/recurrence_axes/`, but it is not a final frozen protocol and no expensive run is launched automatically.
