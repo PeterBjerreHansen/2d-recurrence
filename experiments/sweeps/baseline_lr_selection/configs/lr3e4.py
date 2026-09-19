@@ -2,7 +2,7 @@
 architecture = 'recurrent'
 n_buffer = 0
 n_source = 1  # Historical layout; do not inherit the new A default.
-dataset = 'chess_long_v1'
+dataset = 'chess_143K_v1'
 eval_panel_path = 'experiments/sweeps/baseline_lr_selection/panel.json'
 n_layer = 8
 n_head = 8

@@ -45,7 +45,7 @@ def freeze():
         raise RuntimeError('This experiment requires CUDA; CPU tests are separate')
     if torch.cuda.device_count() != 1 or 'RTX A6000' not in torch.cuda.get_device_name(0):
         raise RuntimeError('Expected one RTX A6000; do not silently substitute hardware')
-    data = ChessData('data/chess_long_v1', 1023)
+    data = ChessData('data/chess_143K_v1', 1023)
     panel = load_panel('experiments/ablations/architecture_sites/panel.json', data, split='selection')
     receipt = dict(files=source_hashes(), dataset_manifest_hash=data.manifest_hash,
                    panel_sha256=panel['sha256'], torch=torch.__version__, cuda=torch.version.cuda,

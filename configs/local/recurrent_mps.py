@@ -1,7 +1,7 @@
 # Bounded local check; deliberately not a serious-run comparison.
 architecture = 'recurrent'
 out_dir = 'experiments/smoke/results/recurrent_mps'
-dataset = 'chess_long_v1'
+dataset = 'chess_143K_v1'
 n_layer = 8
 n_head = 8
 n_embd = 512

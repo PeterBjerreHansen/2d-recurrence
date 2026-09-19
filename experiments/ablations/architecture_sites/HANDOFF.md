@@ -15,7 +15,7 @@ Every available state is read. Masks control writes; held states remain differen
 
 Both use eight blocks, width 512, eight heads, context 1,023, zero dropout, AdamW at peak LR 3e-4/minimum 3e-5, warmup 100, cosine horizon 10,000, clip 1, batch size 2 with accumulation 4, model/data seed 1337, schedule seed 1729, and the existing distribution over update counts 0/1/3. One schedule is drawn per microbatch: do not replace accumulation with a larger batch. Each model sees 81.84 million target characters. Use CUDA float32 with the trainer's existing TF32 setting, eager execution, one GPU, and no autocast/compile changes. These settings favor comparability over maximum GPU throughput. Evaluation runs in float32 with its own default CUDA backend settings, identical for A and B; save those settings in the environment receipt. Do not claim bitwise equivalence with MPS.
 
-Use the existing full `data/chess_long_v1` dataset (143,017 train rows, 1,445 validation rows) and unchanged `experiments/sweeps/baseline_lr_selection/results/panels.json` (128 selection rows, the remaining 1,317 confirmation rows). Selection evaluation covers all nine recurrence cells and all 13 distinct pilot mask placements. Do not regenerate a smaller dataset or resample the panel.
+Use the existing full `data/chess_143K_v1` dataset (143,017 train rows, 1,445 validation rows) and unchanged `experiments/sweeps/baseline_lr_selection/results/panels.json` (128 selection rows, the remaining 1,317 confirmation rows). Selection evaluation covers all nine recurrence cells and all 13 distinct pilot mask placements. Do not regenerate a smaller dataset or resample the panel.
 
 ## Budget and VM preparation
 

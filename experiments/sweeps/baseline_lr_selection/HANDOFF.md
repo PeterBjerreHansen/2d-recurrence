@@ -37,7 +37,7 @@ Prepare the full pinned archive into a new data directory. Do not pass `--max-ro
 uv run python data/chess_v1/prepare.py \
   --file lichess_100mb_blocks.zip \
   --revision 1a932e1abca935aae585f417ede39ecde4f2a620 \
-  --out-dir data/chess_long_v1 --seed=2357 --val-fraction=0.01
+  --out-dir data/chess_143K_v1 --seed=2357 --val-fraction=0.01
 ```
 
 If that directory already exists, verify its source revision, archive, uncapped preparation, split settings, hashes, and completion manifest. Reuse it only if it matches. Preserve the existing preparation checks, vocabulary, row alignment, and within-row boundary semantics. Do not silently deduplicate differently or change the split to make preparation pass. Record actual rows and characters; the archive filename is not a reliable row count.

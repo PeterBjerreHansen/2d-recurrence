@@ -7,7 +7,7 @@ Read `experiments/serious.py` and this experiment's README. The first job is the
 ```sh
 uv sync --frozen --python 3.11
 uv run pytest -q
-uv run python data/chess_v1/prepare.py --file lichess_6gb_blocks.zip --revision 1a932e1abca935aae585f417ede39ecde4f2a620 --out-dir data/chess_full_v1
+uv run python data/chess_v1/prepare.py --file lichess_6gb_blocks.zip --revision 1a932e1abca935aae585f417ede39ecde4f2a620 --out-dir data/chess_8M_v1
 uv run python -m experiments.run_serious preflight
 uv run python -m experiments.run_serious benchmark final
 uv run python -m experiments.run_serious benchmark deep

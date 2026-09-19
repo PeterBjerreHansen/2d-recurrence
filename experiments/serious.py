@@ -10,7 +10,7 @@ ROOT = Path('experiments/ablations/supervision_compute')
 REVISION = '1a932e1abca935aae585f417ede39ecde4f2a620'
 TOKENS_PER_UPDATE = 100 * 1023
 COMMON = dict(
-    dataset='chess_full_v1', block_size=1023, n_layer=8, n_head=8, n_embd=512,
+    dataset='chess_8M_v1', block_size=1023, n_layer=8, n_head=8, n_embd=512,
     bias=False, dropout=0.0, n_prelude=1, n_buffer=1, n_core=4, n_source=1, n_coda=1,
     batch_size=5, gradient_accumulation_steps=20,
     learning_rate=3e-4, min_lr=3e-5, weight_decay=.1, beta1=.9, beta2=.95,

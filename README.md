@@ -20,7 +20,7 @@ Use Python 3.11 and uv. The lockfile records dependencies. Commands run from the
 ```sh
 uv sync --frozen --python 3.11
 uv run pytest -q
-uv run python data/chess_v1/prepare.py --file lichess_100mb_blocks.zip --out-dir data/chess_long_v1
+uv run python data/chess_v1/prepare.py --file lichess_100mb_blocks.zip --out-dir data/chess_143K_v1
 uv run python train.py configs/local/recurrent_mps.py
 ```
 

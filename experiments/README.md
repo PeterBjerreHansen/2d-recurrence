@@ -11,6 +11,7 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 | [Deep-supervision pilot](ablations/deep_supervision/README.md) | Retained cross-backend observations, not a controlled overhead comparison |
 | [Baseline LR selection](sweeps/baseline_lr_selection/README.md) | Retained LR sweep and selected 10k continuation |
 | [Recurrence axis ablation](ablations/recurrence_axes/README.md) | New temporal-only, depth-only, and matched hybrid scaffold; not launched |
+| [5B recurrence-axis study](long_runs/axis_5B/README.md) | Frozen four-arm long-run comparison and resumable Verda runner; not launched |
 | [Archived early pilots](archive/early_pilots/README.md) | Reports and small artifacts retained; obsolete scripts and checkpoints deleted |
 | [Smoke checks](smoke/README.md) | Small reproducible pipeline checks and historical validation notes |
 

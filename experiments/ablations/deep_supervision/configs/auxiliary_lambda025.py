@@ -1,7 +1,7 @@
 # Deep-supervision condition: normalized auxiliary losses at lambda 0.25.
 architecture = 'recurrent'
 out_dir = 'experiments/ablations/deep_supervision/results/auxiliary-lambda025'
-dataset = 'chess_long_v1'
+dataset = 'chess_143K_v1'
 eval_panel_path = 'experiments/sweeps/baseline_lr_selection/panel.json'
 n_layer = 8
 n_head = 8

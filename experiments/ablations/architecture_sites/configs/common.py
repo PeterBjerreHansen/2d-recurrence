@@ -1,6 +1,6 @@
 """Shared CUDA protocol. Architecture A/B are unrelated to the earlier LR A/B."""
 COMMON = dict(
-    architecture='recurrent', dataset='chess_long_v1',
+    architecture='recurrent', dataset='chess_143K_v1',
     eval_panel_path='experiments/ablations/architecture_sites/panel.json',
     n_layer=8, n_head=8, n_embd=512, n_prelude=1, n_coda=1,
     block_size=1023, bias=False, dropout=0.0,

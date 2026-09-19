@@ -20,7 +20,7 @@ def main():
     output = Path(args.output)
     if output.exists():
         parser.error('Output already exists; choose another name')
-    data = ChessData('data/chess_long_v1', 1023)
+    data = ChessData('data/chess_143K_v1', 1023)
     panel_path = Path('experiments/ablations/architecture_sites/panel.json')
     panel = load_panel(panel_path, data, split='selection')
     files = set(Path('.').glob('*.py'))
@@ -32,7 +32,7 @@ def main():
     files.add(panel_path)
     files.add(Path('experiments/sweeps/baseline_lr_selection/panel.json'))
     files.add(Path('experiments/relocations.json'))
-    files.update(Path('data/chess_long_v1') / name for name in ('train.bin', 'val.bin', 'meta.pkl', 'manifest.json'))
+    files.update(Path('data/chess_143K_v1') / name for name in ('train.bin', 'val.bin', 'meta.pkl', 'manifest.json'))
     for path in files:
         if path.is_symlink() or not path.is_file():
             raise ValueError(f'Expected a regular local file: {path}')

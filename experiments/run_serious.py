@@ -50,7 +50,7 @@ def environment():
 
 def preflight():
     receipt = environment()
-    data = ChessData('data/chess_full_v1', 1023)
+    data = ChessData('data/chess_8M_v1', 1023)
     source = data.manifest['source']
     if (source.get('dataset') != 'adamkarvonen/chess_games' or
             source.get('file') != 'lichess_6gb_blocks.zip' or source.get('revision') != REVISION or
@@ -78,7 +78,7 @@ def verify_environment():
         raise ValueError('Frozen source, runtime or hardware changed')
     if file_hash(RESULTS / 'panel.json') != saved['panel_hash']:
         raise ValueError('Frozen panel changed')
-    if file_hash(Path('data/chess_full_v1/manifest.json')) != saved['manifest_hash']:
+    if file_hash(Path('data/chess_8M_v1/manifest.json')) != saved['manifest_hash']:
         raise ValueError('Dataset manifest changed')
     return saved
 

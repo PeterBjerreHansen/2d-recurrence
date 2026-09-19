@@ -18,7 +18,7 @@ architecture-A final-only run at
 ## Matched protocol
 
 - architecture A: 1 prelude, 1 buffer, 4 core, 1 source, 1 coda;
-- full `chess_long_v1` dataset;
+- full `chess_143K_v1` dataset;
 - seed 1337, recurrence schedule seed 1729;
 - same optimizer, learning-rate schedule, recurrence probabilities, batch,
   frozen selection panel, and 10,000-update budget;

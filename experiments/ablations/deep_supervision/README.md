@@ -14,7 +14,7 @@ dropout RNG. The weight must be a finite nonnegative numeric value; Boolean
 values are rejected. The normalized objective is retained as the experiment
 definition and is not treated as a bug.
 
-The pair is matched on architecture A, full `chess_long_v1`, optimizer, learning-rate schedule, recurrence distribution, model seed, schedule seed, batch, panel, and 10,000-update budget. The backend/device is not matched: the auxiliary run used MPS and the reused final-only control used CUDA on an A6000. The final-only condition is the control. The completed architecture-site A run at [`experiments/ablations/architecture_sites/results/separated`](../architecture_sites/results/separated) already is this exact final-only control, so it is reused rather than retrained. This is one matched seed, as specified by the current plan; it is not a seed-variance study.
+The pair is matched on architecture A, full `chess_143K_v1`, optimizer, learning-rate schedule, recurrence distribution, model seed, schedule seed, batch, panel, and 10,000-update budget. The backend/device is not matched: the auxiliary run used MPS and the reused final-only control used CUDA on an A6000. The final-only condition is the control. The completed architecture-site A run at [`experiments/ablations/architecture_sites/results/separated`](../architecture_sites/results/separated) already is this exact final-only control, so it is reused rather than retrained. This is one matched seed, as specified by the current plan; it is not a seed-variance study.
 
 Run from the repository root:
 

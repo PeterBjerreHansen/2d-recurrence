@@ -10,7 +10,7 @@ from data_loader import ChessData
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--dataset', default='chess_long_v1')
+    parser.add_argument('--dataset', default='chess_143K_v1')
     parser.add_argument('--output', required=True, help='Write the frozen panel inside the consuming experiment')
     args = parser.parse_args()
     data = ChessData(Path('data') / args.dataset, 1023)
