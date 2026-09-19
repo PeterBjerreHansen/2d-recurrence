@@ -1,7 +1,7 @@
 # Long CUDA baseline results
 
-Date: 2026-09-18  
-Branch: `mvp-2d-recurrence`  
+Date: 2026-09-18
+Branch: `mvp-2d-recurrence`
 Source commit: `05704ec0a6ac7c8d064c9c430bea9f425c0c4fb3`
 
 ## Outcome
