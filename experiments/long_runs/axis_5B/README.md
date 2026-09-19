@@ -18,12 +18,14 @@ defined for the full 48,876-update horizon: 978 warmup updates followed by
 cosine decay to `3e-5` at the endpoint.
 
 The recurrent probability tables are the reviewed axis-ablation definitions in
-`experiments/ablations/recurrence_axes/configs/common.py`.  They give all
-recurrent arms the same distribution over total pass counts (`0`, `1`, and
-`3`); the temporal-only and depth-only arms activate one axis, while the
-hybrid arm activates both.  Therefore this is a data-matched, not
-compute-matched, comparison.  The hybrid arm is expected to cost more per
-update.
+`experiments/ablations/recurrence_axes/configs/common.py`. The temporal-only
+and depth-only arms use the same distribution over active pass counts (`0`, `1`,
+and `3`). The hybrid arm uses the fixed symmetric near-diagonal table from that
+module: it preserves the same distribution over `max(U_T, U_D)`, leaves 80% of
+each nonzero bucket on the diagonal, and exposes asymmetric state-age cases.
+Therefore this is matched by core-pass distribution and data exposure, not by
+the sum of axis-specific writes. The hybrid arm remains somewhat more
+expensive per update, and the exact compute difference is reported separately.
 
 Intermediate checkpoints are retained at steps `0, 100, 250, 500, 1,000,
 2,500, 5,000, 10,000, 25,000, 40,000`, and `48,876`.  The study definitions
