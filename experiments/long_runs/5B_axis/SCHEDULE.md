@@ -1,4 +1,8 @@
-# Recurrence axis ablation
+# 5B recurrence-axis schedule
+
+These schedule definitions belong to the `5B_axis` study. They are kept next
+to the study runner so the protocol, configs, and transfer bundle have one
+owner.
 
 This directory is a new-run scaffold for comparing the two recurrence axes:
 
@@ -22,14 +26,13 @@ U_T=1          .05     .40     .03
 U_T=3          .01     .03     .32
 ```
 
-The physical backbone, dataset, and shared training settings come from
-`experiments.serious.base`. This is pass-matched by core-pass count, not by
-the sum `U_T + U_D` or by each axis marginal.
+The physical backbone, dataset, and shared training settings come from the
+5B study's frozen `study.py` configuration. This is pass-matched by core-pass
+count, not by the sum `U_T + U_D` or by each axis marginal.
 
-These files define comparable component conditions; they do not constitute a
-final frozen scientific protocol. Training horizon, supervision mode,
-hardware/time matching, and dataset exposure still require an explicit review.
-No expensive run is launched by this scaffold.
+The three config entry points delegate to `study.run_config`, so they resolve
+to the same full 5B settings used by the resumable runner. They do not launch
+training by themselves.
 
 Configurations:
 
@@ -37,4 +40,5 @@ Configurations:
 - `configs/depth.py`: depth recurrence only, evaluated at `(0, 3)`.
 - `configs/hybrid_matched.py`: near-diagonal hybrid schedule, evaluated at `(3, 3)`.
 
-Outputs belong under this experiment's ignored `results/` directory.
+Outputs belong under this experiment's arm-specific ignored `results/`
+directories.

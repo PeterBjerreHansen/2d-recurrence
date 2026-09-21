@@ -1,9 +1,11 @@
 import pytest
 
-from experiments.ablations.recurrence_axes.configs.common import (
-    PROBABILITIES,
-    SUPPORT,
-)
+from importlib import import_module
+
+
+_schedule = import_module('experiments.long_runs.5B_axis.configs.common')
+PROBABILITIES = _schedule.PROBABILITIES
+SUPPORT = _schedule.SUPPORT
 
 
 def test_hybrid_schedule_is_symmetric_and_normalized():

@@ -4,14 +4,12 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 
 | Experiment | Status and role |
 | --- | --- |
-| [Supervision compute ablation](ablations/supervision_compute/README.md) | Completed equal measured A6000 training-time comparison; final-only supervision selected |
 | [Transformer 1B](long_runs/1B_baseline/transformer_1B/README.md) / [A 1B](long_runs/1B_baseline/recurrent_a_1B/README.md) | Completed matched 1B pair using the selected final-only objective |
 | [Transformer 64B](long_runs/64B_core/transformer_64B/README.md) / [A 64B](long_runs/64B_core/recurrent_a_64B/README.md) | Prepared reference-scale profiles; no 64B run launched |
 | [Architecture sites](ablations/architecture_sites/README.md) | Retained completed A/B comparison; A is the practical default |
-| [Deep-supervision pilot](ablations/deep_supervision/README.md) | Retained cross-backend observations, not a controlled overhead comparison |
+| [Deep-supervision comparison](ablations/deep_supervision/README.md) | Controlled A6000 comparison; final-only selected |
 | [Baseline LR selection](sweeps/baseline_lr_selection/README.md) | Retained LR sweep and selected 10k continuation |
-| [Recurrence axis ablation](ablations/recurrence_axes/README.md) | New temporal-only, depth-only, and matched hybrid scaffold; not launched |
-| [5B recurrence-axis study](long_runs/axis_5B/README.md) | Frozen four-arm long-run comparison and resumable Verda runner; not launched |
+| [5B recurrence-axis study](long_runs/5B_axis/README.md) | Frozen four-arm protocol; depth, temporal, and hybrid CUDA runs retained, transformer result incomplete |
 | [Archived early pilots](archive/early_pilots/README.md) | Reports and small artifacts retained; obsolete scripts and checkpoints deleted |
 | [Smoke checks](smoke/README.md) | Small reproducible pipeline checks and historical validation notes |
 
@@ -21,14 +19,14 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 
 The 1B and 64B labels count target characters rounded up to complete updates: 9,776 updates / 1,000,084,800 characters, and 625,611 updates / 64,000,005,300 characters. Karvonen's exact published schedule is 600,000 updates / 61.38B characters. The paired runs are data-matched; training GPU time is reported separately. Each horizon starts from scratch and has its own cosine schedule. Warmup is 2% capped at 2,000 updates.
 
-`run_serious.py` performs preflight, benchmarking, frozen budget creation, resumable ablation training, exact-panel evaluation, explicit supervision selection, and a foreground paired queue. It never provisions hardware, invents a supervision result, or launches the 64B series after 1B. See the [handoff](ablations/supervision_compute/HANDOFF.md). The ablation defaults to equal time corresponding to 250M characters in its final-only arm; its LR follows consumed training time. A changed physical batch changes recurrence schedule averaging and requires a new shared protocol.
+`run_serious.py` performs preflight, benchmarking, frozen budget creation, resumable ablation training, exact-panel evaluation, explicit supervision selection, and a foreground paired queue. It never provisions hardware, invents a supervision result, or launches the 64B series after 1B. See the [handoff](ablations/deep_supervision/HANDOFF.md). The ablation defaults to equal time corresponding to 250M characters in its final-only arm; its LR follows consumed training time. A changed physical batch changes recurrence schedule averaging and requires a new shared protocol.
 
 `configs/local/recurrent_mps.py` and `configs/local/transformer_mps.py` retain affordable batch-8 local checks. They are not serious-run comparators. The old ambiguous top-level baseline configs and unlaunched pilot directories were removed.
 
 ## Retained evidence
 
-The architecture ablation, LR sweep, and supervision pilot keep their source, reports and local raw artifacts. Source-freeze checks may reject rerunning historical experiments under current code; use the preserved source archive for exact reproduction. The new series has separate output paths.
+The architecture ablation, LR sweep, and supervision comparison keep their source, protocol, and local raw artifacts. Source-freeze checks may reject rerunning historical experiments under current code; use the preserved source archive for exact reproduction. The new series has separate output paths.
 
 The early 100/1,000-update pilots and old smoke checkpoints were retired to reduce clutter. Their reports and small artifacts remain, but obsolete launch scripts and large checkpoints do not. [relocations.json](relocations.json) preserves old paths and marks retired records. Historical JSON and checkpoint contents are not rewritten to look like new runs.
 
-The 1B pair is complete and documented in [LONG_BASELINE_RESULTS.md](long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). Next, validate the implemented live-feedback path on the completed recurrent checkpoint and decide whether a wider update grid or a frozen recurrence-axis experiment is warranted. The separately trained temporal-only and depth-only component scaffold exists under `ablations/recurrence_axes/`, but it is not a final frozen protocol and no expensive run is launched automatically.
+The 1B pair is complete and documented in [LONG_BASELINE_RESULTS.md](long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). The temporal-only, depth-only, and matched-hybrid schedule definitions are owned by the [5B recurrence-axis study](long_runs/5B_axis/README.md), alongside its runner and resolved configuration entry points.

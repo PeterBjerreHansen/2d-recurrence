@@ -7,7 +7,7 @@ computation according to the declared axis schedule.
 """
 from copy import deepcopy
 
-from experiments.ablations.recurrence_axes.configs.common import (
+from .configs.common import (
     EVALUATION_COUNTS,
     PROBABILITIES,
     SUPPORT,
@@ -15,7 +15,7 @@ from experiments.ablations.recurrence_axes.configs.common import (
 from experiments.serious import TOKENS_PER_UPDATE, base
 
 
-STUDY_NAME = 'axis_5B'
+STUDY_NAME = '5B_axis'
 RESULTS_ROOT = f'experiments/long_runs/{STUDY_NAME}/results'
 PANEL_PATH = f'{RESULTS_ROOT}/panel.json'
 CHARACTERS = 5 * 10**9

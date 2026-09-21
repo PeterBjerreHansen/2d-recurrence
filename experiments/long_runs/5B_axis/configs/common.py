@@ -1,4 +1,4 @@
-from experiments.serious import base
+"""Shared recurrence-axis schedules and config entry-point helper for 5B_axis."""
 
 
 SUPPORT = [0, 1, 3]
@@ -29,17 +29,12 @@ EVALUATION_COUNTS = {
 
 
 def axis_config(name):
+    """Return the frozen 5B config for one of the axis entry points."""
     if name not in PROBABILITIES:
         raise ValueError(name)
-    mode = 'hybrid' if name == 'hybrid_matched' else name
-    u_t, u_d = EVALUATION_COUNTS[name]
-    config = base('recurrent')
-    config.update(
-        out_dir=f'experiments/ablations/recurrence_axes/results/{name}',
-        recurrence_mode=mode,
-        recurrence_support=SUPPORT,
-        recurrence_probabilities=PROBABILITIES[name],
-        eval_u_t=u_t,
-        eval_u_d=u_d,
-    )
-    return config
+    # Import lazily so study.py can import the schedule constants without a
+    # module cycle.  The wrappers in this directory are the canonical config
+    # entry points and must resolve to the same frozen 5B configs as run.py.
+    from ..study import run_config
+
+    return run_config('hybrid' if name == 'hybrid_matched' else name)

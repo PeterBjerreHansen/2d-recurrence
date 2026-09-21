@@ -7,7 +7,7 @@ import tarfile
 
 from data_loader import ChessData, file_hash
 from evaluation.panels import load_panel
-from experiments.long_runs.axis_5B.run import DATASET, PANEL, PROTOCOL, recorded_protocol
+from .run import DATASET, PANEL, PROTOCOL, recorded_protocol
 
 
 def package(output):

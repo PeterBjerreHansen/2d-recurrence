@@ -25,7 +25,7 @@ from data_loader import ChessData, file_hash
 from evaluation.all_rows import evaluate_baseline, load_model, training_probabilities
 from evaluation.panels import fixed_panel_batches, load_panel
 from evaluation.recurrence_grid import evaluate_grid
-from experiments.long_runs.axis_5B.study import (
+from .study import (
     ACTUAL_CHARACTERS,
     CHARACTERS,
     CHECKPOINT_STEPS,

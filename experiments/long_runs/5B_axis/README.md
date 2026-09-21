@@ -18,7 +18,7 @@ defined for the full 48,876-update horizon: 978 warmup updates followed by
 cosine decay to `3e-5` at the endpoint.
 
 The recurrent probability tables are the reviewed axis-ablation definitions in
-`experiments/ablations/recurrence_axes/configs/common.py`. The temporal-only
+`experiments/long_runs/5B_axis/configs/common.py`. The temporal-only
 and depth-only arms use the same distribution over active pass counts (`0`, `1`,
 and `3`). The hybrid arm uses the fixed symmetric near-diagonal table from that
 module: it preserves the same distribution over `max(U_T, U_D)`, leaves 80% of
@@ -48,9 +48,9 @@ but never credentials or training outputs.
 From the repository root:
 
 ```sh
-uv run python -m experiments.long_runs.axis_5B.run freeze
-uv run python -m experiments.long_runs.axis_5B.run status
-uv run python -m experiments.long_runs.axis_5B.package --output /path/to/axis_5B_source.tar.gz
+uv run python -m experiments.long_runs.5B_axis.run freeze
+uv run python -m experiments.long_runs.5B_axis.run status
+uv run python -m experiments.long_runs.5B_axis.package --output /path/to/5B_axis_source.tar.gz
 ```
 
 On the prepared Verda VM, after extracting the verified bundle:
@@ -58,8 +58,8 @@ On the prepared Verda VM, after extracting the verified bundle:
 ```sh
 uv sync --frozen --python 3.11
 uv run pytest -q
-uv run python -m experiments.long_runs.axis_5B.run preflight
-uv run python -m experiments.long_runs.axis_5B.run study --evaluate
+uv run python -m experiments.long_runs.5B_axis.run preflight
+uv run python -m experiments.long_runs.5B_axis.run study --evaluate
 ```
 
 `study` runs the arms sequentially in transformer, temporal-only, depth-only,
@@ -75,6 +75,9 @@ runner does not provision Verda or silently substitute another GPU.
 - `temporal_5B/config.py`
 - `depth_5B/config.py`
 - `hybrid_5B/config.py`
+- `configs/common.py`, `configs/temporal.py`, `configs/depth.py`, and
+  `configs/hybrid_matched.py` are the shared schedule and resolved-config
+  entry points for this study.
 
 The shared constructor is `study.py`; the executable freeze/resume logic is in
 `run.py`. Do not resume a shorter run into this study: each arm has its
