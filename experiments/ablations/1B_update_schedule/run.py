@@ -24,7 +24,7 @@ from evaluation.panels import fixed_panel_batches, load_panel
 from evaluation.recurrence_grid import evaluate_grid
 from recurrence.schedule import update_probability_map_at_step, update_probabilities_at_step
 from train import train
-from .study import (ACTUAL_CHARACTERS, CHARACTERS, CHECKPOINT_STEPS,
+from .study import (ACTUAL_CHARACTERS, CHARACTERS, CHECKPOINT_STEPS, LEARNING_RATE,
                     CROSSOVER_FRACTION, CROSSOVER_STEP, HARD_PHASE1_UPDATE_PROBABILITIES,
                     HARD_PHASE2_UPDATE_PROBABILITIES, FIXED_UPDATE_PROBABILITIES,
                     PANEL_PATH, RESULTS_ROOT, RUNS, STUDY_NAME, UPDATES,
@@ -172,9 +172,12 @@ def _protocol_payload(data, panel):
         training=dict(target_characters=CHARACTERS, actual_characters=ACTUAL_CHARACTERS,
                       optimizer_updates=UPDATES, effective_batch_size=100,
                       characters_per_update=100 * BLOCK_SIZE, warmup_updates=WARMUP_UPDATES,
-                      lr_decay_updates=UPDATES, learning_rate=3e-4, min_learning_rate=3e-5,
+                      lr_schedule='constant', decay_lr=False,
+                      learning_rate=LEARNING_RATE, min_learning_rate=3e-5,
+                      crossover_learning_rate=LEARNING_RATE,
                       crossover_fraction=CROSSOVER_FRACTION, crossover_step=CROSSOVER_STEP,
                       crossover_semantics=(
+                          f'constant learning rate {LEARNING_RATE:g}; '
                           f'step 0..{CROSSOVER_STEP - 1} use U=1 (2 passes); '
                           f'step {CROSSOVER_STEP}..{UPDATES - 1} use U=3 (4 passes)'),
                       hard_phase_update_counts=[CROSSOVER_STEP, UPDATES - CROSSOVER_STEP],

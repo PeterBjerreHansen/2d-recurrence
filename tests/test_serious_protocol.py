@@ -58,6 +58,9 @@ def test_serious_pair_requires_choice_and_matches_data_budget(tmp_path, monkeypa
     (tmp_path / 'results/decision.json').write_text(json.dumps(dict(mode='deep', reason='reviewed')))
     for tokens in (10**9, 64 * 10**9):
         a, b = [serious.long_run(m, tokens) for m in ('transformer', 'recurrent_a')]
+        series = serious.LONG_RUN_ROOTS[tokens]
+        assert a['out_dir'] == f'{series}/transformer_{tokens // 10**9}B/results'
+        assert b['out_dir'] == f'{series}/recurrent_a_{tokens // 10**9}B/results'
         for key in ('dataset', 'batch_size', 'gradient_accumulation_steps', 'dtype', 'compile',
                     'block_size', 'max_iters', 'warmup_iters', 'lr_decay_iters', 'seed'):
             assert a[key] == b[key]

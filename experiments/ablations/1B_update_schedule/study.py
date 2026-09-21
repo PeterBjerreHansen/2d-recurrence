@@ -15,9 +15,10 @@ PANEL_PATH = f'{RESULTS_ROOT}/panel.json'
 CHARACTERS = 10**9
 UPDATES = math.ceil(CHARACTERS / TOKENS_PER_UPDATE)
 ACTUAL_CHARACTERS = UPDATES * TOKENS_PER_UPDATE
+LEARNING_RATE = 3e-4
 CROSSOVER_FRACTION = .85
 CROSSOVER_STEP = round(CROSSOVER_FRACTION * UPDATES)
-WARMUP_UPDATES = round(.02 * UPDATES)
+WARMUP_UPDATES = 0
 CHECKPOINT_STEPS = [0, 100, 250, 500, 1000, 2500, 5000, 7500,
                     CROSSOVER_STEP, CROSSOVER_STEP + 1, 9000, UPDATES]
 
@@ -89,6 +90,7 @@ def run_config(name):
     config.update(
         out_dir=f'experiments/ablations/{STUDY_NAME}/{spec["directory"]}/results',
         eval_panel_path=PANEL_PATH, init_from='scratch', max_iters=UPDATES,
+        learning_rate=LEARNING_RATE, decay_lr=False,
         lr_decay_iters=UPDATES, warmup_iters=WARMUP_UPDATES,
         recurrence_mode=spec['recurrence_mode'], update_support=deepcopy(UPDATE_SUPPORT),
         update_probabilities=deepcopy(spec['update_probabilities']),

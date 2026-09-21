@@ -3,6 +3,10 @@
 This is a new six-arm study. It does not modify the historical 1B baseline or
 the 5B recurrence-axis study.
 
+All six arms use a constant learning rate of `3e-4`, with no warmup or decay.
+The crossover therefore changes only the update-count distribution; it does
+not coincide with a learning-rate change.
+
 The hard-growth arms use one update (`U=1`, two executed passes) through
 absolute optimizer step 8309 and three updates (`U=3`, four executed passes)
 from step 8310. The six arms are:

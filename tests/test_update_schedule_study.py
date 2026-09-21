@@ -3,12 +3,15 @@ from pathlib import Path
 import sys
 
 import pytest
+
+from data_loader import file_hash
 from recurrence.schedule import update_probabilities_at_step
 from train import DEFAULTS
 
 
 study = import_module('experiments.ablations.1B_update_schedule.study')
 runner = import_module('experiments.ablations.1B_update_schedule.run')
+transfer_runner = import_module('experiments.long_runs.5B_axis.run')
 common = import_module('experiments.ablations.1B_update_schedule.configs.common')
 UPDATE_SUPPORT = common.UPDATE_SUPPORT
 
@@ -23,10 +26,18 @@ def max_update_distribution(matrix):
 def test_one_billion_study_horizon_and_crossover_are_frozen():
     assert study.UPDATES == 9776
     assert study.ACTUAL_CHARACTERS == 1_000_084_800
-    assert study.WARMUP_UPDATES == 196
+    assert study.WARMUP_UPDATES == 0
     assert study.CROSSOVER_STEP == 8310
     assert study.CHECKPOINT_STEPS == [0, 100, 250, 500, 1000, 2500, 5000, 7500,
                                      8310, 8311, 9000, 9776]
+
+
+@pytest.mark.parametrize('name', sorted(study.RUNS))
+def test_one_billion_arms_use_constant_learning_rate(name):
+    config = study.run_config(name)
+    assert config['learning_rate'] == pytest.approx(study.LEARNING_RATE)
+    assert config['decay_lr'] is False
+    assert config['warmup_iters'] == 0
 
 
 @pytest.mark.parametrize('name, mode, scheduled', [
@@ -86,6 +97,17 @@ def test_source_snapshot_excludes_unrelated_experiment_receipts():
 def test_source_snapshot_status_is_scoped_to_study_runtime():
     status = runner.source_snapshot()['working_tree_status']
     assert 'runpod_batch_sweep_20260920' not in status
+
+
+def test_transferred_source_verification_hashes_extracted_files(tmp_path, monkeypatch):
+    source = tmp_path / 'source.py'
+    source.write_text('version = 1\n')
+    monkeypatch.chdir(tmp_path)
+    expected = {'source.py': file_hash(source)}
+    transfer_runner._verify_transferred_source(expected)
+    source.write_text('version = 2\n')
+    with pytest.raises(ValueError, match='Transferred source file differs'):
+        transfer_runner._verify_transferred_source(expected)
 
 
 @pytest.mark.parametrize('name', sorted(study.RUNS))

@@ -87,6 +87,15 @@ def source_hashes():
     return hashes
 
 
+def _verify_transferred_source(expected):
+    """Verify frozen source hashes against the files extracted on this host."""
+    for path, digest in expected.items():
+        candidate = Path(path)
+        if (candidate.is_symlink() or not candidate.is_file() or
+                file_hash(candidate) != digest):
+            raise ValueError(f'Transferred source file differs from the frozen protocol: {path}')
+
+
 def source_snapshot():
     try:
         patch = _git('diff', '--binary', 'HEAD', binary=True)
@@ -109,6 +118,7 @@ def source_snapshot():
         transferred = transfer.get('files', {})
         if any(transferred.get(path) != digest for path, digest in expected.items()):
             raise ValueError('Transfer manifest does not match the frozen source hashes')
+        _verify_transferred_source(expected)
         return dict(
             branch=transfer['branch'],
             head_commit=transfer['base_commit'],
