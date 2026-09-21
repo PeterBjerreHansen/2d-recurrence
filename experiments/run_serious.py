@@ -14,7 +14,7 @@ from data_loader import ChessData, file_hash
 from evaluation.all_rows import load_model, evaluate_baseline
 from evaluation.panels import load_panel, fixed_panel_batches
 from evaluation.recurrence_grid import evaluate_grid
-from recurrence.schedule import probability_map_at_step, probabilities_at_step
+from recurrence.schedule import update_probability_map_at_step, update_probabilities_at_step
 from experiments.serious import ROOT, REVISION, COMMON, TOKENS_PER_UPDATE, ablation, base, long_run
 from train import train
 
@@ -161,13 +161,17 @@ def evaluate(path, split):
         panel['row_indices'] = sorted(random.Random(2028).sample(panel['row_indices'], 512))
     batches, metadata = fixed_panel_batches(data, panel, 5)
     if recurrent:
-        active_matrix = probabilities_at_step(checkpoint['config'], checkpoint['iter_num'])
+        active_matrix = update_probabilities_at_step(checkpoint['config'], checkpoint['iter_num'])
         metrics = evaluate_grid(model, data, fixed_batches=batches, data_seed=None, batch_size=5,
-            mask_seeds=[11, 23, 37], training_probabilities=probability_map_at_step(
+            mask_seeds=[11, 23, 37], training_update_probabilities=update_probability_map_at_step(
                 checkpoint['config'], checkpoint['iter_num']),
             diagnostics=False, sampling=metadata['sampling'])
-        metrics['training_probability_step'] = checkpoint['iter_num']
-        metrics['training_probability_matrix'] = [list(row) for row in active_matrix]
+        metrics['next_update_probability_step'] = checkpoint['iter_num']
+        metrics['next_update_probability_matrix'] = [list(row) for row in active_matrix]
+        metrics['last_update_probability_matrix'] = (
+            [list(row) for row in update_probabilities_at_step(
+                checkpoint['config'], checkpoint['iter_num'] - 1)]
+            if checkpoint['iter_num'] > 0 else None)
     else:
         metrics = evaluate_baseline(model, batches, 'cuda')
     write_once(output, dict(checkpoint_hash=digest, step=checkpoint['iter_num'],

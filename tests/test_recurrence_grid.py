@@ -62,14 +62,14 @@ def test_grid_fixed_data_metrics_diagnostics_and_no_mutation(prepared_data):
     first_parameter.grad = torch.ones_like(first_parameter)
     rng = torch.get_rng_state().clone()
     report = evaluate_grid(net, data, batches=2, batch_size=2,
-                           training_probabilities={(0, 0): .1})
+                           training_update_probabilities={(0, 0): .1})
     assert net.training and torch.equal(rng, torch.get_rng_state())
     assert torch.equal(first_parameter.grad, torch.ones_like(first_parameter))
     for name, value in net.state_dict().items():
         torch.testing.assert_close(value, parameters[name], rtol=0, atol=0)
     assert len(report['cells']) == 9
     baseline = report['cells'][0]
-    assert baseline['training_probability'] == .1
+    assert baseline['training_update_probability'] == .1
     assert baseline['nll_std'] == baseline['prediction_change_rate_mean'] == 0
     assert baseline['diagnostics']['gradient_l2']['temporal_mixer'] is None
     assert baseline['diagnostics']['gradient_l2']['depth_mixer'] is None
@@ -90,15 +90,15 @@ def test_grid_fixed_data_metrics_diagnostics_and_no_mutation(prepared_data):
     assert baseline['nll_mean'] == pytest.approx(sum(losses) / 2)
     assert baseline['accuracy_mean'] == pytest.approx(sum(accuracies) / 2)
     again = evaluate_grid(net, data, batches=2, batch_size=2, diagnostics=False,
-                          training_probabilities={(0, 0): .1})
+                          training_update_probabilities={(0, 0): .1})
     assert again['batch_sha256'] == report['batch_sha256']
     for cell, original in zip(again['cells'], report['cells']):
         assert cell == {k: v for k, v in original.items() if k != 'diagnostics'}
 
 
 def test_snapshot_checkpoint_evaluation_and_manifest_guard(prepared_data, tmp_path):
-    config = dict(architecture='recurrent', recurrence_support=[0, 1, 3],
-                  recurrence_probabilities=[[.1, .12, .04], [.12, .26, .08], [.04, .08, .16]],
+    config = dict(architecture='recurrent', update_support=[0, 1, 3],
+                  update_probabilities=[[.1, .12, .04], [.12, .26, .08], [.04, .08, .16]],
                   n_layer=4, n_prelude=1, n_buffer=0, n_core=1, n_coda=1, n_head=2, n_embd=8,
                   dataset=str(prepared_data), block_size=8, batch_size=1,
                   gradient_accumulation_steps=1, max_iters=0, eval_interval=1, eval_iters=1,
@@ -115,7 +115,7 @@ def test_snapshot_checkpoint_evaluation_and_manifest_guard(prepared_data, tmp_pa
     assert report['checkpoint_step'] == 2
     assert report['training_seed'] == 1337
     assert report['recurrence_mode'] == 'hybrid'
-    assert sum(c['training_probability'] for c in report['cells']) == pytest.approx(1.)
+    assert sum(c['training_update_probability'] for c in report['cells']) == pytest.approx(1.)
     broken = torch.load(latest, weights_only=False)
     broken['manifest_hash'] = 'wrong'
     torch.save(broken, tmp_path / 'bad.pt')

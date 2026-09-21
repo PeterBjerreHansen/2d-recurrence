@@ -1,9 +1,9 @@
 """Shared recurrence-axis schedules and config entry-point helper for 5B_axis."""
 
 
-SUPPORT = [0, 1, 3]
+UPDATE_SUPPORT = [0, 1, 3]
 
-PROBABILITIES = {
+UPDATE_PROBABILITIES = {
     'temporal': [
         [.10, .00, .00],
         [.50, .00, .00],
@@ -30,7 +30,7 @@ EVALUATION_COUNTS = {
 
 def axis_config(name):
     """Return the frozen 5B config for one of the axis entry points."""
-    if name not in PROBABILITIES:
+    if name not in UPDATE_PROBABILITIES:
         raise ValueError(name)
     # Import lazily so study.py can import the schedule constants without a
     # module cycle.  The wrappers in this directory are the canonical config

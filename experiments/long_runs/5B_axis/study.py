@@ -9,8 +9,8 @@ from copy import deepcopy
 
 from .configs.common import (
     EVALUATION_COUNTS,
-    PROBABILITIES,
-    SUPPORT,
+    UPDATE_PROBABILITIES,
+    UPDATE_SUPPORT,
 )
 from experiments.serious import TOKENS_PER_UPDATE, base
 
@@ -33,8 +33,8 @@ RUNS = {
     'transformer': dict(
         architecture='baseline',
         recurrence_mode='hybrid',
-        recurrence_support=[],
-        recurrence_probabilities=[],
+        update_support=[],
+        update_probabilities=[],
         eval_u_t=0,
         eval_u_d=0,
         directory='transformer_5B',
@@ -42,8 +42,8 @@ RUNS = {
     'temporal': dict(
         architecture='recurrent',
         recurrence_mode='temporal',
-        recurrence_support=SUPPORT,
-        recurrence_probabilities=PROBABILITIES['temporal'],
+        update_support=UPDATE_SUPPORT,
+        update_probabilities=UPDATE_PROBABILITIES['temporal'],
         eval_u_t=EVALUATION_COUNTS['temporal'][0],
         eval_u_d=EVALUATION_COUNTS['temporal'][1],
         directory='temporal_5B',
@@ -51,8 +51,8 @@ RUNS = {
     'depth': dict(
         architecture='recurrent',
         recurrence_mode='depth',
-        recurrence_support=SUPPORT,
-        recurrence_probabilities=PROBABILITIES['depth'],
+        update_support=UPDATE_SUPPORT,
+        update_probabilities=UPDATE_PROBABILITIES['depth'],
         eval_u_t=EVALUATION_COUNTS['depth'][0],
         eval_u_d=EVALUATION_COUNTS['depth'][1],
         directory='depth_5B',
@@ -60,8 +60,8 @@ RUNS = {
     'hybrid': dict(
         architecture='recurrent',
         recurrence_mode='hybrid',
-        recurrence_support=SUPPORT,
-        recurrence_probabilities=PROBABILITIES['hybrid_matched'],
+        update_support=UPDATE_SUPPORT,
+        update_probabilities=UPDATE_PROBABILITIES['hybrid_matched'],
         eval_u_t=EVALUATION_COUNTS['hybrid_matched'][0],
         eval_u_d=EVALUATION_COUNTS['hybrid_matched'][1],
         directory='hybrid_5B',
@@ -84,8 +84,8 @@ def run_config(name):
         lr_decay_iters=UPDATES,
         warmup_iters=WARMUP_UPDATES,
         recurrence_mode=spec['recurrence_mode'],
-        recurrence_support=deepcopy(spec['recurrence_support']),
-        recurrence_probabilities=deepcopy(spec['recurrence_probabilities']),
+        update_support=deepcopy(spec['update_support']),
+        update_probabilities=deepcopy(spec['update_probabilities']),
         eval_u_t=spec['eval_u_t'],
         eval_u_d=spec['eval_u_d'],
         deep_supervision=False,

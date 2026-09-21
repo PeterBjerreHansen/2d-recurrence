@@ -6,4 +6,4 @@ Use `uv run python -m experiments.run_serious pair --billions 1` from the reposi
 
 The two models share data order, batch, precision, optimizer and token schedule. The ordinary model has eight distinct blocks; A uses the default 1/1/4/1/1 layout and the selected supervision mode. Both process the same number of target characters; recurrent passes and auxiliary predictions do not count as new data. Compute is reported separately. Warmup is 2% of updates capped at the reference 2,000; cosine decay reaches 3e-5 at the planned endpoint. A 1B run starts from scratch with its own LR horizon. Do not resume a shorter completed cosine schedule as though it were this experiment.
 
-Future expanded-grid and temporal-only/depth-only comparisons follow this baseline selection. They are intentionally not silently included in this queue: their inference semantics and matched pass schedules must be implemented and reviewed first.
+Future expanded-grid and temporal-only/depth-only comparisons follow this baseline selection. They are intentionally not silently included in this queue: their inference semantics and matched update schedules must be implemented and reviewed first.

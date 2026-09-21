@@ -22,10 +22,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from data_loader import ChessData
 from model import GPT, GPTConfig
 from models.recurrent_2d import (Recurrent2DGPT, RecurrentGPTConfig,
-                                 validate_recurrence_counts, validate_recurrence_distribution,
+                                 validate_recurrence_counts, validate_update_probability_distribution,
                                  validate_recurrence_mode)
-from recurrence.schedule import (RecurrenceScheduleSampler, probabilities_at_step,
-                                 sample_schedule)
+from recurrence.schedule import (RecurrenceScheduleSampler, normalize_update_config,
+                                 sample_schedule, update_probabilities_at_step)
 from training_utils import append_json, atomic_save, capture_rng, provenance, restore_rng
 
 DEFAULTS = dict(
@@ -37,8 +37,8 @@ DEFAULTS = dict(
     decay_lr=True, warmup_iters=2000, lr_decay_iters=600000, min_lr=3e-5,
     backend='nccl', device='cuda', dtype='bfloat16', compile=True, seed=1337,
     num_threads=4, architecture='baseline', n_prelude=1, n_core=4, n_coda=1, n_buffer=1, n_source=1,
-    recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729, recurrence_mode='hybrid',
-    recurrence_probability_schedule=None,
+    update_support=[], update_probabilities=[], recurrence_seed=1729, recurrence_mode='hybrid',
+    update_probability_schedule=None,
     eval_u_t=0, eval_u_d=0, keep_checkpoints=False, checkpoint_steps=None,
     eval_panel_path='', deep_supervision=False, deep_supervision_lambda=0.25,
     training_budget_seconds=0.0,
@@ -79,7 +79,7 @@ def aggregate_gradient_stats(model, scaler, optimizer, grad_clip, step):
 
 
 def train(config):
-    config = {**DEFAULTS, **config}
+    config = {**DEFAULTS, **normalize_update_config(config)}
     if config['architecture'] not in ['baseline', 'recurrent']:
         raise ValueError('architecture must be baseline or recurrent')
     budget = config['training_budget_seconds']
@@ -97,13 +97,15 @@ def train(config):
         raise ValueError('Use compile=False for variable recurrent schedules in the MVP')
     if recurrent:
         validate_recurrence_mode(config['recurrence_mode'])
-        initial_probabilities = probabilities_at_step(config, 0)
-        sampler = RecurrenceScheduleSampler(config['recurrence_support'],
-                                             None if config['recurrence_probability_schedule'] is not None
-                                             else config['recurrence_probabilities'],
+        if not config['update_support']:
+            raise ValueError('update_support must be explicitly provided for recurrent training')
+        initial_probabilities = update_probabilities_at_step(config, 0)
+        sampler = RecurrenceScheduleSampler(config['update_support'],
+                                             None if config['update_probability_schedule'] is not None
+                                             else config['update_probabilities'],
                                              config['recurrence_seed'])
-        validate_recurrence_distribution(config['recurrence_mode'], config['recurrence_support'],
-                                         initial_probabilities)
+        validate_update_probability_distribution(config['recurrence_mode'], config['update_support'],
+                                                 initial_probabilities)
         validate_recurrence_counts(config['recurrence_mode'], config['eval_u_t'], config['eval_u_d'])
         sample_schedule(config['eval_u_t'], config['eval_u_d'], random.Random(0))
     else:
@@ -177,6 +179,7 @@ def train(config):
     if config['init_from'] == 'resume':
         checkpoint = torch.load(out / 'ckpt.pt', map_location='cpu', weights_only=False)
         saved_args = checkpoint['model_args']
+        saved_config = normalize_update_config(checkpoint['config'])
         same_model = (RecurrentGPTConfig.from_checkpoint(saved_args) == RecurrentGPTConfig(**model_args)
                       if recurrent else saved_args == model_args)
         if not same_model:
@@ -191,7 +194,7 @@ def train(config):
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:
-            if config[key] != checkpoint['config'].get(key, DEFAULTS[key]):
+            if config[key] != saved_config.get(key, DEFAULTS[key]):
                 raise ValueError(f'Resume changes {key}; use a new run for changed training settings')
         step, best_val = checkpoint['iter_num'], checkpoint['best_val_loss']
         last_eval_step = checkpoint['last_eval_step']
@@ -305,9 +308,12 @@ def train(config):
                 print(f"step {step}: train {metrics['train_nll']:.4f}, val {metrics['val_nll']:.4f}, accuracy {metrics['val_accuracy']:.3f}", flush=True)
                 label = dict(execution='training_graph', u_t=config['eval_u_t'], u_d=config['eval_u_d']) if recurrent else {}
                 if recurrent:
-                    active_matrix = probabilities_at_step(config, step)
-                    label.update(training_probability_step=step,
-                                 training_probability_matrix=[list(row) for row in active_matrix])
+                    active_matrix = update_probabilities_at_step(config, step)
+                    label.update(next_update_probability_step=step,
+                                 next_update_probability_matrix=[list(row) for row in active_matrix],
+                                 last_update_probability_matrix=(
+                                     [list(row) for row in update_probabilities_at_step(config, step - 1)]
+                                     if step > 0 else None))
                 append_json(out / 'metrics.jsonl', dict(event='evaluation', step=step, **label, **metrics))
             if not config['eval_only']:
                 save_checkpoint()
@@ -328,7 +334,7 @@ def train(config):
         intermediate_loss_sum = 0.0
         intermediate_weight = 0.0
         schedules = []
-        probabilities = probabilities_at_step(config, step) if recurrent else None
+        probabilities = update_probabilities_at_step(config, step) if recurrent else None
         for micro_step in range(accumulation):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1

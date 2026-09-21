@@ -41,7 +41,7 @@ def main():
         weighted = []
         for step in STEPS:
             report = reports[step]
-            probabilities = {(t, d): report['cells'][i * 3 + j]['training_probability']
+            probabilities = {(t, d): report['cells'][i * 3 + j]['training_update_probability']
                              for i, t in enumerate([0, 1, 3]) for j, d in enumerate([0, 1, 3])}
             weighted.append(sum(by_cell[str(step)][cell] * probabilities[cell]
                                 for cell in by_cell[str(step)]))

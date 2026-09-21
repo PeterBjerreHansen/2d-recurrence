@@ -183,7 +183,7 @@ def summarize():
                                  forward_matmul_flops=cell['estimated_forward_matmul_flops_per_sequence_mean']))
             if step in (8000, 10000):
                 late.append(dict(step=step, nll33=cells[3, 3]['nll_mean'],
-                                 weighted_nll=sum(c['nll_mean'] * c['training_probability'] for c in cells.values()),
+                                 weighted_nll=sum(c['nll_mean'] * c['training_update_probability'] for c in cells.values()),
                                  depth_gain_at_t3=cells[3, 0]['nll_mean'] - cells[3, 3]['nll_mean']))
         scores[variant] = dict(late=late, S=statistics.mean(c['nll33'] for c in late),
                               W=statistics.mean(c['weighted_nll'] for c in late))

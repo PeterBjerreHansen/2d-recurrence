@@ -15,8 +15,8 @@ COMMON = dict(
     batch_size=5, gradient_accumulation_steps=20,
     learning_rate=3e-4, min_lr=3e-5, weight_decay=.1, beta1=.9, beta2=.95,
     grad_clip=1.0, decay_lr=True, seed=1337, recurrence_seed=1729,
-    recurrence_support=[0, 1, 3],
-    recurrence_probabilities=[[.10, .12, .04], [.12, .26, .08], [.04, .08, .16]],
+    update_support=[0, 1, 3],
+    update_probabilities=[[.10, .12, .04], [.12, .26, .08], [.04, .08, .16]],
     eval_u_t=3, eval_u_d=3, deep_supervision=False, deep_supervision_lambda=.25,
     device='cuda', dtype='bfloat16', compile=False, num_threads=4,
     eval_interval=500, eval_iters=16, log_interval=10,
@@ -28,7 +28,7 @@ COMMON = dict(
 def base(architecture='recurrent'):
     config = deepcopy({**DEFAULTS, **COMMON, 'architecture': architecture})
     if architecture == 'baseline':
-        config.update(recurrence_support=[], recurrence_probabilities=[], eval_u_t=0, eval_u_d=0)
+        config.update(update_support=[], update_probabilities=[], eval_u_t=0, eval_u_d=0)
     return config
 
 
@@ -40,8 +40,8 @@ def ablation(variant):
                   deep_supervision=variant != 'final', max_iters=1_000_000,
                   lr_decay_iters=10000, warmup_iters=200, checkpoint_steps=[0])
     if variant == 'deep_more':
-        # Keep the conditional distribution of (U_T,U_D) at each pass count.
-        config['recurrence_probabilities'] = [[.10, .072, .06], [.072, .156, .12], [.06, .12, .24]]
+        # Keep the conditional distribution of (U_T,U_D) at each max-update count.
+        config['update_probabilities'] = [[.10, .072, .06], [.072, .156, .12], [.06, .12, .24]]
     return config
 
 

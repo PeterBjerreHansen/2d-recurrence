@@ -183,7 +183,7 @@ def test_runner_scores_late_checkpoints_and_checks_report_identity(tmp_path, mon
                           panel_split='selection', panel_file_sha256='panel', manifest_hash='dataset',
                           mask_seeds=[11, 23, 37], device='cuda', batch_fingerprint='fixed-batch',
                           cells=[dict(u_t=t, u_d=d, nll_mean=.5 if variant == 'separated' else b_nll,
-                                      accuracy_mean=.8, training_probability=1/9,
+                                      accuracy_mean=.8, training_update_probability=1/9,
                                       estimated_forward_matmul_flops_per_sequence_mean=100)
                                  for t in (0, 1, 3) for d in (0, 1, 3)])
             runner.report_path(variant, step).write_text(json.dumps(report))

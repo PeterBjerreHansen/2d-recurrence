@@ -194,7 +194,7 @@ def mode_training_config(mode, output, **overrides):
     }
     evaluation = {'temporal': (1, 0), 'depth': (0, 1), 'hybrid': (1, 1)}[mode]
     config = dict(architecture='recurrent', recurrence_mode=mode,
-                  recurrence_support=[0, 1], recurrence_probabilities=distributions[mode],
+                  update_support=[0, 1], update_probabilities=distributions[mode],
                   recurrence_seed=19, n_layer=4, n_prelude=1, n_buffer=0, n_core=1,
                   n_source=1, n_coda=1, n_head=2, n_embd=8, dataset='', block_size=8,
                   batch_size=1, gradient_accumulation_steps=1, max_iters=2,
@@ -256,5 +256,5 @@ def test_cross_mode_resume_is_rejected(source, target, prepared_data, tmp_path):
 def test_training_rejects_probability_mass_on_inactive_axis(mode, probabilities, eval_counts):
     with pytest.raises(ValueError, match='recurrence_mode'):
         train(dict(architecture='recurrent', recurrence_mode=mode,
-                   recurrence_support=[0, 1], recurrence_probabilities=probabilities,
+                   update_support=[0, 1], update_probabilities=probabilities,
                    eval_u_t=eval_counts[0], eval_u_d=eval_counts[1], compile=False))

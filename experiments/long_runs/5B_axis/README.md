@@ -19,11 +19,11 @@ cosine decay to `3e-5` at the endpoint.
 
 The recurrent probability tables are the reviewed axis-ablation definitions in
 `experiments/long_runs/5B_axis/configs/common.py`. The temporal-only
-and depth-only arms use the same distribution over active pass counts (`0`, `1`,
+and depth-only arms use the same distribution over active update counts (`0`, `1`,
 and `3`). The hybrid arm uses the fixed symmetric near-diagonal table from that
 module: it preserves the same distribution over `max(U_T, U_D)`, leaves 80% of
 each nonzero bucket on the diagonal, and exposes asymmetric state-age cases.
-Therefore this is matched by core-pass distribution and data exposure, not by
+Therefore this is matched by physical pass distribution and data exposure, not by
 the sum of axis-specific writes. The hybrid arm remains somewhat more
 expensive per update, and the exact compute difference is reported separately.
 

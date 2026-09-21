@@ -27,7 +27,7 @@ U_T=3          .01     .03     .32
 ```
 
 The physical backbone, dataset, and shared training settings come from the
-5B study's frozen `study.py` configuration. This is pass-matched by core-pass
+5B study's frozen `study.py` configuration. This is matched by physical pass
 count, not by the sum `U_T + U_D` or by each axis marginal.
 
 The three config entry points delegate to `study.run_config`, so they resolve

@@ -11,8 +11,8 @@ from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig, TemporalMixe
 from recurrence.schedule import RecurrenceSchedule, RecurrenceScheduleSampler, sample_schedule
 from train import train
 
-SUPPORT = [0, 1, 3]
-PROBABILITIES = [[.10, .12, .04], [.12, .26, .08], [.04, .08, .16]]
+UPDATE_SUPPORT = [0, 1, 3]
+UPDATE_PROBABILITIES = [[.10, .12, .04], [.12, .26, .08], [.04, .08, .16]]
 
 
 def tiny_model(**overrides):
@@ -158,7 +158,7 @@ def test_held_states_match_history_reference_including_gradients(masks):
     assert model.transformer.h[2].attn.c_attn.weight.grad.abs().sum() > 0
 
 
-@pytest.mark.parametrize('u_t,u_d', [(t, d) for t in SUPPORT for d in SUPPORT] + [(7, 2), (2, 7)])
+@pytest.mark.parametrize('u_t,u_d', [(t, d) for t in UPDATE_SUPPORT for d in UPDATE_SUPPORT] + [(7, 2), (2, 7)])
 def test_calls_causality_and_finite_gradients(u_t, u_d):
     torch.manual_seed(4)
     model = tiny_model().eval()
@@ -202,19 +202,19 @@ def test_temporal_controller_uses_unprojected_sources_and_bypasses_boundary():
 
 
 def test_sampler_distribution_masks_and_resume():
-    sampler = RecurrenceScheduleSampler(SUPPORT, PROBABILITIES, 19)
+    sampler = RecurrenceScheduleSampler(UPDATE_SUPPORT, UPDATE_PROBABILITIES, 19)
     placements = Counter()
     for _ in range(12000):
         s = sampler.sample()
         assert s.rounds == max(s.u_t, s.u_d) + 1
-        assert (s.u_t, s.u_d) in [(t, d) for t in SUPPORT for d in SUPPORT]
+        assert (s.u_t, s.u_d) in [(t, d) for t in UPDATE_SUPPORT for d in UPDATE_SUPPORT]
         if (s.u_t, s.u_d) == (1, 3):
             placements[s.temporal_write_mask.index(True)] += 1
-    for i, t in enumerate(SUPPORT):
-        for j, d in enumerate(SUPPORT):
-            assert abs(sampler.pair_histogram[t, d] / 12000 - PROBABILITIES[i][j]) < .015
+    for i, t in enumerate(UPDATE_SUPPORT):
+        for j, d in enumerate(UPDATE_SUPPORT):
+            assert abs(sampler.pair_histogram[t, d] / 12000 - UPDATE_PROBABILITIES[i][j]) < .015
     assert all(abs(n / sum(placements.values()) - 1 / 3) < .05 for n in placements.values())
-    resumed = RecurrenceScheduleSampler(SUPPORT, PROBABILITIES, 999)
+    resumed = RecurrenceScheduleSampler(UPDATE_SUPPORT, UPDATE_PROBABILITIES, 999)
     resumed.load_state_dict(sampler.state_dict())
     random.seed(983)
     assert [sampler.sample() for _ in range(100)] == [resumed.sample() for _ in range(100)]
@@ -234,8 +234,8 @@ def test_invalid_counts(counts):
 
 
 def test_recurrent_training_exact_resume(prepared_data, tmp_path):
-    config = dict(architecture='recurrent', recurrence_support=SUPPORT,
-                  recurrence_probabilities=PROBABILITIES, recurrence_seed=19,
+    config = dict(architecture='recurrent', update_support=UPDATE_SUPPORT,
+                  update_probabilities=UPDATE_PROBABILITIES, recurrence_seed=19,
                   n_layer=4, n_prelude=1, n_buffer=0, n_core=1, n_coda=1, n_head=2, n_embd=16,
                   dataset=str(prepared_data), block_size=12, batch_size=2,
                   gradient_accumulation_steps=3, max_iters=4, eval_interval=2,
@@ -258,11 +258,11 @@ def test_recurrent_training_exact_resume(prepared_data, tmp_path):
 def test_recurrent_training_exact_resume_across_probability_crossover(prepared_data, tmp_path):
     phase_zero = [[1., 0., 0.], [0., 0., 0.], [0., 0., 0.]]
     phase_one = [[0., 0., 0.], [0., 0., 0.], [0., 0., 1.]]
-    config = dict(architecture='recurrent', recurrence_support=SUPPORT,
-                  recurrence_probabilities=[], recurrence_probability_schedule={
+    config = dict(architecture='recurrent', update_support=UPDATE_SUPPORT,
+                  update_probabilities=[], update_probability_schedule={
                       'type': 'piecewise_constant',
-                      'phases': [{'start_step': 0, 'probabilities': phase_zero},
-                                 {'start_step': 2, 'probabilities': phase_one}]},
+                      'phases': [{'start_step': 0, 'update_probabilities': phase_zero},
+                                 {'start_step': 2, 'update_probabilities': phase_one}]},
                   recurrence_seed=19, n_layer=4, n_prelude=1, n_buffer=0, n_core=1,
                   n_coda=1, n_head=2, n_embd=16, dataset=str(prepared_data), block_size=12,
                   batch_size=2, gradient_accumulation_steps=1, max_iters=4, eval_interval=2,
@@ -284,10 +284,12 @@ def test_recurrent_training_exact_resume_across_probability_crossover(prepared_d
     events = [json.loads(line) for line in (tmp_path / 'full' / 'metrics.jsonl').read_text().splitlines()]
     evaluations = [record for record in events if record['event'] == 'evaluation']
     by_step = {record['step']: record for record in evaluations}
-    assert by_step[0]['training_probability_step'] == 0
-    assert by_step[0]['training_probability_matrix'] == phase_zero
-    assert by_step[2]['training_probability_step'] == 2
-    assert by_step[2]['training_probability_matrix'] == phase_one
+    assert by_step[0]['next_update_probability_step'] == 0
+    assert by_step[0]['next_update_probability_matrix'] == phase_zero
+    assert by_step[0]['last_update_probability_matrix'] is None
+    assert by_step[2]['next_update_probability_step'] == 2
+    assert by_step[2]['next_update_probability_matrix'] == phase_one
+    assert by_step[2]['last_update_probability_matrix'] == phase_zero
 
 
 def test_noncommuting_mixers_read_held_depth_and_raw_shifted_source():

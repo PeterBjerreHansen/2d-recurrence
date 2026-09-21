@@ -13,7 +13,7 @@ The result is a one-seed matched comparison. It is evidence for this run and pro
 
 ## Fixed protocol
 
-Both runs used `chess_143K_v1`, the full frozen dataset, the same seed `1337`, schedule seed `1729`, support `{0, 1, 3}`, recurrence probability matrix from the configs, 8 transformer blocks, width 512, 8 heads, context 1023, no bias, dropout 0, batch size 2, gradient accumulation 4, AdamW, learning rate `3e-4` with 100-step warmup and cosine decay to `3e-5` over 10,000 updates, weight decay `0.1`, betas `(0.9, 0.95)`, gradient clipping `1.0`, and the fixed 128-row selection panel. The selected final checkpoint was evaluated on the disjoint confirmation complement.
+Both runs used `chess_143K_v1`, the full frozen dataset, the same seed `1337`, schedule seed `1729`, update support `{0, 1, 3}`, update-probability matrix from the configs, 8 transformer blocks, width 512, 8 heads, context 1023, no bias, dropout 0, batch size 2, gradient accumulation 4, AdamW, learning rate `3e-4` with 100-step warmup and cosine decay to `3e-5` over 10,000 updates, weight decay `0.1`, betas `(0.9, 0.95)`, gradient clipping `1.0`, and the fixed 128-row selection panel. The selected final checkpoint was evaluated on the disjoint confirmation complement.
 
 | Variant | Prelude | Core | Coda | Buffer | Source |
 | --- | ---: | ---: | ---: | ---: | ---: |

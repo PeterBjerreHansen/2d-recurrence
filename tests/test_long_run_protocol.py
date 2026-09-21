@@ -77,7 +77,7 @@ def test_legacy_checkpoint_resumes_after_panel_and_directory_move(prepared_data,
     config = dict(architecture='recurrent', dataset=str(prepared_data), block_size=8,
                   n_layer=4, n_prelude=1, n_buffer=0, n_core=1, n_source=1, n_coda=1,
                   n_head=2, n_embd=8, batch_size=1, gradient_accumulation_steps=1,
-                  recurrence_support=[0, 1], recurrence_probabilities=[[.1, .2], [.2, .5]],
+                  update_support=[0, 1], update_probabilities=[[.1, .2], [.2, .5]],
                   eval_u_t=1, eval_u_d=1, device='cpu', dtype='float32', compile=False,
                   max_iters=4, eval_interval=2, eval_iters=1, warmup_iters=0, lr_decay_iters=4,
                   eval_panel_path=str(old_panel), num_threads=1)

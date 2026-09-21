@@ -14,7 +14,7 @@ All recurrence evaluation and generation in this report uses the exact parallel 
 
 ## Protocol and provenance
 
-The run used the current width-512 recurrent model: 2 prelude blocks, 4 shared core blocks, 1 temporal source block, and 1 coda block; context 1,023; 32-character vocabulary; AdamW (`betas=(0.9, 0.95)`, weight decay 0.1); gradient clip 1; microbatch 2 with accumulation 4; final-only loss; zero dropout; fixed recurrence support `{0,1,3}` and fixed probability matrix; MPS, float32, eager execution.
+The run used the current width-512 recurrent model: 2 prelude blocks, 4 shared core blocks, 1 temporal source block, and 1 coda block; context 1,023; 32-character vocabulary; AdamW (`betas=(0.9, 0.95)`, weight decay 0.1); gradient clip 1; microbatch 2 with accumulation 4; final-only loss; zero dropout; fixed update support `{0,1,3}` and fixed update-probability matrix; MPS, float32, eager execution.
 
 The full pinned dataset contains 143,017 training rows / 146,449,408 characters and 1,445 validation rows / 1,479,680 characters. It was prepared uncapped from `lichess_100mb_blocks.zip`, dataset revision `1a932e1abca935aae585f417ede39ecde4f2a620`. The archive SHA-256 is `e8dca0c6ef531e9dc080b82a15f9cd24ee102c23b460c567fb731f83787d4b54`; the dataset manifest SHA-256 is `a517b15768ea375e8e38d6408820cde4017e362f1c9b5f755f65b74a4ba6eee5`.
 
@@ -26,7 +26,7 @@ The existing uncommitted work was preserved before changes and restored after pr
 
 ## Candidate selection
 
-The rule used `S`, mean `(3,3)` NLL at updates 750 and 1,000, and `W`, the same-checkpoint NLL weighted by the committed training probability matrix. B could win only if all three declared conditions held.
+The rule used `S`, mean `(3,3)` NLL at updates 750 and 1,000, and `W`, the same-checkpoint NLL weighted by the committed training update-probability matrix. B could win only if all three declared conditions held.
 
 | candidate | peak / minimum LR | S | W | eligible | decision inputs |
 | --- | ---: | ---: | ---: | --- | --- |

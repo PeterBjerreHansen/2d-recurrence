@@ -1,4 +1,4 @@
-"""Freeze and run the six-arm 1B time-dependent recurrence study.
+"""Freeze and run the six-arm 1B time-dependent update schedule study.
 
 Run ``freeze`` before training. The frozen protocol records the resolved
 piecewise schedule, data identity, source hashes, and the crossover semantics.
@@ -22,11 +22,11 @@ from data_loader import ChessData, file_hash
 from evaluation.all_rows import evaluate_baseline, load_model
 from evaluation.panels import fixed_panel_batches, load_panel
 from evaluation.recurrence_grid import evaluate_grid
-from recurrence.schedule import probability_map_at_step, probabilities_at_step
+from recurrence.schedule import update_probability_map_at_step, update_probabilities_at_step
 from train import train
 from .study import (ACTUAL_CHARACTERS, CHARACTERS, CHECKPOINT_STEPS,
-                    CROSSOVER_FRACTION, CROSSOVER_STEP, HARD_PHASE1_PASS_PROBABILITIES,
-                    HARD_PHASE2_PASS_PROBABILITIES, FIXED_PASS_PROBABILITIES,
+                    CROSSOVER_FRACTION, CROSSOVER_STEP, HARD_PHASE1_UPDATE_PROBABILITIES,
+                    HARD_PHASE2_UPDATE_PROBABILITIES, FIXED_UPDATE_PROBABILITIES,
                     PANEL_PATH, RESULTS_ROOT, RUNS, STUDY_NAME, UPDATES,
                     WARMUP_UPDATES, run_config)
 
@@ -46,11 +46,11 @@ SOURCE_FILES = (
     Path('configurator.py'), Path('data_loader.py'), Path('model.py'), Path('train.py'),
     Path('training_utils.py'), Path('pyproject.toml'), Path('uv.lock'),
     Path('docs/RECURRENCE_CONTRACT.md'), Path('experiments/serious.py'),
-    Path('experiments/ablations/1B_pass_schedule/README.md'),
+    Path('experiments/ablations/1B_update_schedule/README.md'),
 )
 SOURCE_DIRECTORIES = (
     Path('models'), Path('recurrence'), Path('evaluation'),
-    Path('experiments/ablations/1B_pass_schedule'),
+    Path('experiments/ablations/1B_update_schedule'),
 )
 SOURCE_ROOTS = SOURCE_FILES + SOURCE_DIRECTORIES
 PACKAGE_NAMES = ('torch', 'numpy', 'chess', 'datasets', 'huggingface-hub')
@@ -162,7 +162,7 @@ def _protocol_payload(data, panel):
     configs = {name: run_config(name) for name in ARM_ORDER}
     return dict(
         schema_version=1, study=STUDY_NAME,
-        purpose='One-billion-character time-dependent recurrence pass-growth study',
+        purpose='One-billion-character time-dependent recurrence update-growth study',
         source=source_snapshot(), dataset=_dataset_identity(data),
         panel=dict(path=str(PANEL), sha256=panel['sha256'], split='selection',
                    selection_rows=len(panel['selection_indices']),
@@ -175,12 +175,12 @@ def _protocol_payload(data, panel):
                       lr_decay_updates=UPDATES, learning_rate=3e-4, min_learning_rate=3e-5,
                       crossover_fraction=CROSSOVER_FRACTION, crossover_step=CROSSOVER_STEP,
                       crossover_semantics=(
-                          f'step 0..{CROSSOVER_STEP - 1} use K=2 (U=1); '
-                          f'step {CROSSOVER_STEP}..{UPDATES - 1} use K=4 (U=3)'),
+                          f'step 0..{CROSSOVER_STEP - 1} use U=1 (2 passes); '
+                          f'step {CROSSOVER_STEP}..{UPDATES - 1} use U=3 (4 passes)'),
                       hard_phase_update_counts=[CROSSOVER_STEP, UPDATES - CROSSOVER_STEP],
-                      hard_phase_pass_probabilities=[list(HARD_PHASE1_PASS_PROBABILITIES),
-                                                     list(HARD_PHASE2_PASS_PROBABILITIES)],
-                      fixed_pass_probabilities=list(FIXED_PASS_PROBABILITIES),
+                      hard_phase_update_probabilities=[list(HARD_PHASE1_UPDATE_PROBABILITIES),
+                                                       list(HARD_PHASE2_UPDATE_PROBABILITIES)],
+                      fixed_update_probabilities=list(FIXED_UPDATE_PROBABILITIES),
                       checkpoint_steps=CHECKPOINT_STEPS),
         evaluation=dict(mask_seeds=MASK_SEEDS, dtype='float32', execution='training_graph',
                         placement_variation='distinct declared mask placements'),
@@ -314,15 +314,19 @@ def evaluate_arm(name, step=None, split='selection', device='cuda'):
         raise ValueError('Checkpoint data differs from the frozen study data')
     batches, metadata = fixed_panel_batches(data, panel, run_config(name)['batch_size'])
     if recurrent:
-        active_matrix = probabilities_at_step(checkpoint_data['config'], checkpoint_data['iter_num'])
+        active_matrix = update_probabilities_at_step(checkpoint_data['config'], checkpoint_data['iter_num'])
         metrics = evaluate_grid(
             model, data, fixed_batches=batches, data_seed=None, batch_size=metadata['batch_size'],
             mask_seeds=MASK_SEEDS,
-            training_probabilities=probability_map_at_step(
+            training_update_probabilities=update_probability_map_at_step(
                 checkpoint_data['config'], checkpoint_data['iter_num']),
             diagnostics=False, sampling=metadata['sampling'])
-        metrics['training_probability_step'] = checkpoint_data['iter_num']
-        metrics['training_probability_matrix'] = [list(row) for row in active_matrix]
+        metrics['next_update_probability_step'] = checkpoint_data['iter_num']
+        metrics['next_update_probability_matrix'] = [list(row) for row in active_matrix]
+        metrics['last_update_probability_matrix'] = (
+            [list(row) for row in update_probabilities_at_step(
+                checkpoint_data['config'], checkpoint_data['iter_num'] - 1)]
+            if checkpoint_data['iter_num'] > 0 else None)
     else:
         metrics = evaluate_baseline(model, batches, device)
     report = dict(study=STUDY_NAME, arm=name, split=split, execution='training_graph',

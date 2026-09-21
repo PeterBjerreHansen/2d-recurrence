@@ -29,11 +29,11 @@ def validate_recurrence_counts(mode, u_t, u_d):
         raise ValueError(f"recurrence_mode='depth' cannot execute temporal recurrence (U_T={u_t})")
 
 
-def validate_recurrence_distribution(mode, support, probabilities):
-    """Reject probability mass on an axis unavailable to the selected mode."""
+def validate_update_probability_distribution(mode, update_support, update_probability_matrix):
+    """Reject update probability mass on an unavailable axis."""
     validate_recurrence_mode(mode)
-    for u_t, row in zip(support, probabilities):
-        for u_d, probability in zip(support, row):
+    for u_t, row in zip(update_support, update_probability_matrix):
+        for u_d, probability in zip(update_support, row):
             if probability and ((mode == 'temporal' and u_d) or (mode == 'depth' and u_t)):
                 validate_recurrence_counts(mode, u_t, u_d)
 

@@ -21,8 +21,8 @@ def test_distributed_training_resume(prepared_data, tmp_path):
     import torch
 
     root = Path(__file__).resolve().parents[1]
-    config = dict(architecture='recurrent', recurrence_support=[0, 1, 3],
-                  recurrence_probabilities=[[.1, .12, .04], [.12, .26, .08], [.04, .08, .16]],
+    config = dict(architecture='recurrent', update_support=[0, 1, 3],
+                  update_probabilities=[[.1, .12, .04], [.12, .26, .08], [.04, .08, .16]],
                   recurrence_seed=19, n_layer=4, n_prelude=1, n_buffer=0, n_core=1, n_coda=1,
                   n_head=2, n_embd=16, dataset=str(prepared_data), block_size=12,
                   batch_size=1, gradient_accumulation_steps=4, max_iters=4,

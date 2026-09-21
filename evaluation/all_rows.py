@@ -20,7 +20,8 @@ from data_loader import ChessData, file_hash
 from evaluation.recurrence_grid import evaluate_grid
 from model import GPT, GPTConfig
 from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
-from recurrence.schedule import probability_map_at_step, probabilities_at_step
+from recurrence.schedule import (update_probability_map_at_step,
+                                 update_probabilities_at_step)
 from training_utils import provenance
 
 
@@ -74,8 +75,8 @@ def evaluate_baseline(model, fixed_batches, device):
                 evaluated_characters=total)
 
 
-def training_probabilities(config, step=0):
-    return probability_map_at_step(config, step)
+def training_update_probabilities(config, step=0):
+    return update_probability_map_at_step(config, step)
 
 
 def main():
@@ -125,17 +126,22 @@ def main():
             raise ValueError('Checkpoints do not share the same dataset manifest')
 
         if recurrent:
-            active_matrix = probabilities_at_step(checkpoint['config'], checkpoint['iter_num'])
+            active_matrix = update_probabilities_at_step(checkpoint['config'], checkpoint['iter_num'])
             report = evaluate_grid(
                 model, data, fixed_batches=fixed, data_seed=None, batch_size=args.batch_size,
                 mask_seeds=args.mask_seeds,
-                training_probabilities=training_probabilities(checkpoint['config'], checkpoint['iter_num']),
+                training_update_probabilities=training_update_probabilities(
+                    checkpoint['config'], checkpoint['iter_num']),
                 diagnostics=False,
                 sampling=fixed_metadata['sampling'],
             )
             report['row_indices'] = row_indices
-            report['training_probability_step'] = checkpoint['iter_num']
-            report['training_probability_matrix'] = [list(row) for row in active_matrix]
+            report['next_update_probability_step'] = checkpoint['iter_num']
+            report['next_update_probability_matrix'] = [list(row) for row in active_matrix]
+            report['last_update_probability_matrix'] = (
+                [list(row) for row in update_probabilities_at_step(
+                    checkpoint['config'], checkpoint['iter_num'] - 1)]
+                if checkpoint['iter_num'] > 0 else None)
             result = dict(label=label, checkpoint=str(Path(path).resolve()),
                           checkpoint_sha256=checkpoint_hash,
                           checkpoint_step=checkpoint['iter_num'], architecture='recurrent',

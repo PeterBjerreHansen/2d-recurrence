@@ -71,7 +71,7 @@ def test_serious_pair_requires_choice_and_matches_data_budget(tmp_path, monkeypa
 def test_ablation_changes_only_supervision_and_output():
     a, b = serious.ablation('final'), serious.ablation('deep')
     assert {k for k in a if a[k] != b[k]} == {'deep_supervision', 'out_dir'}
-    assert sum(map(sum, serious.ablation('deep_more')['recurrence_probabilities'])) == pytest.approx(1)
+    assert sum(map(sum, serious.ablation('deep_more')['update_probabilities'])) == pytest.approx(1)
 
 
 def test_frozen_receipt_refuses_changes(tmp_path):

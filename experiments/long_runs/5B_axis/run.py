@@ -25,7 +25,7 @@ from data_loader import ChessData, file_hash
 from evaluation.all_rows import evaluate_baseline, load_model
 from evaluation.panels import fixed_panel_batches, load_panel
 from evaluation.recurrence_grid import evaluate_grid
-from recurrence.schedule import probability_map_at_step, probabilities_at_step
+from recurrence.schedule import update_probability_map_at_step, update_probabilities_at_step
 from .study import (
     ACTUAL_CHARACTERS,
     CHARACTERS,
@@ -445,15 +445,19 @@ def evaluate_arm(name, step=None, split='selection', device='cuda'):
         raise ValueError('Checkpoint dataset differs from the frozen study dataset')
     batches, metadata = fixed_panel_batches(data, panel, run_config(name)['batch_size'])
     if recurrent:
-        active_matrix = probabilities_at_step(checkpoint_data['config'], checkpoint_data['iter_num'])
+        active_matrix = update_probabilities_at_step(checkpoint_data['config'], checkpoint_data['iter_num'])
         result = evaluate_grid(
             model, data, fixed_batches=batches, data_seed=None,
             batch_size=metadata['batch_size'], mask_seeds=MASK_SEEDS,
-            training_probabilities=probability_map_at_step(
+            training_update_probabilities=update_probability_map_at_step(
                 checkpoint_data['config'], checkpoint_data['iter_num']),
             diagnostics=False, sampling=metadata['sampling'])
-        result['training_probability_step'] = checkpoint_data['iter_num']
-        result['training_probability_matrix'] = [list(row) for row in active_matrix]
+        result['next_update_probability_step'] = checkpoint_data['iter_num']
+        result['next_update_probability_matrix'] = [list(row) for row in active_matrix]
+        result['last_update_probability_matrix'] = (
+            [list(row) for row in update_probabilities_at_step(
+                checkpoint_data['config'], checkpoint_data['iter_num'] - 1)]
+            if checkpoint_data['iter_num'] > 0 else None)
     else:
         result = evaluate_baseline(model, batches, device)
     report = dict(

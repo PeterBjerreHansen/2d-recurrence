@@ -18,8 +18,8 @@ import torch.nn.functional as F
 from data_loader import ChessData, file_hash
 from evaluation.panels import fixed_panel_batches, load_panel
 from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
-from recurrence.schedule import (RecurrenceSchedule, probability_map_at_step,
-                                 probabilities_at_step)
+from recurrence.schedule import (RecurrenceSchedule, update_probability_map_at_step,
+                                 update_probabilities_at_step)
 from training_utils import provenance
 
 PILOT_SUPPORT = (0, 1, 3)
@@ -185,7 +185,7 @@ def trajectory_diagnostics(model, x, y, schedule):
 
 
 def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
-                  mask_seeds=(11, 23, 37), training_probabilities=None, diagnostics=True,
+                  mask_seeds=(11, 23, 37), training_update_probabilities=None, diagnostics=True,
                   fixed_batches=None, sampling=None):
     if batches < 1 or batch_size < 1 or not mask_seeds or len(set(mask_seeds)) != len(mask_seeds):
         raise ValueError('Positive batch counts and nonempty distinct mask seeds are required')
@@ -235,7 +235,8 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
                 stats[key + '_mean'] = statistics.mean(values)
                 stats[key + '_std'] = statistics.pstdev(values)
             cell = dict(u_t=u_t, u_d=u_d, core_passes=max(u_t, u_d) + 1,
-                        training_probability=training_probabilities.get((u_t, u_d), 0.) if training_probabilities is not None else None,
+                        training_update_probability=(training_update_probabilities.get((u_t, u_d), 0.)
+                                                     if training_update_probabilities is not None else None),
                         possible_placements=math.comb(max(u_t, u_d), u_t) * math.comb(max(u_t, u_d), u_d),
                         placement_count=len(placements), evaluated_characters_per_placement=count,
                         target_count=count,
@@ -275,15 +276,15 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_fi
         raise ValueError('Evaluation data or vocabulary differs from the training checkpoint')
     model = Recurrent2DGPT(RecurrentGPTConfig.from_checkpoint(checkpoint['model_args'])).to(device)
     model.load_state_dict(checkpoint['model'])
-    active_matrix = probabilities_at_step(config, checkpoint['iter_num'])
-    probabilities = probability_map_at_step(config, checkpoint['iter_num'])
+    active_matrix = update_probabilities_at_step(config, checkpoint['iter_num'])
+    probabilities = update_probability_map_at_step(config, checkpoint['iter_num'])
     panel = None
     if panel_file:
         panel = load_panel(panel_file, data, split=panel_split)
         fixed, fixed_metadata = fixed_panel_batches(data, panel, kwargs.pop('batch_size', 2))
         kwargs.update(fixed_batches=fixed, batch_size=fixed_metadata['batch_size'], data_seed=None,
                       sampling=fixed_metadata['sampling'])
-    report = evaluate_grid(model, data, training_probabilities=probabilities, **kwargs)
+    report = evaluate_grid(model, data, training_update_probabilities=probabilities, **kwargs)
     if file_hash(checkpoint_path) != checkpoint_hash:
         raise ValueError('Checkpoint changed during evaluation; use a retained step checkpoint')
     report.update(checkpoint=str(checkpoint_path.resolve()), checkpoint_sha256=checkpoint_hash,
@@ -292,8 +293,11 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_fi
                   recurrence_mode=RecurrentGPTConfig.from_checkpoint(checkpoint['model_args']).recurrence_mode,
                   training_schedule_seed=config['recurrence_seed'], device=device,
                   dtype='float32', provenance=provenance())
-    report['training_probability_step'] = checkpoint['iter_num']
-    report['training_probability_matrix'] = [list(row) for row in active_matrix]
+    report['next_update_probability_step'] = checkpoint['iter_num']
+    report['next_update_probability_matrix'] = [list(row) for row in active_matrix]
+    report['last_update_probability_matrix'] = (
+        [list(row) for row in update_probabilities_at_step(config, checkpoint['iter_num'] - 1)]
+        if checkpoint['iter_num'] > 0 else None)
     report['dataset_identity'] = dict(dataset=config['dataset'], manifest_hash=data.manifest_hash,
                                       validation_row_count=len(data.rows['val']),
                                       training_row_count=len(data.rows['train']))

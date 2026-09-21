@@ -50,9 +50,21 @@ The `(0, 0)` schedule remains the ordinary physical backbone path for all
 modes. Source and coda blocks remain part of the prediction path even when
 temporal recurrence is disabled. Matched component-ablation schedules use the
 same active-axis count `K` for both axes and therefore update the active state
-after every nonfinal pass; this matches pass-count distributions but is not a
+after every nonfinal pass; this matches max-update-count distributions but is not a
 FLOP-matched comparison. Inactive mixers are absent from specialized
 state-dicts, parameter counts, and optimizer groups.
+
+## Update terminology
+
+`update_support` is the ordered support of nonnegative update counts for each
+axis. `update_probabilities` is the joint matrix over `(U_T, U_D)` in that
+support, and `update_probability_schedule` is an optional piecewise-constant
+sequence of such matrices keyed by absolute optimizer step. The concrete
+`RecurrenceSchedule` still stores Boolean write masks; its physical pass count
+is derived as `max(U_T, U_D) + 1`. This vocabulary distinguishes update counts
+from the physical passes required to execute them. New checkpoints use these
+names; loaders accept the historical `support`/`probabilities` sampler fields
+and `recurrence_*` configuration keys.
 
 The implementation exposes half-open segment boundaries (`core_start:core_stop`,
 `source_start:source_stop`, and `coda_start:n_layer`). The separately named
@@ -81,7 +93,7 @@ not recomputed from a mutable `max_iters`.
 All microbatches in one optimizer update use the same $P_t$, while drawing
 independent concrete schedules. Rank zero remains the authoritative sampler
 under DDP and broadcasts each resolved schedule. The model receives no
-optimizer-step, pass-count-distribution, or curriculum signal. Evaluation
+optimizer-step, max-update-count distribution, or curriculum signal. Evaluation
 continues to use explicit independent schedules and does not advance the
 training RNG. Evaluation reports attach the matrix active at the checkpoint's
 step; sampler pair and round histograms remain the aggregate record of what
@@ -116,7 +128,8 @@ counts do not establish measured decoding latency.
 
 ## Reproducibility
 
-The sampler checkpoints its RNG, support, optional static probability matrix,
+The sampler checkpoints its RNG, update support, optional static update
+probability matrix,
 draw count, and histograms. A time-dependent probability schedule remains in
 the training config rather than sampler state, so exact resume resolves the
 matrix from the checkpoint `iter_num` and the frozen config. Under DDP, rank

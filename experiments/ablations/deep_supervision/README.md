@@ -10,7 +10,7 @@ Checkpoints save the consumed training time, so spot recovery continues the same
 
 Evaluate both endpoints in CUDA float32 on the same exact 256-row selection panel and mask seeds 11/23/37. Inspect (3,3), improvement from (1,1) to (3,3), the full nine-cell surface, training curves, clipping and nonfinite diagnostics. Compare final-pass NLL, never the differing training objectives. Choose deep supervision if it offers a useful practical improvement at equal time without a material regression in deeper refinement; otherwise keep final-only. Record the judgment and limitations explicitly, including a near-tie if applicable. One seed is a default-selection exercise, not statistical proof. Evaluate the chosen endpoint once on a separate fixed 512-row confirmation sample. Confirmation is not a second tuning set.
 
-`choose` records the reviewed default and unlocks the 1B/64B paired runners. It does not launch them. The optional `deep_more` benchmark changes pass probabilities from 10/50/40% to 10/30/60% for 1/2/4 passes; it is a cost probe only and is not included in this supervision ablation or selection decision.
+`choose` records the reviewed default and unlocks the 1B/64B paired runners. It does not launch them. The optional `deep_more` benchmark changes max-update probabilities from 10/50/40% to 10/30/60% for 0/1/3 updates (one/two/four physical passes); it is a cost probe only and is not included in this supervision ablation or selection decision.
 
 See [HANDOFF.md](HANDOFF.md) for commands. Every generated artifact belongs under this experiment's ignored `results/`, except long-run outputs, which live beside their own configs. No VM is provisioned by these scripts.
 
