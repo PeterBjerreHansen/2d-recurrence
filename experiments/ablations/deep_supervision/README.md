@@ -13,3 +13,10 @@ Evaluate both endpoints in CUDA float32 on the same exact 256-row selection pane
 `choose` records the reviewed default and unlocks the 1B/64B paired runners. It does not launch them. The optional `deep_more` benchmark changes pass probabilities from 10/50/40% to 10/30/60% for 1/2/4 passes; it is a cost probe only and is not included in this supervision ablation or selection decision.
 
 See [HANDOFF.md](HANDOFF.md) for commands. Every generated artifact belongs under this experiment's ignored `results/`, except long-run outputs, which live beside their own configs. No VM is provisioned by these scripts.
+
+The raw receipts were produced before this directory was renamed from
+`experiments/ablations/supervision_compute`. Their historical JSON metadata
+retains those original path strings so the recorded artifacts and hashes are
+not rewritten. The relocation is recorded in
+[`experiments/relocations.json`](../../relocations.json); the current runner
+and documentation use `deep_supervision` consistently.

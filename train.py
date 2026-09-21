@@ -24,7 +24,8 @@ from model import GPT, GPTConfig
 from models.recurrent_2d import (Recurrent2DGPT, RecurrentGPTConfig,
                                  validate_recurrence_counts, validate_recurrence_distribution,
                                  validate_recurrence_mode)
-from recurrence.schedule import RecurrenceScheduleSampler, sample_schedule
+from recurrence.schedule import (RecurrenceScheduleSampler, probabilities_at_step,
+                                 sample_schedule)
 from training_utils import append_json, atomic_save, capture_rng, provenance, restore_rng
 
 DEFAULTS = dict(
@@ -37,6 +38,7 @@ DEFAULTS = dict(
     backend='nccl', device='cuda', dtype='bfloat16', compile=True, seed=1337,
     num_threads=4, architecture='baseline', n_prelude=1, n_core=4, n_coda=1, n_buffer=1, n_source=1,
     recurrence_support=[], recurrence_probabilities=[], recurrence_seed=1729, recurrence_mode='hybrid',
+    recurrence_probability_schedule=None,
     eval_u_t=0, eval_u_d=0, keep_checkpoints=False, checkpoint_steps=None,
     eval_panel_path='', deep_supervision=False, deep_supervision_lambda=0.25,
     training_budget_seconds=0.0,
@@ -95,10 +97,13 @@ def train(config):
         raise ValueError('Use compile=False for variable recurrent schedules in the MVP')
     if recurrent:
         validate_recurrence_mode(config['recurrence_mode'])
-        sampler = RecurrenceScheduleSampler(config['recurrence_support'], config['recurrence_probabilities'],
+        initial_probabilities = probabilities_at_step(config, 0)
+        sampler = RecurrenceScheduleSampler(config['recurrence_support'],
+                                             None if config['recurrence_probability_schedule'] is not None
+                                             else config['recurrence_probabilities'],
                                              config['recurrence_seed'])
         validate_recurrence_distribution(config['recurrence_mode'], config['recurrence_support'],
-                                         config['recurrence_probabilities'])
+                                         initial_probabilities)
         validate_recurrence_counts(config['recurrence_mode'], config['eval_u_t'], config['eval_u_d'])
         sample_schedule(config['eval_u_t'], config['eval_u_d'], random.Random(0))
     else:
@@ -281,9 +286,9 @@ def train(config):
                     (config['checkpoint_steps'] is None or step in config['checkpoint_steps'])):
                 atomic_save(payload, out / f'ckpt-step{step:06d}.pt')
 
-    def next_schedule():
+    def next_schedule(probabilities):
         # Only rank zero advances the sampler. Its checkpoint state is authoritative.
-        selected = [sampler.sample() if master else None]
+        selected = [sampler.sample(probabilities) if master else None]
         if ddp:
             dist.broadcast_object_list(selected, src=0)
         return selected[0]
@@ -299,6 +304,10 @@ def train(config):
             if master:
                 print(f"step {step}: train {metrics['train_nll']:.4f}, val {metrics['val_nll']:.4f}, accuracy {metrics['val_accuracy']:.3f}", flush=True)
                 label = dict(execution='training_graph', u_t=config['eval_u_t'], u_d=config['eval_u_d']) if recurrent else {}
+                if recurrent:
+                    active_matrix = probabilities_at_step(config, step)
+                    label.update(training_probability_step=step,
+                                 training_probability_matrix=[list(row) for row in active_matrix])
                 append_json(out / 'metrics.jsonl', dict(event='evaluation', step=step, **label, **metrics))
             if not config['eval_only']:
                 save_checkpoint()
@@ -319,13 +328,14 @@ def train(config):
         intermediate_loss_sum = 0.0
         intermediate_weight = 0.0
         schedules = []
+        probabilities = probabilities_at_step(config, step) if recurrent else None
         for micro_step in range(accumulation):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1
             x, y = data.batch('train', config['batch_size'], device, train_rng)
             kwargs = {}
             if recurrent:
-                schedule = next_schedule()
+                schedule = next_schedule(probabilities)
                 kwargs['schedule'] = schedule
                 schedules.append(dict(u_t=schedule.u_t, u_d=schedule.u_d, rounds=schedule.rounds))
             with context():

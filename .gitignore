@@ -13,3 +13,5 @@ data/**/prompts.json
 data/smoke*/
 *.pt
 wandb/
+experiments/long_runs/5B_axis/runpod_batch_sweep_*/
+experiments/long_runs/5B_axis/runpod_live_backups/

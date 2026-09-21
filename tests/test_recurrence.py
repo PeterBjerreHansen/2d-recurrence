@@ -1,4 +1,5 @@
 import copy
+import json
 import random
 from collections import Counter
 
@@ -252,6 +253,41 @@ def test_recurrent_training_exact_resume(prepared_data, tmp_path):
     assert a['recurrence_sampler'] == b['recurrence_sampler']
     assert a['recurrence_sampler']['draw_count'] == 12
     assert a['best_val_loss'] == b['best_val_loss']
+
+
+def test_recurrent_training_exact_resume_across_probability_crossover(prepared_data, tmp_path):
+    phase_zero = [[1., 0., 0.], [0., 0., 0.], [0., 0., 0.]]
+    phase_one = [[0., 0., 0.], [0., 0., 0.], [0., 0., 1.]]
+    config = dict(architecture='recurrent', recurrence_support=SUPPORT,
+                  recurrence_probabilities=[], recurrence_probability_schedule={
+                      'type': 'piecewise_constant',
+                      'phases': [{'start_step': 0, 'probabilities': phase_zero},
+                                 {'start_step': 2, 'probabilities': phase_one}]},
+                  recurrence_seed=19, n_layer=4, n_prelude=1, n_buffer=0, n_core=1,
+                  n_coda=1, n_head=2, n_embd=16, dataset=str(prepared_data), block_size=12,
+                  batch_size=2, gradient_accumulation_steps=1, max_iters=4, eval_interval=2,
+                  eval_iters=2, eval_u_t=3, eval_u_d=1, log_interval=2,
+                  warmup_iters=0, lr_decay_iters=4, compile=False, device='cpu',
+                  dtype='float32', dropout=.2, num_threads=2)
+    full = train({**config, 'out_dir': str(tmp_path / 'full')})
+    resumed_dir = str(tmp_path / 'resumed')
+    train({**config, 'max_iters': 2, 'out_dir': resumed_dir})
+    resumed = train({**config, 'init_from': 'resume', 'out_dir': resumed_dir})
+    a, b = [torch.load(path, weights_only=False) for path in (full, resumed)]
+    for key in a['model']:
+        torch.testing.assert_close(a['model'][key], b['model'][key], rtol=0, atol=0)
+    torch.testing.assert_close(a['optimizer'], b['optimizer'], rtol=0, atol=0)
+    assert a['recurrence_sampler'] == b['recurrence_sampler']
+    assert a['recurrence_sampler']['pair_histogram'] == {(0, 0): 2, (3, 3): 2}
+    assert a['recurrence_sampler']['draw_count'] == 4
+    assert a['best_val_loss'] == b['best_val_loss']
+    events = [json.loads(line) for line in (tmp_path / 'full' / 'metrics.jsonl').read_text().splitlines()]
+    evaluations = [record for record in events if record['event'] == 'evaluation']
+    by_step = {record['step']: record for record in evaluations}
+    assert by_step[0]['training_probability_step'] == 0
+    assert by_step[0]['training_probability_matrix'] == phase_zero
+    assert by_step[2]['training_probability_step'] == 2
+    assert by_step[2]['training_probability_matrix'] == phase_one
 
 
 def test_noncommuting_mixers_read_held_depth_and_raw_shifted_source():

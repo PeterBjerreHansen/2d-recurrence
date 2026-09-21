@@ -19,6 +19,7 @@
   "configs/arch_separated.py": "experiments/ablations/architecture_sites/configs/separated.py",
   "configs/arch_coincident.py": "experiments/ablations/architecture_sites/configs/coincident.py",
   "configs/architecture_ab.py": "experiments/ablations/architecture_sites/configs/common.py",
+  "experiments/ablations/supervision_compute": "experiments/ablations/deep_supervision",
   "experiments/architecture_ab.py": "experiments/ablations/architecture_sites/run.py",
   "experiments/package_architecture_ab.py": "experiments/ablations/architecture_sites/package.py",
   "configs/long_baseline_a.py": "experiments/sweeps/baseline_lr_selection/configs/lr3e4.py",

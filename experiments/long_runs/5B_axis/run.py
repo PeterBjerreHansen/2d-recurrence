@@ -22,9 +22,10 @@ import time
 import torch
 
 from data_loader import ChessData, file_hash
-from evaluation.all_rows import evaluate_baseline, load_model, training_probabilities
+from evaluation.all_rows import evaluate_baseline, load_model
 from evaluation.panels import fixed_panel_batches, load_panel
 from evaluation.recurrence_grid import evaluate_grid
+from recurrence.schedule import probability_map_at_step, probabilities_at_step
 from .study import (
     ACTUAL_CHARACTERS,
     CHARACTERS,
@@ -444,11 +445,15 @@ def evaluate_arm(name, step=None, split='selection', device='cuda'):
         raise ValueError('Checkpoint dataset differs from the frozen study dataset')
     batches, metadata = fixed_panel_batches(data, panel, run_config(name)['batch_size'])
     if recurrent:
+        active_matrix = probabilities_at_step(checkpoint_data['config'], checkpoint_data['iter_num'])
         result = evaluate_grid(
             model, data, fixed_batches=batches, data_seed=None,
             batch_size=metadata['batch_size'], mask_seeds=MASK_SEEDS,
-            training_probabilities=training_probabilities(checkpoint_data['config']),
+            training_probabilities=probability_map_at_step(
+                checkpoint_data['config'], checkpoint_data['iter_num']),
             diagnostics=False, sampling=metadata['sampling'])
+        result['training_probability_step'] = checkpoint_data['iter_num']
+        result['training_probability_matrix'] = [list(row) for row in active_matrix]
     else:
         result = evaluate_baseline(model, batches, device)
     report = dict(

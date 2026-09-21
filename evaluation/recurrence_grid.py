@@ -18,7 +18,8 @@ import torch.nn.functional as F
 from data_loader import ChessData, file_hash
 from evaluation.panels import fixed_panel_batches, load_panel
 from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
-from recurrence.schedule import RecurrenceSchedule
+from recurrence.schedule import (RecurrenceSchedule, probability_map_at_step,
+                                 probabilities_at_step)
 from training_utils import provenance
 
 PILOT_SUPPORT = (0, 1, 3)
@@ -274,9 +275,8 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_fi
         raise ValueError('Evaluation data or vocabulary differs from the training checkpoint')
     model = Recurrent2DGPT(RecurrentGPTConfig.from_checkpoint(checkpoint['model_args'])).to(device)
     model.load_state_dict(checkpoint['model'])
-    probabilities = {(t, d): config['recurrence_probabilities'][i][j]
-                     for i, t in enumerate(config['recurrence_support'])
-                     for j, d in enumerate(config['recurrence_support'])}
+    active_matrix = probabilities_at_step(config, checkpoint['iter_num'])
+    probabilities = probability_map_at_step(config, checkpoint['iter_num'])
     panel = None
     if panel_file:
         panel = load_panel(panel_file, data, split=panel_split)
@@ -292,6 +292,8 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_fi
                   recurrence_mode=RecurrentGPTConfig.from_checkpoint(checkpoint['model_args']).recurrence_mode,
                   training_schedule_seed=config['recurrence_seed'], device=device,
                   dtype='float32', provenance=provenance())
+    report['training_probability_step'] = checkpoint['iter_num']
+    report['training_probability_matrix'] = [list(row) for row in active_matrix]
     report['dataset_identity'] = dict(dataset=config['dataset'], manifest_hash=data.manifest_hash,
                                       validation_row_count=len(data.rows['val']),
                                       training_row_count=len(data.rows['train']))

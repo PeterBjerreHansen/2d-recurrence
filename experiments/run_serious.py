@@ -11,9 +11,10 @@ import sys
 import torch
 
 from data_loader import ChessData, file_hash
-from evaluation.all_rows import load_model, evaluate_baseline, training_probabilities
+from evaluation.all_rows import load_model, evaluate_baseline
 from evaluation.panels import load_panel, fixed_panel_batches
 from evaluation.recurrence_grid import evaluate_grid
+from recurrence.schedule import probability_map_at_step, probabilities_at_step
 from experiments.serious import ROOT, REVISION, COMMON, TOKENS_PER_UPDATE, ablation, base, long_run
 from train import train
 
@@ -160,9 +161,13 @@ def evaluate(path, split):
         panel['row_indices'] = sorted(random.Random(2028).sample(panel['row_indices'], 512))
     batches, metadata = fixed_panel_batches(data, panel, 5)
     if recurrent:
+        active_matrix = probabilities_at_step(checkpoint['config'], checkpoint['iter_num'])
         metrics = evaluate_grid(model, data, fixed_batches=batches, data_seed=None, batch_size=5,
-            mask_seeds=[11, 23, 37], training_probabilities=training_probabilities(checkpoint['config']),
+            mask_seeds=[11, 23, 37], training_probabilities=probability_map_at_step(
+                checkpoint['config'], checkpoint['iter_num']),
             diagnostics=False, sampling=metadata['sampling'])
+        metrics['training_probability_step'] = checkpoint['iter_num']
+        metrics['training_probability_matrix'] = [list(row) for row in active_matrix]
     else:
         metrics = evaluate_baseline(model, batches, 'cuda')
     write_once(output, dict(checkpoint_hash=digest, step=checkpoint['iter_num'],

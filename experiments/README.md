@@ -10,6 +10,7 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 | [Deep-supervision comparison](ablations/deep_supervision/README.md) | Controlled A6000 comparison; final-only selected |
 | [Baseline LR selection](sweeps/baseline_lr_selection/README.md) | Retained LR sweep and selected 10k continuation |
 | [5B recurrence-axis study](long_runs/5B_axis/README.md) | Frozen four-arm protocol; depth, temporal, and hybrid CUDA runs retained, transformer result incomplete |
+| [1B time-dependent pass schedule](ablations/1B_pass_schedule/README.md) | New six-arm ablation protocol for fixed versus hard 2-to-4 pass growth; freeze before launch |
 | [Archived early pilots](archive/early_pilots/README.md) | Reports and small artifacts retained; obsolete scripts and checkpoints deleted |
 | [Smoke checks](smoke/README.md) | Small reproducible pipeline checks and historical validation notes |
 

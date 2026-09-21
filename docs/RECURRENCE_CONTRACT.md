@@ -70,6 +70,23 @@ For nonnegative update counts $U_T,U_D$, execute $B=\max(U_T,U_D)+1$ core passes
 
 Compute $p=P(x)$ once and start both states absent on every forward call. Each pass reads every available state. Masks control only writes; held tensors retain their values and gradient connections. No iteration index, update count, mask embedding, or state age is supplied to the model. There is no implicit carry of the latest core output around the masks.
 
+The training distribution may be a deterministic function of the optimizer
+step, $P_t(U_T,U_D)$. A probability schedule selects update-count pairs; it
+does not replace the concrete `RecurrenceSchedule`, which still contains the
+Boolean write masks for one forward call. For a piecewise-constant schedule,
+the absolute pre-update step selects the last phase whose `start_step` has
+been reached. Schedule phase boundaries are frozen in the experiment config,
+not recomputed from a mutable `max_iters`.
+
+All microbatches in one optimizer update use the same $P_t$, while drawing
+independent concrete schedules. Rank zero remains the authoritative sampler
+under DDP and broadcasts each resolved schedule. The model receives no
+optimizer-step, pass-count-distribution, or curriculum signal. Evaluation
+continues to use explicit independent schedules and does not advance the
+training RNG. Evaluation reports attach the matrix active at the checkpoint's
+step; sampler pair and round histograms remain the aggregate record of what
+training actually sampled.
+
 ## Temporal mixing and the buffer
 
 If temporal state exists, set $r_b=\operatorname{ShiftRight}(m_T)$ and $a_b=T(p,r_b)$; otherwise use $a_b=p$. Shift the stored memory once for each read without modifying it. At position zero, bypass temporal mixing and return raw $p$ because no predecessor exists. A zero-valued memory elsewhere remains a valid input. Preserve causal context across internal game markers within a row.
@@ -99,6 +116,12 @@ counts do not establish measured decoding latency.
 
 ## Reproducibility
 
-The sampler checkpoints its RNG, support, probability matrix, draw count, and histograms. Under DDP, rank zero samples each microbatch schedule and broadcasts it. Accumulated microbatches can have different schedules. Evaluation uses independent fixed schedules and does not advance training RNG. Eager execution handles schedule-dependent unused parameters.
+The sampler checkpoints its RNG, support, optional static probability matrix,
+draw count, and histograms. A time-dependent probability schedule remains in
+the training config rather than sampler state, so exact resume resolves the
+matrix from the checkpoint `iter_num` and the frozen config. Under DDP, rank
+zero samples each microbatch schedule and broadcasts it. Accumulated
+microbatches can have different concrete schedules. Eager execution handles
+schedule-dependent unused parameters.
 
 New checkpoints store every block count explicitly. Load old checkpoints through `RecurrentGPTConfig.from_checkpoint`: omitted buffer/source counts mean zero/one, preserving the original semantics rather than adopting today's defaults. Resume checks normalized model configurations, all training settings, dataset identity, panel content hash, and world size. Moving a panel file without changing its bytes is allowed. CPU exact resume is tested; GPU kernels may introduce numerical nondeterminism. Raw historical artifacts retain their original paths and hashes; the repository relocation map is in `experiments/relocations.json`.
