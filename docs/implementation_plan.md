@@ -258,8 +258,7 @@ evaluation/                     # reusable evaluators, not experiment-specific r
 configs/                        # current reusable reference/default configs
 experiments/
   ablations/architecture_sites/ # A/B configs, runner, report, local results/
-  ablations/supervision_compute/ # immediate time-matched objective comparison
-  ablations/deep_supervision/    # retained cross-backend pilot
+  ablations/deep_supervision/    # time-matched deep-supervision comparison
   sweeps/baseline_lr_selection/  # retained LR experiment
   long_runs/{1B_baseline,64B_core}/ # paired serious profiles, own results/
   archive/early_pilots/          # reports only; obsolete checkpoints retired
@@ -289,4 +288,4 @@ Mixer architecture, normalization, initialization, masking, and ordered site con
 
 ## Immediate experimental progression
 
-The maintained run protocol is [the experiment index](../experiments/README.md), with commands in [the supervision handoff](../experiments/ablations/supervision_compute/HANDOFF.md). The measured supervision comparison and matched transformer/A 1B pair are complete; the final-only objective is recorded in [LONG_BASELINE_RESULTS.md](../experiments/long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). The 64B profiles are prepared future runs, not an automatic continuation. They use the full pinned Lichess corpus and effective batch 100; the MPS profiles are local checks. Next, validate live-feedback inference on the completed recurrent checkpoint, then decide whether to expand the evaluation grid or freeze separately trained temporal-only/depth-only controls with matching pass-count distributions and explicit compute accounting.
+The maintained run protocol is [the experiment index](../experiments/README.md), with commands in [the supervision handoff](../experiments/ablations/deep_supervision/HANDOFF.md). The measured supervision comparison and matched transformer/A 1B pair are complete; the final-only objective is recorded in [LONG_BASELINE_RESULTS.md](../experiments/long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). The 64B profiles are prepared future runs, not an automatic continuation. They use the full pinned Lichess corpus and effective batch 100; the MPS profiles are local checks. Next, validate live-feedback inference on the completed recurrent checkpoint, then decide whether to expand the evaluation grid or freeze separately trained temporal-only/depth-only controls with matching pass-count distributions and explicit compute accounting.

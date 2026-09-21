@@ -1,36 +1,15 @@
-# Deep-supervision training ablation
+# Compute-matched supervision selection
 
-This is the first objective ablation after the completed recurrence pilot and 10,000-update baseline. It compares the existing final-only objective with one normalized auxiliary-loss condition:
+Compare variation A with final-only supervision against normalized deep supervision: for multi-pass trajectories, `L = (L_final + 0.25 * mean(L_intermediate)) / 1.25`; one-pass trajectories use `L_final`. Keep the architecture, update distribution and all other training settings identical. This directory contains the controlled comparison and its raw artifacts.
 
-```text
-L = (L_final + 0.25 * mean(L_intermediate)) / 1.25
-```
+The serious profile is in `experiments/serious.py`: full pinned Lichess 6GB blocks, effective batch 100 (microbatch 5 × accumulation 20), context 1,023, eight blocks/512 width/eight heads, A layout 1/1/4/1/1, AdamW 3e-4 to 3e-5, betas .9/.95, weight decay .1, clipping 1, dropout 0, seed 1337, schedule seed 1729. CUDA BF16 with float32 parameters, TF32 enabled, eager execution for both models. Compilation is disabled because the recurrent trainer does not support its variable schedules. These settings are frozen before benchmarking, not independently tuned per arm. BF16/memory feasibility still needs validation on the actual A6000; if it fails, revise the shared profile before freezing a fresh experiment.
 
-The auxiliary mean contains the nonfinal pass predictions for multipass trajectories. One-pass trajectories use `L_final` alone. The auxiliary prediction path reuses a source activation when a temporal write already needs it; it does not alter state writes or evaluation.
+The first ten benchmark updates are excluded from throughput averages. Budget each ablation arm for the measured final-only cost of at least 250M characters, rounded up to complete batch-100 updates. This is about three times the previous pilot's data exposure at the old throughput, and is a supervision-selection experiment rather than a claim about mature recurrence. Both arms stop on accumulated, synchronized training-update seconds, including data loading and optimizer work, excluding evaluation and checkpoint I/O. They may exceed the budget by one update. LR warmup occupies 2% of this time budget and cosine decay follows consumed training time. A one-million-update ceiling is a fail-safe, not the intended duration.
 
-An auxiliary weight of zero is treated as final-only execution: intermediate
-source/coda/readout forwards are skipped, so it does not consume additional
-dropout RNG. The weight must be a finite nonnegative numeric value; Boolean
-values are rejected. The normalized objective is retained as the experiment
-definition and is not treated as a bug.
+Checkpoints save the consumed training time, so spot recovery continues the same schedule. Lost work after the last durable checkpoint is replayed and does not count as retained-model training compute; billable wall time can therefore be larger. Source/runtime, dataset and panel hashes are frozen. Do not compare timing from another GPU/backend or silently change microbatching after freeze.
 
-The pair is matched on architecture A, full `chess_143K_v1`, optimizer, learning-rate schedule, recurrence distribution, model seed, schedule seed, batch, panel, and 10,000-update budget. The backend/device is not matched: the auxiliary run used MPS and the reused final-only control used CUDA on an A6000. The final-only condition is the control. The completed architecture-site A run at [`experiments/ablations/architecture_sites/results/separated`](../architecture_sites/results/separated) already is this exact final-only control, so it is reused rather than retrained. This is one matched seed, as specified by the current plan; it is not a seed-variance study.
+Evaluate both endpoints in CUDA float32 on the same exact 256-row selection panel and mask seeds 11/23/37. Inspect (3,3), improvement from (1,1) to (3,3), the full nine-cell surface, training curves, clipping and nonfinite diagnostics. Compare final-pass NLL, never the differing training objectives. Choose deep supervision if it offers a useful practical improvement at equal time without a material regression in deeper refinement; otherwise keep final-only. Record the judgment and limitations explicitly, including a near-tie if applicable. One seed is a default-selection exercise, not statistical proof. Evaluate the chosen endpoint once on a separate fixed 512-row confirmation sample. Confirmation is not a second tuning set.
 
-Run from the repository root:
+`choose` records the reviewed default and unlocks the 1B/64B paired runners. It does not launch them. The optional `deep_more` benchmark changes pass probabilities from 10/50/40% to 10/30/60% for 1/2/4 passes; it is a cost probe only and is not included in this supervision ablation or selection decision.
 
-```sh
-uv run pytest -q
-uv run python train.py experiments/ablations/deep_supervision/configs/auxiliary_lambda025.py
-```
-
-Both runs retain checkpoints at 0, 1,000, 2,000, 5,000, 8,000, and 10,000. Evaluate the retained checkpoints with the existing nine-cell evaluator and the same selection/confirmation panels as the completed long baseline. Evaluation remains final-only, so the reported surface is comparable across objectives.
-
-The experiment must be interpreted by absolute NLL and accuracy first, then recurrence differences and estimated compute. Auxiliary-loss metrics in `metrics.jsonl` are training diagnostics; evaluation NLL is the decision metric.
-
-The historical timing comparison is not a valid overhead estimate because
-auxiliary supervision ran on MPS while the reused final-only control ran on
-CUDA/A6000. The NLL comparison is also cross-backend. Do not use those numbers
-to claim a speed ratio or an objective effect. A matched same-backend benchmark
-is required before making that comparison.
-
-The completed selection-panel result is in [REPORT.md](REPORT.md). The large confirmation split was intentionally deferred because it contains 1,317 rows and is much more expensive than the 128-row selection panel.
+See [HANDOFF.md](HANDOFF.md) for commands. Every generated artifact belongs under this experiment's ignored `results/`, except long-run outputs, which live beside their own configs. No VM is provisioned by these scripts.

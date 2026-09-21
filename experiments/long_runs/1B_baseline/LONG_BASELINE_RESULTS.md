@@ -26,7 +26,7 @@ No 64B run was launched.
 - Mask-placement seeds: 11, 23, and 37. The evaluator labels these as population variation across placements, not variation across training seeds.
 - The model, optimizer, recurrence distribution, objective, and learning-rate schedule were kept fixed. The recurrent 1B member used the locked final-only supervision choice.
 
-The full provenance receipts are in [`environment.json`](../../ablations/supervision_compute/results/environment.json), [`protocol.json`](../../ablations/supervision_compute/results/protocol.json), [`panel.json`](../../ablations/supervision_compute/results/panel.json), and [`decision.json`](../../ablations/supervision_compute/results/decision.json).
+The full provenance receipts are in [`environment.json`](../../ablations/deep_supervision/results/environment.json), [`protocol.json`](../../ablations/deep_supervision/results/protocol.json), [`panel.json`](../../ablations/deep_supervision/results/panel.json), and [`decision.json`](../../ablations/deep_supervision/results/decision.json).
 
 ## Supervision selection
 
@@ -46,7 +46,7 @@ The two ablations were then trained for the frozen equal-time budget:
 | Final-only | 2,188.406 | 2,397 | 245,213,100 | 0.446943 |
 | Deep supervision | 2,187.651 | 2,089 | 213,704,700 | 0.472899 |
 
-Final-only won the predeclared selection comparison. The recorded reason and report hashes are in [`decision.json`](../../ablations/supervision_compute/results/decision.json).
+Final-only won the predeclared selection comparison. The recorded reason and report hashes are in [`decision.json`](../../ablations/deep_supervision/results/decision.json).
 
 ### Selection-panel NLL grids
 
@@ -68,7 +68,7 @@ Deep supervision:
 | 1 | 0.481404 | 0.473683 | 0.475157 |
 | 3 | 0.482249 | 0.474441 | **0.472899** |
 
-The final-only and deep selection reports are [`evaluation-selection.json`](../../ablations/supervision_compute/results/final/evaluation-selection.json) and [`evaluation-selection.json`](../../ablations/supervision_compute/results/deep/evaluation-selection.json), respectively. The selected final-only confirmation report is [`evaluation-confirmation.json`](../../ablations/supervision_compute/results/final/evaluation-confirmation.json).
+The final-only and deep selection reports are [`evaluation-selection.json`](../../ablations/deep_supervision/results/final/evaluation-selection.json) and [`evaluation-selection.json`](../../ablations/deep_supervision/results/deep/evaluation-selection.json), respectively. The selected final-only confirmation report is [`evaluation-confirmation.json`](../../ablations/deep_supervision/results/final/evaluation-confirmation.json).
 
 ## 1B pair
 
@@ -100,11 +100,11 @@ The confirmation grid gives the same ordering: `(0,0)` 0.323541, `(1,0)` 0.30844
 
 ## Interruptions and resumability
 
-The first spot VM was preempted during the deep-supervision ablation; deep resumed from a durable checkpoint and completed. A later spot VM was preempted during recurrent 1B training; rerunning the exact pair command verified the completed transformer and resumed recurrent from its durable checkpoint. No completed checkpoint was overwritten. The durable run logs are in [`remote_logs`](../../ablations/supervision_compute/results/remote_logs/).
+The first spot VM was preempted during the deep-supervision ablation; deep resumed from a durable checkpoint and completed. A later spot VM was preempted during recurrent 1B training; rerunning the exact pair command verified the completed transformer and resumed recurrent from its durable checkpoint. No completed checkpoint was overwritten. The durable run logs are in [`remote_logs`](../../ablations/deep_supervision/results/remote_logs/).
 
 ## Raw artifacts
 
-- [`supervision_compute/results`](../../ablations/supervision_compute/results/)
+- [`deep_supervision/results`](../../ablations/deep_supervision/results/)
 - [`transformer_1B/results`](transformer_1B/results/)
 - [`recurrent_a_1B/results`](recurrent_a_1B/results/)
 - [`LONG_BASELINE_CURVES.png`](LONG_BASELINE_CURVES.png)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from train import DEFAULTS
 
-ROOT = Path('experiments/ablations/supervision_compute')
+ROOT = Path('experiments/ablations/deep_supervision')
 REVISION = '1a932e1abca935aae585f417ede39ecde4f2a620'
 TOKENS_PER_UPDATE = 100 * 1023
 COMMON = dict(

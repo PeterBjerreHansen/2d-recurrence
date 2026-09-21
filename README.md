@@ -26,7 +26,7 @@ uv run python train.py configs/local/recurrent_mps.py
 
 Reuse a prepared dataset only if its manifest matches. The MPS config is a bounded batch-8 local check, not the serious comparison profile. Use `configs/local/transformer_mps.py` for its ordinary-model counterpart. CPU smoke checks remain under `experiments/smoke/configs/`.
 
-The serious CUDA settings, full-corpus protocol, completed supervision ablation and completed 1B pair are described in the [experiment index](experiments/README.md). The 64B profiles remain prepared but unlaunched. Start with the [execution handoff](experiments/ablations/supervision_compute/HANDOFF.md). These runs use effective batch 100; creating configs does not launch training.
+The serious CUDA settings, full-corpus protocol, completed supervision ablation and completed 1B pair are described in the [experiment index](experiments/README.md). The 64B profiles remain prepared but unlaunched. Start with the [execution handoff](experiments/ablations/deep_supervision/HANDOFF.md). These runs use effective batch 100; creating configs does not launch training.
 
 ## Configurable architecture
 
@@ -49,8 +49,7 @@ experiments/
   serious.py                     # shared frozen batch-100 CUDA profile
   run_serious.py                  # benchmark, time-matched ablation, decision, paired runs
   ablations/architecture_sites/  # retained A/B evidence
-  ablations/deep_supervision/     # retained cross-backend pilot
-  ablations/supervision_compute/ # new controlled objective comparison
+  ablations/deep_supervision/     # controlled deep-supervision comparison
   sweeps/baseline_lr_selection/  # retained LR selection and 10k continuation
   long_runs/{model}_{1B,64B}/     # transformer and recurrent_a, each with local results/
   archive/early_pilots/           # reports and small artifacts; checkpoints retired

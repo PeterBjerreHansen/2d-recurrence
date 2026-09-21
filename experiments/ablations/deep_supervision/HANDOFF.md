@@ -16,8 +16,8 @@ uv run python -m experiments.run_serious benchmark deep_more
 uv run python -m experiments.run_serious freeze --reference-characters 250000000
 uv run python -m experiments.run_serious ablation final
 uv run python -m experiments.run_serious ablation deep
-uv run python -m experiments.run_serious evaluate experiments/ablations/supervision_compute/results/final/ckpt.pt
-uv run python -m experiments.run_serious evaluate experiments/ablations/supervision_compute/results/deep/ckpt.pt
+uv run python -m experiments.run_serious evaluate experiments/ablations/deep_supervision/results/final/ckpt.pt
+uv run python -m experiments.run_serious evaluate experiments/ablations/deep_supervision/results/deep/ckpt.pt
 ```
 
 Skip preparation if the complete pinned dataset is already present and preflight validates it. The preparation routine refuses to overwrite existing data. Benchmarks use fresh scratch outputs and refuse to mix repeated timing samples. Report mean/median update time, memory, deep/final overhead, and projected 1B/64B times. If microbatch 5 or BF16 fails, stop and fix the shared profile for all conditions; do not silently alter one run. Before any substantive training, check the forecast against the allocated external compute budget.
@@ -26,7 +26,7 @@ After examining the two reports, record the choice with a substantive reason (re
 
 ```sh
 uv run python -m experiments.run_serious choose deep --reason='Replace with the measured equal-time result and tradeoff.'
-uv run python -m experiments.run_serious evaluate experiments/ablations/supervision_compute/results/deep/ckpt.pt --split confirmation
+uv run python -m experiments.run_serious evaluate experiments/ablations/deep_supervision/results/deep/ckpt.pt --split confirmation
 uv run python -m experiments.run_serious pair --billions 1
 ```
 
