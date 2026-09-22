@@ -66,6 +66,14 @@ def _canonical_hash(value):
                          .encode()).hexdigest()
 
 
+def _json_ready(value):
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
+
+
 def _source_paths():
     paths = set(SOURCE_FILES)
     for root in SOURCE_DIRECTORIES:
@@ -159,7 +167,7 @@ def _dataset_identity(data=None):
 
 
 def _protocol_payload(data, panel):
-    configs = {name: run_config(name) for name in ARM_ORDER}
+    configs = {name: _json_ready(run_config(name)) for name in ARM_ORDER}
     return dict(
         schema_version=1, study=STUDY_NAME,
         purpose='One-billion-character time-dependent recurrence update-growth study',
