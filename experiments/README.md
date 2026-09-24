@@ -11,6 +11,8 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 | [Baseline LR selection](sweeps/baseline_lr_selection/README.md) | Retained LR sweep and selected 10k continuation |
 | [5B recurrence-axis study](long_runs/5B_axis/README.md) | Frozen four-arm protocol; depth, temporal, and hybrid CUDA runs retained, transformer result incomplete |
 | [1B time-dependent update schedule](ablations/1B_update_schedule/README.md) | New six-arm ablation protocol for fixed versus hard 1-to-3 update growth; freeze before launch |
+| [Temporal gate initialization](ablations/temporal_gate_init/README.md) | Completed 250M two-arm preflight; `.25` was only marginally ahead, so retain `.10` for the 20B proposal |
+| [20B recurrence-axis study](long_runs/20B_recurrence/README.md) | Four-arm plan updated for Community RTX 4090s; no 20B training launched; live-feedback NLL added at major checkpoints; deterministic 1,000-update resume check must pass before freeze/launch |
 | [Archived early pilots](archive/early_pilots/README.md) | Reports and small artifacts retained; obsolete scripts and checkpoints deleted |
 | [Smoke checks](smoke/README.md) | Small reproducible pipeline checks and historical validation notes |
 

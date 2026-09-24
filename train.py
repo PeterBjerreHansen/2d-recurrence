@@ -34,22 +34,46 @@ DEFAULTS = dict(
     n_layer=8, n_head=8, n_embd=512, block_size=1023, bias=False, dropout=0.0,
     batch_size=100, gradient_accumulation_steps=1, learning_rate=3e-4,
     max_iters=600000, weight_decay=0.1, beta1=0.9, beta2=0.95, grad_clip=1.0,
-    decay_lr=True, warmup_iters=2000, lr_decay_iters=600000, min_lr=3e-5,
+    decay_lr=True, lr_schedule=None, warmup_iters=2000, lr_decay_start=None,
+    lr_decay_iters=600000, min_lr=3e-5,
     backend='nccl', device='cuda', dtype='bfloat16', compile=True, seed=1337,
     num_threads=4, architecture='baseline', n_prelude=1, n_core=4, n_coda=1, n_buffer=1, n_source=1,
     update_support=[], update_probabilities=[], recurrence_seed=1729, recurrence_mode='hybrid',
     update_probability_schedule=None,
+    temporal_memory_gate_init=0.1,
     eval_u_t=0, eval_u_d=0, keep_checkpoints=False, checkpoint_steps=None,
+    checkpoint_interval=0,
     eval_panel_path='', deep_supervision=False, deep_supervision_lambda=0.25,
     training_budget_seconds=0.0,
 )
 
 
 def get_lr(step, config):
-    if not config['decay_lr']:
+    """Resolve learning rate for an optimizer-step index.
+
+    ``lr_schedule=None`` preserves historical ``decay_lr`` behavior. For WSD,
+    ``lr_decay_iters`` is the number of optimizer updates: the final update at
+    index ``lr_decay_iters - 1`` uses ``min_lr`` exactly.
+    """
+    schedule = config.get('lr_schedule')
+    if schedule is None:
+        schedule = 'cosine' if config['decay_lr'] else 'constant'
+    if schedule == 'constant':
         return config['learning_rate']
+    if schedule not in {'cosine', 'wsd'}:
+        raise ValueError("lr_schedule must be one of None, 'cosine', 'constant', or 'wsd'")
     if step < config['warmup_iters']:
         return config['learning_rate'] * step / config['warmup_iters']
+    if schedule == 'wsd':
+        decay_start = config['lr_decay_start']
+        if step < decay_start:
+            return config['learning_rate']
+        decay_end = config['lr_decay_iters'] - 1
+        if step >= decay_end:
+            return config['min_lr']
+        ratio = ((step - decay_start) /
+                 (decay_end - decay_start))
+        return config['learning_rate'] + ratio * (config['min_lr'] - config['learning_rate'])
     if step >= config['lr_decay_iters']:
         return config['min_lr']
     ratio = (step - config['warmup_iters']) / (config['lr_decay_iters'] - config['warmup_iters'])
@@ -117,13 +141,32 @@ def train(config):
             raise ValueError(f'{key} must be positive')
     if config['max_iters'] < 0 or config['warmup_iters'] < 0:
         raise ValueError('Iteration counts must be nonnegative')
+    if type(config['checkpoint_interval']) is not int or config['checkpoint_interval'] < 0:
+        raise ValueError('checkpoint_interval must be a nonnegative integer (zero disables it)')
+    schedule = config['lr_schedule']
+    if schedule not in (None, 'cosine', 'constant', 'wsd'):
+        raise ValueError("lr_schedule must be one of None, 'cosine', 'constant', or 'wsd'")
+    effective_schedule = schedule or ('cosine' if config['decay_lr'] else 'constant')
+    if effective_schedule in ('cosine', 'wsd') and config['lr_decay_iters'] <= config['warmup_iters']:
+        raise ValueError('lr_decay_iters must exceed warmup_iters')
+    if effective_schedule == 'wsd':
+        if any(type(config[key]) is not int or config[key] < 0
+               for key in ('warmup_iters', 'lr_decay_iters')):
+            raise ValueError('WSD warmup_iters and lr_decay_iters must be nonnegative integers')
+        decay_start = config['lr_decay_start']
+        if (type(decay_start) is not int or decay_start < config['warmup_iters'] or
+                decay_start >= config['lr_decay_iters'] - 1):
+            raise ValueError('WSD requires warmup_iters <= lr_decay_start < lr_decay_iters - 1')
+        rates = (config['learning_rate'], config['min_lr'])
+        if (any(isinstance(rate, bool) or not isinstance(rate, (int, float)) or
+                not math.isfinite(rate) or rate < 0 for rate in rates) or
+                config['min_lr'] > config['learning_rate']):
+            raise ValueError('WSD requires finite nonnegative rates with min_lr <= learning_rate')
     if config['checkpoint_steps'] is not None:
         if (not config['checkpoint_steps'] or
                 any(type(step) is not int or step < 0 for step in config['checkpoint_steps']) or
                 len(set(config['checkpoint_steps'])) != len(config['checkpoint_steps'])):
             raise ValueError('checkpoint_steps must be a nonempty list of distinct nonnegative integers')
-    if config['decay_lr'] and config['lr_decay_iters'] <= config['warmup_iters']:
-        raise ValueError('lr_decay_iters must exceed warmup_iters')
     torch.set_num_threads(config['num_threads'])
     ddp = int(os.environ.get('RANK', -1)) >= 0
     rank, world_size = 0, 1
@@ -172,7 +215,7 @@ def train(config):
     model_args['vocab_size'] = data.meta['vocab_size']
     if recurrent:
         model_args.update({key: config[key] for key in ['n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda',
-                                                        'recurrence_mode']})
+                                                        'recurrence_mode', 'temporal_memory_gate_init']})
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
     training_seconds = 0.0
@@ -190,7 +233,7 @@ def train(config):
             raise ValueError('Exact resume requires the same world size')
         if checkpoint.get('eval_panel_sha256') != (panel['sha256'] if panel else None):
             raise ValueError('Resume evaluation panel differs from checkpoint')
-        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'eval_panel_path'}
+        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'checkpoint_interval', 'eval_panel_path'}
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:
@@ -265,7 +308,7 @@ def train(config):
         raw_model.train()
         return result
 
-    def save_checkpoint():
+    def save_checkpoint(retain=True):
         state = capture_rng(train_rng, device)
         states = [None] * world_size
         if ddp:
@@ -285,7 +328,7 @@ def train(config):
                              eval_panel_row_indices=panel['row_indices'] if panel else None,
                              recurrence_sampler=sampler.state_dict() if sampler else None)
             atomic_save(payload, out / 'ckpt.pt')
-            if (config['keep_checkpoints'] and
+            if (retain and config['keep_checkpoints'] and
                     (config['checkpoint_steps'] is None or step in config['checkpoint_steps'])):
                 atomic_save(payload, out / f'ckpt-step{step:06d}.pt')
 
@@ -373,11 +416,14 @@ def train(config):
         step += 1
         elapsed = time.perf_counter() - started
         training_seconds += elapsed
-        if (config['keep_checkpoints'] and config['checkpoint_steps'] is not None and
-                step in config['checkpoint_steps'] and step != last_eval_step):
-            # Retain requested curve snapshots even when they are not eval_interval boundaries.
+        retained_step = (config['keep_checkpoints'] and config['checkpoint_steps'] is not None and
+                         step in config['checkpoint_steps'])
+        recovery_step = bool(config['checkpoint_interval'] and step % config['checkpoint_interval'] == 0)
+        if ((retained_step or recovery_step) and step % config['eval_interval'] != 0 and
+                step != config['max_iters'] and not (budget and training_seconds >= budget)):
+            # Save recovery/curve snapshots without evaluation; evaluation boundaries save above.
             # All ranks participate because save_checkpoint gathers RNG state under DDP.
-            save_checkpoint()
+            save_checkpoint(retain=retained_step)
         if master and (step % config['log_interval'] == 0 or step == 1):
             print(f'step {step}: loss {loss_sum:.4f}, {elapsed:.3f}s', flush=True)
             append_json(out / 'metrics.jsonl', dict(event='train', step=step, nll=loss_sum, lr=lr,

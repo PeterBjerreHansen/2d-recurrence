@@ -1,3 +1,4 @@
+import importlib
 import json
 from pathlib import Path
 
@@ -6,8 +7,11 @@ import numpy as np
 import pytest
 import torch
 
-from data.chess_v1.prepare import prepare
 from data_loader import ChessData
+
+
+prepare_module = importlib.import_module('data.chess_v1.prepare')
+prepare = prepare_module.prepare
 
 
 def test_sampling_stays_on_storage_rows_with_short_context(prepared_data):
@@ -47,3 +51,19 @@ def test_manifest_protects_against_changed_data(prepared_data):
 def test_prepared_version_is_not_overwritten(prepared_data):
     with pytest.raises(FileExistsError):
         prepare(Dataset.from_dict({'transcript': []}), prepared_data, source={})
+
+
+def test_prepare_records_unavailable_git_provenance_in_clean_transfer_bundle(tmp_path, monkeypatch):
+    def no_git(*args, **kwargs):
+        raise prepare_module.subprocess.CalledProcessError(
+            128, ['git', 'rev-parse'], stderr='not a git repository')
+
+    monkeypatch.setattr(prepare_module.subprocess, 'check_output', no_git)
+    rows = Dataset.from_dict({'transcript': [';1.e4 e5', ';1.d4 d5']})
+
+    manifest = prepare(rows, tmp_path / 'prepared', source={'fixture': 'bundle test'},
+                       val_fraction=0.5, row_size=8)
+
+    assert manifest['preprocessing_commit'] is None
+    assert manifest['preprocessing_dirty'] is None
+    assert manifest['preparation_script_sha256']

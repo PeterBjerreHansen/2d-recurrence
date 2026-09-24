@@ -12,9 +12,14 @@ import torch
 
 def provenance():
     def git(*args):
-        return subprocess.check_output(['git', *args], text=True).strip()
-    return dict(commit=git('rev-parse', 'HEAD'), branch=git('branch', '--show-current'),
-                dirty=bool(git('status', '--porcelain')), cuda=torch.version.cuda,
+        return subprocess.check_output(['git', *args], text=True, stderr=subprocess.DEVNULL).strip()
+    try:
+        commit, branch = git('rev-parse', 'HEAD'), git('branch', '--show-current')
+        dirty = bool(git('status', '--porcelain'))
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        # Frozen transfer bundles carry their source receipt separately from Git.
+        commit, branch, dirty = None, None, None
+    return dict(commit=commit, branch=branch, dirty=dirty, cuda=torch.version.cuda,
                 packages={name: importlib.metadata.version(name)
                           for name in ['torch', 'numpy', 'chess', 'datasets', 'huggingface-hub']})
 

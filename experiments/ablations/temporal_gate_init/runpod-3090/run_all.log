@@ -1,0 +1,846 @@
+num decayed parameter tensors: 39, with 27,803,136 parameters
+num non-decayed parameter tensors: 22, with 11,776 parameters
+using fused AdamW: True
+step 0: train 3.9211, val 3.9232, accuracy 0.007
+step 1: loss 3.8097, 1.670s
+step 10: loss 2.6606, 1.238s
+step 20: loss 2.0149, 1.015s
+step 30: loss 1.8663, 1.070s
+step 40: loss 1.8003, 1.057s
+step 50: loss 1.7418, 1.164s
+step 60: loss 1.6371, 1.189s
+step 70: loss 1.5914, 1.061s
+step 80: loss 1.5633, 1.203s
+step 90: loss 1.5345, 1.021s
+step 100: loss 1.4555, 1.167s
+step 110: loss 1.4922, 1.006s
+step 120: loss 1.4487, 1.034s
+step 130: loss 1.4248, 1.200s
+step 140: loss 1.4785, 0.874s
+step 150: loss 1.4112, 1.110s
+step 160: loss 1.3517, 1.199s
+step 170: loss 1.3971, 1.038s
+step 180: loss 1.3031, 1.171s
+step 190: loss 1.3161, 1.072s
+step 200: loss 1.2278, 1.246s
+step 210: loss 1.2200, 1.091s
+step 220: loss 1.2241, 1.004s
+step 230: loss 1.1946, 1.106s
+step 240: loss 1.1699, 1.143s
+step 250: loss 1.1388, 1.226s
+step 260: loss 1.2180, 1.029s
+step 270: loss 1.1702, 1.171s
+step 280: loss 1.1756, 0.996s
+step 290: loss 1.1359, 0.984s
+step 300: loss 1.1066, 1.122s
+step 310: loss 1.1416, 0.998s
+step 320: loss 1.1105, 1.122s
+step 330: loss 1.1115, 0.991s
+step 340: loss 1.0560, 1.180s
+step 350: loss 1.0544, 1.086s
+step 360: loss 1.0613, 1.127s
+step 370: loss 1.0356, 1.106s
+step 380: loss 1.0192, 1.098s
+step 390: loss 1.0284, 0.952s
+step 400: loss 1.0056, 1.203s
+step 410: loss 0.9993, 1.125s
+step 420: loss 0.9835, 1.068s
+step 430: loss 0.9821, 0.986s
+step 440: loss 0.9740, 0.839s
+step 450: loss 0.9730, 1.030s
+step 460: loss 0.9467, 1.189s
+step 470: loss 0.9233, 1.079s
+step 480: loss 0.9199, 1.178s
+step 490: loss 0.9029, 1.225s
+step 500: loss 0.9102, 1.174s
+step 500: train 0.8752, val 0.8768, accuracy 0.684
+step 510: loss 0.9025, 1.082s
+step 520: loss 0.8937, 1.051s
+step 530: loss 0.8981, 1.046s
+step 540: loss 0.8587, 1.164s
+step 550: loss 0.8748, 1.142s
+step 560: loss 0.8527, 1.158s
+step 570: loss 0.8391, 1.105s
+step 580: loss 0.8373, 1.054s
+step 590: loss 0.8558, 0.956s
+step 600: loss 0.8314, 1.067s
+step 610: loss 0.8198, 1.151s
+step 620: loss 0.8112, 1.007s
+step 630: loss 0.8074, 1.097s
+step 640: loss 0.8061, 1.150s
+step 650: loss 0.7778, 0.923s
+step 660: loss 0.7629, 1.197s
+step 670: loss 0.7727, 1.012s
+step 680: loss 0.7628, 1.107s
+step 690: loss 0.7534, 1.092s
+step 700: loss 0.7450, 0.965s
+step 710: loss 0.7441, 1.041s
+step 720: loss 0.7457, 0.948s
+step 730: loss 0.7313, 1.020s
+step 740: loss 0.7250, 0.997s
+step 750: loss 0.7150, 1.142s
+step 760: loss 0.7133, 1.012s
+step 770: loss 0.6930, 1.031s
+step 780: loss 0.6914, 1.148s
+step 790: loss 0.7009, 1.141s
+step 800: loss 0.6981, 1.135s
+step 810: loss 0.6957, 1.117s
+step 820: loss 0.6708, 1.194s
+step 830: loss 0.6828, 1.066s
+step 840: loss 0.6748, 1.023s
+step 850: loss 0.6449, 1.028s
+step 860: loss 0.6687, 1.148s
+step 870: loss 0.6384, 0.989s
+step 880: loss 0.6363, 1.072s
+step 890: loss 0.6403, 1.021s
+step 900: loss 0.6291, 1.097s
+step 910: loss 0.6374, 0.993s
+step 920: loss 0.6287, 1.096s
+step 930: loss 0.6122, 1.020s
+step 940: loss 0.6110, 1.069s
+step 950: loss 0.6068, 0.983s
+step 960: loss 0.6224, 1.075s
+step 970: loss 0.6078, 1.114s
+step 980: loss 0.5864, 1.083s
+step 990: loss 0.5978, 1.170s
+step 1000: loss 0.6098, 0.944s
+step 1000: train 0.5854, val 0.5776, accuracy 0.791
+step 1010: loss 0.5945, 1.106s
+step 1020: loss 0.5804, 1.158s
+step 1030: loss 0.5985, 1.023s
+step 1040: loss 0.5974, 0.971s
+step 1050: loss 0.5835, 1.316s
+step 1060: loss 0.5901, 0.949s
+step 1070: loss 0.5756, 1.090s
+step 1080: loss 0.5712, 1.228s
+step 1090: loss 0.5646, 1.129s
+step 1100: loss 0.5705, 1.084s
+step 1110: loss 0.5760, 1.075s
+step 1120: loss 0.5777, 1.108s
+step 1130: loss 0.5755, 1.058s
+step 1140: loss 0.5680, 1.025s
+step 1150: loss 0.5532, 1.085s
+step 1160: loss 0.5607, 1.052s
+step 1170: loss 0.5549, 1.033s
+step 1180: loss 0.5483, 1.116s
+step 1190: loss 0.5541, 1.066s
+step 1200: loss 0.5558, 0.920s
+step 1210: loss 0.5392, 1.213s
+step 1220: loss 0.5412, 1.142s
+step 1230: loss 0.5422, 1.204s
+step 1240: loss 0.5395, 1.033s
+step 1250: loss 0.5380, 1.004s
+step 1260: loss 0.5478, 1.066s
+step 1270: loss 0.5415, 1.237s
+step 1280: loss 0.5322, 0.987s
+step 1290: loss 0.5290, 1.142s
+step 1300: loss 0.5309, 1.072s
+step 1310: loss 0.5258, 1.343s
+step 1320: loss 0.5325, 1.097s
+step 1330: loss 0.5390, 1.038s
+step 1340: loss 0.5234, 1.123s
+step 1350: loss 0.5205, 1.157s
+step 1360: loss 0.5160, 1.071s
+step 1370: loss 0.5239, 1.048s
+step 1380: loss 0.5204, 1.104s
+step 1390: loss 0.5249, 1.074s
+step 1400: loss 0.4987, 1.113s
+step 1410: loss 0.5172, 1.087s
+step 1420: loss 0.5219, 0.909s
+step 1430: loss 0.5133, 1.000s
+step 1440: loss 0.5048, 1.156s
+step 1450: loss 0.5093, 1.062s
+step 1460: loss 0.5139, 1.127s
+step 1470: loss 0.5171, 1.099s
+step 1480: loss 0.5079, 1.168s
+step 1490: loss 0.5130, 1.093s
+step 1500: loss 0.4991, 1.137s
+step 1500: train 0.4979, val 0.4940, accuracy 0.819
+step 1510: loss 0.4972, 1.060s
+step 1520: loss 0.4993, 1.081s
+step 1530: loss 0.4724, 1.282s
+step 1540: loss 0.4966, 1.210s
+step 1550: loss 0.4929, 1.013s
+step 1560: loss 0.4961, 1.109s
+step 1570: loss 0.5075, 0.949s
+step 1580: loss 0.5014, 1.055s
+step 1590: loss 0.4978, 1.260s
+step 1600: loss 0.4892, 1.108s
+step 1610: loss 0.4864, 1.115s
+step 1620: loss 0.4890, 1.157s
+step 1630: loss 0.4893, 0.869s
+step 1640: loss 0.4896, 0.997s
+step 1650: loss 0.4826, 1.198s
+step 1660: loss 0.4816, 1.193s
+step 1670: loss 0.4797, 1.087s
+step 1680: loss 0.4806, 1.120s
+step 1690: loss 0.4924, 1.088s
+step 1700: loss 0.4826, 1.128s
+step 1710: loss 0.4786, 1.207s
+step 1720: loss 0.4831, 0.927s
+step 1730: loss 0.4690, 1.043s
+step 1740: loss 0.4764, 1.144s
+step 1750: loss 0.4967, 0.992s
+step 1760: loss 0.4768, 1.251s
+step 1770: loss 0.4758, 1.086s
+step 1780: loss 0.4574, 1.192s
+step 1790: loss 0.4662, 1.191s
+step 1800: loss 0.4610, 1.085s
+step 1810: loss 0.4683, 1.142s
+step 1820: loss 0.4717, 0.917s
+step 1830: loss 0.4662, 1.015s
+step 1840: loss 0.4659, 1.216s
+step 1850: loss 0.4661, 1.143s
+step 1860: loss 0.4855, 1.070s
+step 1870: loss 0.4778, 1.121s
+step 1880: loss 0.4685, 1.160s
+step 1890: loss 0.4613, 1.156s
+step 1900: loss 0.4768, 1.055s
+step 1910: loss 0.4705, 1.217s
+step 1920: loss 0.4728, 1.037s
+step 1930: loss 0.4809, 1.131s
+step 1940: loss 0.4634, 1.073s
+step 1950: loss 0.4712, 1.173s
+step 1960: loss 0.4692, 1.085s
+step 1970: loss 0.4672, 1.061s
+step 1980: loss 0.4701, 1.109s
+step 1990: loss 0.4569, 1.156s
+step 2000: loss 0.4663, 1.099s
+step 2000: train 0.4566, val 0.4526, accuracy 0.833
+step 2010: loss 0.4595, 1.141s
+step 2020: loss 0.4677, 1.007s
+step 2030: loss 0.4722, 1.061s
+step 2040: loss 0.4618, 1.154s
+step 2050: loss 0.4516, 1.154s
+step 2060: loss 0.4582, 1.030s
+step 2070: loss 0.4599, 1.153s
+step 2080: loss 0.4550, 1.066s
+step 2090: loss 0.4552, 1.020s
+step 2100: loss 0.4611, 1.249s
+step 2110: loss 0.4555, 1.019s
+step 2120: loss 0.4563, 1.148s
+step 2130: loss 0.4486, 1.027s
+step 2140: loss 0.4463, 1.156s
+step 2150: loss 0.4828, 0.910s
+step 2160: loss 0.4460, 1.176s
+step 2170: loss 0.4661, 1.158s
+step 2180: loss 0.4411, 1.107s
+step 2190: loss 0.4574, 1.307s
+step 2200: loss 0.4519, 1.045s
+step 2210: loss 0.4455, 1.198s
+step 2220: loss 0.4561, 1.075s
+step 2230: loss 0.4597, 1.001s
+step 2240: loss 0.4441, 1.077s
+step 2250: loss 0.4470, 1.096s
+step 2260: loss 0.4368, 1.173s
+step 2270: loss 0.4488, 0.967s
+step 2280: loss 0.4493, 1.151s
+step 2290: loss 0.4597, 0.997s
+step 2300: loss 0.4503, 1.128s
+step 2310: loss 0.4475, 1.181s
+step 2320: loss 0.4424, 1.103s
+step 2330: loss 0.4488, 1.053s
+step 2340: loss 0.4302, 1.213s
+step 2350: loss 0.4422, 1.101s
+step 2360: loss 0.4455, 1.213s
+step 2370: loss 0.4360, 1.154s
+step 2380: loss 0.4520, 1.022s
+step 2390: loss 0.4492, 1.152s
+step 2400: loss 0.4547, 1.081s
+step 2410: loss 0.4467, 1.221s
+step 2420: loss 0.4525, 1.297s
+step 2430: loss 0.4443, 1.140s
+step 2440: loss 0.4478, 1.037s
+step 2444: train 0.4402, val 0.4366, accuracy 0.839
+num decayed parameter tensors: 39, with 27,803,136 parameters
+num non-decayed parameter tensors: 22, with 11,776 parameters
+using fused AdamW: True
+step 0: train 3.8537, val 3.8551, accuracy 0.007
+step 1: loss 3.7703, 1.779s
+step 10: loss 2.7259, 1.248s
+step 20: loss 2.0334, 1.018s
+step 30: loss 1.8375, 1.070s
+step 40: loss 1.7640, 1.061s
+step 50: loss 1.6669, 1.170s
+step 60: loss 1.5986, 1.189s
+step 70: loss 1.5542, 1.062s
+step 80: loss 1.5379, 1.201s
+step 90: loss 1.5134, 1.016s
+step 100: loss 1.4570, 1.162s
+step 110: loss 1.4815, 1.005s
+step 120: loss 1.4447, 1.031s
+step 130: loss 1.4009, 1.191s
+step 140: loss 1.4322, 0.870s
+step 150: loss 1.3715, 1.110s
+step 160: loss 1.3061, 1.199s
+step 170: loss 1.3571, 1.037s
+step 180: loss 1.2982, 1.169s
+step 190: loss 1.2799, 1.072s
+step 200: loss 1.2066, 1.246s
+step 210: loss 1.2092, 1.089s
+step 220: loss 1.2141, 1.003s
+step 230: loss 1.1800, 1.100s
+step 240: loss 1.1777, 1.146s
+step 250: loss 1.1334, 1.227s
+step 260: loss 1.2178, 1.031s
+step 270: loss 1.1659, 1.173s
+step 280: loss 1.1751, 0.997s
+step 290: loss 1.1257, 0.987s
+step 300: loss 1.0908, 1.126s
+step 310: loss 1.1317, 1.002s
+step 320: loss 1.0834, 1.128s
+step 330: loss 1.0888, 0.995s
+step 340: loss 1.0760, 1.184s
+step 350: loss 1.0618, 1.088s
+step 360: loss 1.0555, 1.128s
+step 370: loss 1.0391, 1.107s
+step 380: loss 1.0056, 1.102s
+step 390: loss 1.0207, 0.956s
+step 400: loss 0.9982, 1.207s
+step 410: loss 0.9920, 1.127s
+step 420: loss 0.9836, 1.067s
+step 430: loss 0.9818, 0.983s
+step 440: loss 0.9910, 0.839s
+step 450: loss 0.9748, 1.026s
+step 460: loss 0.9270, 1.191s
+step 470: loss 0.9113, 1.081s
+step 480: loss 0.9173, 1.180s
+step 490: loss 0.8949, 1.233s
+step 500: loss 0.8999, 1.179s
+step 500: train 0.8674, val 0.8694, accuracy 0.687
+step 510: loss 0.8862, 1.088s
+step 520: loss 0.8782, 1.057s
+step 530: loss 0.8901, 1.051s
+step 540: loss 0.8461, 1.165s
+step 550: loss 0.8587, 1.143s
+step 560: loss 0.8406, 1.160s
+step 570: loss 0.8366, 1.105s
+step 580: loss 0.8206, 1.054s
+step 590: loss 0.8110, 0.957s
+step 600: loss 0.8095, 1.068s
+step 610: loss 0.7991, 1.149s
+step 620: loss 0.7981, 1.010s
+step 630: loss 0.7951, 1.097s
+step 640: loss 0.7926, 1.149s
+step 650: loss 0.7631, 0.923s
+step 660: loss 0.7505, 1.199s
+step 670: loss 0.7603, 1.009s
+step 680: loss 0.7529, 1.104s
+step 690: loss 0.7431, 1.087s
+step 700: loss 0.7349, 0.960s
+step 710: loss 0.7330, 1.040s
+step 720: loss 0.7352, 0.950s
+step 730: loss 0.7180, 1.019s
+step 740: loss 0.7176, 0.995s
+step 750: loss 0.7019, 1.128s
+step 760: loss 0.7048, 1.006s
+step 770: loss 0.6809, 1.026s
+step 780: loss 0.6777, 1.147s
+step 790: loss 0.6906, 1.146s
+step 800: loss 0.6852, 1.150s
+step 810: loss 0.6792, 1.122s
+step 820: loss 0.6537, 1.198s
+step 830: loss 0.6575, 1.068s
+step 840: loss 0.6630, 1.023s
+step 850: loss 0.6316, 1.025s
+step 860: loss 0.6571, 1.146s
+step 870: loss 0.6291, 0.990s
+step 880: loss 0.6268, 1.077s
+step 890: loss 0.6308, 1.023s
+step 900: loss 0.6177, 1.100s
+step 910: loss 0.6227, 0.996s
+step 920: loss 0.6212, 1.096s
+step 930: loss 0.6007, 1.027s
+step 940: loss 0.6012, 1.067s
+step 950: loss 0.5937, 0.987s
+step 960: loss 0.6170, 1.082s
+step 970: loss 0.6007, 1.117s
+step 980: loss 0.5787, 1.090s
+step 990: loss 0.5878, 1.177s
+step 1000: loss 0.5990, 0.943s
+step 1000: train 0.5739, val 0.5693, accuracy 0.794
+step 1010: loss 0.5849, 1.104s
+step 1020: loss 0.5726, 1.152s
+step 1030: loss 0.5919, 1.024s
+step 1040: loss 0.5918, 0.973s
+step 1050: loss 0.6365, 1.318s
+step 1060: loss 0.5927, 0.949s
+step 1070: loss 0.5726, 1.091s
+step 1080: loss 0.5633, 1.228s
+step 1090: loss 0.5593, 1.129s
+step 1100: loss 0.5641, 1.090s
+step 1110: loss 0.5710, 1.082s
+step 1120: loss 0.5731, 1.115s
+step 1130: loss 0.5711, 1.065s
+step 1140: loss 0.5606, 1.030s
+step 1150: loss 0.5513, 1.089s
+step 1160: loss 0.5594, 1.061s
+step 1170: loss 0.5517, 1.035s
+step 1180: loss 0.5445, 1.117s
+step 1190: loss 0.5510, 1.068s
+step 1200: loss 0.5516, 0.922s
+step 1210: loss 0.5359, 1.216s
+step 1220: loss 0.5378, 1.140s
+step 1230: loss 0.5405, 1.193s
+step 1240: loss 0.5352, 1.027s
+step 1250: loss 0.5336, 0.999s
+step 1260: loss 0.5439, 1.065s
+step 1270: loss 0.5392, 1.238s
+step 1280: loss 0.5275, 0.987s
+step 1290: loss 0.5291, 1.147s
+step 1300: loss 0.5299, 1.075s
+step 1310: loss 0.5240, 1.347s
+step 1320: loss 0.5289, 1.096s
+step 1330: loss 0.5347, 1.039s
+step 1340: loss 0.5202, 1.120s
+step 1350: loss 0.5148, 1.154s
+step 1360: loss 0.5133, 1.068s
+step 1370: loss 0.5199, 1.046s
+step 1380: loss 0.5182, 1.102s
+step 1390: loss 0.5222, 1.074s
+step 1400: loss 0.4983, 1.114s
+step 1410: loss 0.5132, 1.085s
+step 1420: loss 0.5202, 0.910s
+step 1430: loss 0.5097, 0.999s
+step 1440: loss 0.4997, 1.160s
+step 1450: loss 0.5064, 1.061s
+step 1460: loss 0.5105, 1.126s
+step 1470: loss 0.5166, 1.096s
+step 1480: loss 0.5026, 1.165s
+step 1490: loss 0.5126, 1.094s
+step 1500: loss 0.4965, 1.138s
+step 1500: train 0.4944, val 0.4905, accuracy 0.821
+step 1510: loss 0.4956, 1.053s
+step 1520: loss 0.4974, 1.074s
+step 1530: loss 0.4699, 1.281s
+step 1540: loss 0.4951, 1.203s
+step 1550: loss 0.4922, 1.005s
+step 1560: loss 0.4961, 1.103s
+step 1570: loss 0.5059, 0.944s
+step 1580: loss 0.4996, 1.052s
+step 1590: loss 0.4947, 1.259s
+step 1600: loss 0.4858, 1.111s
+step 1610: loss 0.4849, 1.117s
+step 1620: loss 0.4881, 1.162s
+step 1630: loss 0.4891, 0.870s
+step 1640: loss 0.4874, 0.998s
+step 1650: loss 0.4814, 1.195s
+step 1660: loss 0.4800, 1.190s
+step 1670: loss 0.4772, 1.089s
+step 1680: loss 0.4788, 1.118s
+step 1690: loss 0.4900, 1.089s
+step 1700: loss 0.4828, 1.127s
+step 1710: loss 0.4757, 1.207s
+step 1720: loss 0.4813, 0.932s
+step 1730: loss 0.4702, 1.041s
+step 1740: loss 0.4737, 1.144s
+step 1750: loss 0.4977, 0.991s
+step 1760: loss 0.4756, 1.249s
+step 1770: loss 0.4734, 1.079s
+step 1780: loss 0.4560, 1.192s
+step 1790: loss 0.4646, 1.191s
+step 1800: loss 0.4597, 1.082s
+step 1810: loss 0.4666, 1.143s
+step 1820: loss 0.4712, 0.909s
+step 1830: loss 0.4649, 1.004s
+step 1840: loss 0.4646, 1.207s
+step 1850: loss 0.4647, 1.132s
+step 1860: loss 0.4836, 1.062s
+step 1870: loss 0.4784, 1.115s
+step 1880: loss 0.4679, 1.153s
+step 1890: loss 0.4607, 1.152s
+step 1900: loss 0.4770, 1.052s
+step 1910: loss 0.4682, 1.215s
+step 1920: loss 0.4709, 1.036s
+step 1930: loss 0.4820, 1.123s
+step 1940: loss 0.4627, 1.065s
+step 1950: loss 0.4678, 1.165s
+step 1960: loss 0.4663, 1.079s
+step 1970: loss 0.4670, 1.061s
+step 1980: loss 0.4692, 1.100s
+step 1990: loss 0.4566, 1.156s
+step 2000: loss 0.4649, 1.094s
+step 2000: train 0.4539, val 0.4515, accuracy 0.834
+step 2010: loss 0.4594, 1.133s
+step 2020: loss 0.4667, 1.002s
+step 2030: loss 0.4714, 1.050s
+step 2040: loss 0.4629, 1.141s
+step 2050: loss 0.4503, 1.144s
+step 2060: loss 0.4581, 1.019s
+step 2070: loss 0.4578, 1.143s
+step 2080: loss 0.4542, 1.058s
+step 2090: loss 0.4536, 1.012s
+step 2100: loss 0.4600, 1.241s
+step 2110: loss 0.4553, 1.013s
+step 2120: loss 0.4540, 1.142s
+step 2130: loss 0.4482, 1.022s
+step 2140: loss 0.4437, 1.150s
+step 2150: loss 0.4790, 0.905s
+step 2160: loss 0.4425, 1.165s
+step 2170: loss 0.4646, 1.152s
+step 2180: loss 0.4402, 1.102s
+step 2190: loss 0.4557, 1.308s
+step 2200: loss 0.4509, 1.044s
+step 2210: loss 0.4444, 1.202s
+step 2220: loss 0.4545, 1.078s
+step 2230: loss 0.4567, 1.001s
+step 2240: loss 0.4425, 1.078s
+step 2250: loss 0.4473, 1.095s
+step 2260: loss 0.4375, 1.171s
+step 2270: loss 0.4495, 0.961s
+step 2280: loss 0.4503, 1.148s
+step 2290: loss 0.4578, 0.994s
+step 2300: loss 0.4492, 1.125s
+step 2310: loss 0.4468, 1.176s
+step 2320: loss 0.4413, 1.096s
+step 2330: loss 0.4485, 1.048s
+step 2340: loss 0.4299, 1.204s
+step 2350: loss 0.4403, 1.093s
+step 2360: loss 0.4426, 1.215s
+step 2370: loss 0.4335, 1.151s
+step 2380: loss 0.4501, 1.015s
+step 2390: loss 0.4482, 1.151s
+step 2400: loss 0.4540, 1.082s
+step 2410: loss 0.4453, 1.217s
+step 2420: loss 0.4500, 1.294s
+step 2430: loss 0.4437, 1.138s
+step 2440: loss 0.4451, 1.034s
+step 2444: train 0.4386, val 0.4345, accuracy 0.840
+[
+  {
+    "arm": "conservative",
+    "step": 0,
+    "gate_init": 0.1,
+    "nll_00": 3.5701908096671104,
+    "nll_11": 3.7742085810750723,
+    "nll_33": 3.9233484342694283,
+    "core_rms": [
+      0.16030676662921906,
+      0.9178919792175293,
+      0.9908174276351929,
+      1.0095025300979614
+    ],
+    "core_relative_change": [
+      null,
+      4.85300350189209,
+      0.2639896273612976,
+      0.13714177906513214
+    ],
+    "alpha_mean": 0.09999998658895493,
+    "beta_mean": 0.9000000357627869,
+    "memory_value_rms": 0.9994515776634216,
+    "anchor_value_rms": 0.9987988471984863
+  },
+  {
+    "arm": "conservative",
+    "step": 100,
+    "gate_init": 0.1,
+    "nll_00": 1.7038396308198571,
+    "nll_11": 1.4199460428208113,
+    "nll_33": 1.403192462399602,
+    "core_rms": [
+      0.8865848779678345,
+      1.5465947389602661,
+      1.5835638046264648,
+      1.5844823122024536
+    ],
+    "core_relative_change": [
+      null,
+      0.9545729756355286,
+      0.14697915315628052,
+      0.06577114760875702
+    ],
+    "alpha_mean": 0.1993787537018458,
+    "beta_mean": 0.7880468765894572,
+    "memory_value_rms": 1.4658259550730388,
+    "anchor_value_rms": 0.990632176399231
+  },
+  {
+    "arm": "conservative",
+    "step": 500,
+    "gate_init": 0.1,
+    "nll_00": 0.982834717258811,
+    "nll_11": 0.8914049449376762,
+    "nll_33": 0.8773331129923463,
+    "core_rms": [
+      0.5784182548522949,
+      0.9263462424278259,
+      1.0191859006881714,
+      1.039304256439209
+    ],
+    "core_relative_change": [
+      null,
+      0.8700386881828308,
+      0.2468121200799942,
+      0.12010824680328369
+    ],
+    "alpha_mean": 0.1187923401594162,
+    "beta_mean": 0.5880721807479858,
+    "memory_value_rms": 1.1967851718266804,
+    "anchor_value_rms": 0.8062825202941895
+  },
+  {
+    "arm": "conservative",
+    "step": 1000,
+    "gate_init": 0.1,
+    "nll_00": 0.6473904540762305,
+    "nll_11": 0.5927541889250278,
+    "nll_33": 0.5907988380640745,
+    "core_rms": [
+      0.4986458718776703,
+      0.76901775598526,
+      0.8335887789726257,
+      0.8417584896087646
+    ],
+    "core_relative_change": [
+      null,
+      0.7695558667182922,
+      0.19937407970428467,
+      0.10008400678634644
+    ],
+    "alpha_mean": 0.09198777874310811,
+    "beta_mean": 0.47009730339050293,
+    "memory_value_rms": 1.144498586654663,
+    "anchor_value_rms": 0.8183370232582092
+  },
+  {
+    "arm": "conservative",
+    "step": 1500,
+    "gate_init": 0.1,
+    "nll_00": 0.5422814339399338,
+    "nll_11": 0.504097300581634,
+    "nll_33": 0.5035363626666367,
+    "core_rms": [
+      0.4576445519924164,
+      0.7067273855209351,
+      0.7664787173271179,
+      0.7757275700569153
+    ],
+    "core_relative_change": [
+      null,
+      0.743985116481781,
+      0.19150878489017487,
+      0.09669577330350876
+    ],
+    "alpha_mean": 0.07358573873837788,
+    "beta_mean": 0.41178545355796814,
+    "memory_value_rms": 1.123523513476054,
+    "anchor_value_rms": 0.8225693106651306
+  },
+  {
+    "arm": "conservative",
+    "step": 2000,
+    "gate_init": 0.1,
+    "nll_00": 0.4990103680174798,
+    "nll_11": 0.4619807614944875,
+    "nll_33": 0.460210652789101,
+    "core_rms": [
+      0.43744707107543945,
+      0.6589004993438721,
+      0.717770516872406,
+      0.7275909185409546
+    ],
+    "core_relative_change": [
+      null,
+      0.7126368284225464,
+      0.19237501919269562,
+      0.09731891006231308
+    ],
+    "alpha_mean": 0.06385694444179535,
+    "beta_mean": 0.3867013355096181,
+    "memory_value_rms": 1.1128551959991455,
+    "anchor_value_rms": 0.8212399482727051
+  },
+  {
+    "arm": "conservative",
+    "step": 2444,
+    "gate_init": 0.1,
+    "nll_00": 0.48128558811731637,
+    "nll_11": 0.44485105900093913,
+    "nll_33": 0.4428282936569303,
+    "core_rms": [
+      0.42066317796707153,
+      0.6281954646110535,
+      0.6890451312065125,
+      0.6997285485267639
+    ],
+    "core_relative_change": [
+      null,
+      0.6998894214630127,
+      0.1978057324886322,
+      0.0997888445854187
+    ],
+    "alpha_mean": 0.05913963665564855,
+    "beta_mean": 0.3763018151124318,
+    "memory_value_rms": 1.1072064240773518,
+    "anchor_value_rms": 0.8143962621688843
+  },
+  {
+    "arm": "higher_memory",
+    "step": 0,
+    "gate_init": 0.25,
+    "nll_00": 3.5701908096671104,
+    "nll_11": 3.744479363784194,
+    "nll_33": 3.854522477835417,
+    "core_rms": [
+      0.16030676662921906,
+      0.9407876133918762,
+      1.003339171409607,
+      1.0177263021469116
+    ],
+    "core_relative_change": [
+      null,
+      4.981619834899902,
+      0.25109565258026123,
+      0.14189067482948303
+    ],
+    "alpha_mean": 0.25,
+    "beta_mean": 0.7500000596046448,
+    "memory_value_rms": 0.9994516968727112,
+    "anchor_value_rms": 0.9987988471984863
+  },
+  {
+    "arm": "higher_memory",
+    "step": 100,
+    "gate_init": 0.25,
+    "nll_00": 1.7270232513546944,
+    "nll_11": 1.4199023470282555,
+    "nll_33": 1.390113172121346,
+    "core_rms": [
+      0.8170958757400513,
+      1.43937349319458,
+      1.4844905138015747,
+      1.48789644241333
+    ],
+    "core_relative_change": [
+      null,
+      0.9958180785179138,
+      0.17824819684028625,
+      0.08791928738355637
+    ],
+    "alpha_mean": 0.30091506242752075,
+    "beta_mean": 0.6690537532170614,
+    "memory_value_rms": 1.2218245665232341,
+    "anchor_value_rms": 1.0100460052490234
+  },
+  {
+    "arm": "higher_memory",
+    "step": 500,
+    "gate_init": 0.25,
+    "nll_00": 0.972098552621901,
+    "nll_11": 0.8825330184772611,
+    "nll_33": 0.87032116856426,
+    "core_rms": [
+      0.577521026134491,
+      0.9357745051383972,
+      1.0278761386871338,
+      1.047287940979004
+    ],
+    "core_relative_change": [
+      null,
+      0.8802585005760193,
+      0.25326433777809143,
+      0.12773235142230988
+    ],
+    "alpha_mean": 0.1550754358371099,
+    "beta_mean": 0.48713865876197815,
+    "memory_value_rms": 1.0786187648773193,
+    "anchor_value_rms": 0.8836100101470947
+  },
+  {
+    "arm": "higher_memory",
+    "step": 1000,
+    "gate_init": 0.25,
+    "nll_00": 0.6361396703869104,
+    "nll_11": 0.5838461369276047,
+    "nll_33": 0.582542528398335,
+    "core_rms": [
+      0.4799296259880066,
+      0.7638615369796753,
+      0.8318306803703308,
+      0.841469407081604
+    ],
+    "core_relative_change": [
+      null,
+      0.8097272515296936,
+      0.20524057745933533,
+      0.10497814416885376
+    ],
+    "alpha_mean": 0.10884858916203181,
+    "beta_mean": 0.3839075764020284,
+    "memory_value_rms": 1.0727344353993733,
+    "anchor_value_rms": 0.8758069276809692
+  },
+  {
+    "arm": "higher_memory",
+    "step": 1500,
+    "gate_init": 0.25,
+    "nll_00": 0.5413260348141193,
+    "nll_11": 0.500759904505685,
+    "nll_33": 0.5003372388891876,
+    "core_rms": [
+      0.45140203833580017,
+      0.7029847502708435,
+      0.7668229937553406,
+      0.776469886302948
+    ],
+    "core_relative_change": [
+      null,
+      0.7619097828865051,
+      0.1974896639585495,
+      0.09977956116199493
+    ],
+    "alpha_mean": 0.0856575071811676,
+    "beta_mean": 0.3369968930880229,
+    "memory_value_rms": 1.0673826535542805,
+    "anchor_value_rms": 0.8814902305603027
+  },
+  {
+    "arm": "higher_memory",
+    "step": 2000,
+    "gate_init": 0.25,
+    "nll_00": 0.4981755018234253,
+    "nll_11": 0.459824213758111,
+    "nll_33": 0.45874599553644657,
+    "core_rms": [
+      0.4332616627216339,
+      0.6526607275009155,
+      0.7174886465072632,
+      0.7287631034851074
+    ],
+    "core_relative_change": [
+      null,
+      0.7201725244522095,
+      0.19951099157333374,
+      0.09960710257291794
+    ],
+    "alpha_mean": 0.07324394832054774,
+    "beta_mean": 0.3166331748167674,
+    "memory_value_rms": 1.0645053784052532,
+    "anchor_value_rms": 0.8786882162094116
+  },
+  {
+    "arm": "higher_memory",
+    "step": 2444,
+    "gate_init": 0.25,
+    "nll_00": 0.48030191706493497,
+    "nll_11": 0.4435183785390109,
+    "nll_33": 0.44181851274333894,
+    "core_rms": [
+      0.42314454913139343,
+      0.6305465698242188,
+      0.6950063705444336,
+      0.7067394852638245
+    ],
+    "core_relative_change": [
+      null,
+      0.7048790454864502,
+      0.2016540914773941,
+      0.10108412057161331
+    ],
+    "alpha_mean": 0.0683957040309906,
+    "beta_mean": 0.30637574195861816,
+    "memory_value_rms": 1.0609728892644246,
+    "anchor_value_rms": 0.8742207884788513
+  }
+]

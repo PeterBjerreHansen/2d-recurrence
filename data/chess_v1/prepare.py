@@ -74,8 +74,14 @@ def prepare(rows, out_dir, *, source, seed=2357, val_fraction=0.01, row_size=102
             stats[split] = info
         db.close()
         upstream = json.loads((ROOT / 'docs/upstream.json').read_text())
-        commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-        dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
+        try:
+            commit = subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+            dirty = bool(subprocess.check_output(
+                ['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip())
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            # Transfer bundles intentionally omit .git; do not invent provenance.
+            commit, dirty = None, None
         manifest = dict(format_version=1, dtype='uint8', row_size=row_size,
                         default_context_length=row_size - 1, vocabulary=meta['stoi'],
                         meta_sha256=sha256(meta_path), source=source, split_seed=seed,

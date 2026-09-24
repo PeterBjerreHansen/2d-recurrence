@@ -46,6 +46,7 @@ class RecurrentGPTConfig(GPTConfig):
     n_buffer: int = 1
     n_source: int = 1
     recurrence_mode: str = 'hybrid'
+    temporal_memory_gate_init: float = 0.1
 
     def __post_init__(self):
         validate_recurrence_mode(self.recurrence_mode)
@@ -54,6 +55,11 @@ class RecurrentGPTConfig(GPTConfig):
             raise ValueError('Block counts must be nonnegative integers with a nonempty core')
         if sum(counts) != self.n_layer:
             raise ValueError('n_layer must equal prelude + buffer + core + source + coda')
+        if (isinstance(self.temporal_memory_gate_init, bool) or
+                not isinstance(self.temporal_memory_gate_init, (int, float)) or
+                not math.isfinite(self.temporal_memory_gate_init) or
+                not 0 < self.temporal_memory_gate_init < 1):
+            raise ValueError('temporal_memory_gate_init must be finite and strictly between zero and one')
 
     @classmethod
     def from_checkpoint(cls, model_args):
@@ -112,8 +118,12 @@ def shift_right(memory):
 
 
 class TemporalMixer(nn.Module):
-    def __init__(self, width, bias=False):
+    def __init__(self, width, bias=False, memory_gate_init=0.1):
         super().__init__()
+        if (isinstance(memory_gate_init, bool) or
+                not isinstance(memory_gate_init, (int, float)) or
+                not math.isfinite(memory_gate_init) or not 0 < memory_gate_init < 1):
+            raise ValueError('memory_gate_init must be finite and strictly between zero and one')
         self.memory_norm = LayerNorm(width, bias)
         self.prelude_norm = LayerNorm(width, bias)
         self.memory_value = nn.Linear(width, width, bias=False)
@@ -123,8 +133,8 @@ class TemporalMixer(nn.Module):
         nn.init.eye_(self.prelude_value.weight)
         nn.init.zeros_(self.gates.weight)
         with torch.no_grad():
-            self.gates.bias[:width].fill_(math.log(0.1 / 0.9))
-            self.gates.bias[width:].fill_(math.log(0.9 / 0.1))
+            self.gates.bias[:width].fill_(math.log(memory_gate_init / (1 - memory_gate_init)))
+            self.gates.bias[width:].fill_(math.log((1 - memory_gate_init) / memory_gate_init))
 
     def forward(self, prelude, shifted_memory):
         mixed = self._mix(prelude, shifted_memory)
@@ -165,7 +175,7 @@ class DepthMixer(nn.Module):
 class Recurrent2DGPT(GPT):
     def __init__(self, config):
         super().__init__(config)
-        self.temporal_mixer = (TemporalMixer(config.n_embd, config.bias)
+        self.temporal_mixer = (TemporalMixer(config.n_embd, config.bias, config.temporal_memory_gate_init)
                                if config.uses_temporal_recurrence else None)
         self.depth_mixer = (DepthMixer(config.n_embd, config.bias)
                             if config.uses_depth_recurrence else None)

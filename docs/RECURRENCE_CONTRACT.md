@@ -103,7 +103,7 @@ training actually sampled.
 
 If temporal state exists, set $r_b=\operatorname{ShiftRight}(m_T)$ and $a_b=T(p,r_b)$; otherwise use $a_b=p$. Shift the stored memory once for each read without modifying it. At position zero, bypass temporal mixing and return raw $p$ because no predecessor exists. A zero-valued memory elsewhere remains a valid input. Preserve causal context across internal game markers within a row.
 
-Use $(\alpha,\beta)=\sigma(G([N_r(r);N_p(p)]))$ and $T(p,r)=\alpha\odot W_mN_r(r)+\beta\odot W_pN_p(p)$. The controller reads normalized sources before value projection. The feature-wise coefficients need not sum to one. The gate is one dense $2D\rightarrow2D$ map with zero initial weights and biases giving $\alpha=0.1$, $\beta=0.9$. Both bias-free value projections start as identity matrices.
+Use $(\alpha,\beta)=\sigma(G([N_r(r);N_p(p)]))$ and $T(p,r)=\alpha\odot W_mN_r(r)+\beta\odot W_pN_p(p)$. The controller reads normalized sources before value projection. The feature-wise coefficients need not sum to one. The gate is one dense $2D\rightarrow2D$ map with zero initial weights. The `temporal_memory_gate_init` configuration field sets the initial memory coefficient $\alpha$ and the anchor coefficient is initialized to $\beta=1-\alpha$; the default remains $\alpha=0.1$, $\beta=0.9$. Both bias-free value projections start as identity matrices.
 
 Then compute the depth anchor $q_b=Q(a_b)$ through the buffer segment. For A, $Q$ is L2; with `n_buffer=0`, $Q$ is the identity. The buffer runs on every training pass, including when temporal memory is absent or held. Position-zero bypass applies only to the temporal mixer, not to the buffer.
 

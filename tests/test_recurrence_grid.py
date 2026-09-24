@@ -1,5 +1,6 @@
 import copy
 import itertools
+import json
 import random
 
 import pytest
@@ -9,6 +10,7 @@ from data_loader import ChessData
 from evaluation.feedback_diagnostic import donor_permutation
 from evaluation.panels import fixed_panel_batches, load_panel
 from evaluation.recurrence_grid import compute_estimate, distinct_schedules, evaluate_checkpoint, evaluate_grid
+from evaluation.stress_checks import check as run_stress_checks
 from models.recurrent_2d import Recurrent2DGPT, RecurrentGPTConfig
 from recurrence.schedule import RecurrenceSchedule, sample_schedule
 from sample import generate
@@ -24,10 +26,11 @@ def test_feedback_donor_permutation_preserves_actual_identity_including_final_ro
     assert final_batch[torch.tensor(donor_permutation(1))].tolist() == [40., 30.]
 
 
-def model():
+def model(recurrence_mode='hybrid'):
     torch.manual_seed(17)
     return Recurrent2DGPT(RecurrentGPTConfig(n_layer=4, n_prelude=1, n_buffer=0, n_core=1,
-                                            n_coda=1, n_head=2, n_embd=8, block_size=8))
+                                            n_coda=1, n_head=2, n_embd=8, block_size=8,
+                                            recurrence_mode=recurrence_mode))
 
 
 def test_distinct_placements_cover_pilot_without_fake_replication():
@@ -96,6 +99,209 @@ def test_grid_fixed_data_metrics_diagnostics_and_no_mutation(prepared_data):
         assert cell == {k: v for k, v in original.items() if k != 'diagnostics'}
 
 
+@pytest.mark.parametrize('mode, cells', [
+    ('hybrid', [(0, 0), (15, 0), (0, 15), (15, 15)]),
+    ('temporal', [(0, 0), (15, 0)]),
+    ('depth', [(0, 0), (0, 15)]),
+])
+def test_explicit_sixteen_pass_cells_are_evaluated_in_requested_order(prepared_data, mode, cells):
+    net = model(mode).eval()
+    data = ChessData(prepared_data, 8)
+
+    report = evaluate_grid(net, data, batches=1, batch_size=1, mask_seeds=[11],
+                           diagnostics=False, cells=cells)
+
+    assert [(cell['u_t'], cell['u_d']) for cell in report['cells']] == cells
+    assert [cell['core_passes'] for cell in report['cells']] == [
+        max(u_t, u_d) + 1 for u_t, u_d in cells]
+    assert all(torch.isfinite(torch.tensor(cell['nll_mean'])) for cell in report['cells'])
+
+
+def test_optional_extrapolation_nonfinite_cell_is_recorded_without_losing_primary_metrics(
+        prepared_data, monkeypatch):
+    net = model('temporal').eval()
+    data = ChessData(prepared_data, 8)
+    original_forward = net.forward
+
+    def nonfinite_at_sixteen_passes(x, y=None, *, schedule=None):
+        logits, loss = original_forward(x, y, schedule=schedule)
+        if len(schedule.temporal_write_mask) == 15:
+            logits = logits * float('nan')
+        return logits, loss
+
+    monkeypatch.setattr(net, 'forward', nonfinite_at_sixteen_passes)
+
+    report = evaluate_grid(
+        net, data, batches=1, batch_size=1, mask_seeds=[11], diagnostics=False,
+        cells=[(0, 0), (3, 0), (15, 0)], optional_cells=[(15, 0)])
+
+    assert [(cell['u_t'], cell['u_d']) for cell in report['cells']] == [(0, 0), (3, 0)]
+    assert torch.isfinite(torch.tensor(report['cells'][1]['nll_mean']))
+    assert report['failed_cells'] == [{
+        'u_t': 15, 'u_d': 0, 'error_type': 'FloatingPointError',
+        'error': 'Non-finite grid cell (15, 0)',
+    }]
+
+
+def test_nonfinite_primary_grid_cell_remains_fatal_even_when_other_cells_are_optional(
+        prepared_data, monkeypatch):
+    net = model('temporal').eval()
+    data = ChessData(prepared_data, 8)
+    original_forward = net.forward
+
+    def nonfinite_at_four_passes(x, y=None, *, schedule=None):
+        logits, loss = original_forward(x, y, schedule=schedule)
+        if len(schedule.temporal_write_mask) == 3:
+            logits = logits * float('nan')
+        return logits, loss
+
+    monkeypatch.setattr(net, 'forward', nonfinite_at_four_passes)
+
+    with pytest.raises(FloatingPointError, match=r'Non-finite grid cell \(3, 0\)'):
+        evaluate_grid(
+            net, data, batches=1, batch_size=1, mask_seeds=[11], diagnostics=False,
+            cells=[(0, 0), (3, 0), (15, 0)], optional_cells=[(15, 0)])
+
+
+def test_optional_extrapolation_oom_is_recorded_without_losing_primary_metrics(
+        prepared_data, monkeypatch):
+    net = model('temporal').eval()
+    data = ChessData(prepared_data, 8)
+    original_forward = net.forward
+
+    def out_of_memory_at_sixteen_passes(x, y=None, *, schedule=None):
+        if len(schedule.temporal_write_mask) == 15:
+            raise torch.cuda.OutOfMemoryError('simulated diagnostic OOM')
+        return original_forward(x, y, schedule=schedule)
+
+    monkeypatch.setattr(net, 'forward', out_of_memory_at_sixteen_passes)
+
+    report = evaluate_grid(
+        net, data, batches=1, batch_size=1, mask_seeds=[11], diagnostics=False,
+        cells=[(0, 0), (3, 0), (15, 0)], optional_cells=[(15, 0)])
+
+    assert [(cell['u_t'], cell['u_d']) for cell in report['cells']] == [(0, 0), (3, 0)]
+    assert report['failed_cells'][0]['error_type'] == 'OutOfMemoryError'
+
+
+def test_explicit_evaluation_cells_reject_incompatible_or_ambiguous_lists(prepared_data):
+    net = Recurrent2DGPT(RecurrentGPTConfig(
+        n_layer=4, n_prelude=1, n_buffer=0, n_core=1, n_source=1, n_coda=1,
+        n_head=2, n_embd=8, block_size=8, recurrence_mode='temporal'))
+    data = ChessData(prepared_data, 8)
+
+    with pytest.raises(ValueError, match='recurrence_mode'):
+        evaluate_grid(net, data, batches=1, batch_size=1, diagnostics=False,
+                      cells=[(0, 0), (0, 15)])
+    with pytest.raises(ValueError, match='Duplicate'):
+        evaluate_grid(net, data, batches=1, batch_size=1, diagnostics=False,
+                      cells=[(0, 0), (0, 0)])
+    with pytest.raises(ValueError, match='reference cell'):
+        evaluate_grid(net, data, batches=1, batch_size=1, diagnostics=False,
+                      cells=[(1, 0), (0, 0)])
+    with pytest.raises(ValueError, match='nonnegative integer'):
+        evaluate_grid(net, data, batches=1, batch_size=1, diagnostics=False,
+                      cells=[(0, 0), (True, 0)])
+
+
+def test_sixteen_pass_grid_requires_memory_safe_diagnostics(prepared_data):
+    net = model().eval()
+    data = ChessData(prepared_data, 8)
+
+    with pytest.raises(ValueError, match='diagnostics=False'):
+        evaluate_grid(net, data, batches=1, batch_size=1,
+                      cells=[(0, 0), (15, 15)])
+
+
+@pytest.mark.parametrize('mode, cells', [
+    ('hybrid', ((15, 0), (0, 15), (15, 15))),
+    ('temporal', ((15, 0),)),
+    ('depth', ((0, 15),)),
+])
+def test_numerical_stress_check_reports_sixteen_pass_state_trajectories(
+        prepared_data, tmp_path, mode, cells):
+    data = ChessData(prepared_data, 8)
+    selected = [0, 1]
+    panel_path = tmp_path / 'panel.json'
+    panel_path.write_text(json.dumps({
+        'dataset_manifest_hash': data.manifest_hash,
+        'validation_row_count': len(data.rows['val']),
+        'selection_seed': 2027,
+        'selection_indices': selected,
+        'confirmation_indices': [i for i in range(len(data.rows['val'])) if i not in selected],
+    }))
+    panel = load_panel(panel_path, data, split='selection')
+
+    _, checks = run_stress_checks(model(mode).eval(), data, panel, 'cpu')
+
+    by_cell = {(item['u_t'], item['u_d']): item for item in checks}
+    for cell in cells:
+        assert by_cell[cell]['finite']
+        assert by_cell[cell]['expected_passes'] == 16
+        assert len(by_cell[cell]['state_rms_by_pass']) == 16
+
+
+def test_numerical_stress_nonfinite_result_is_serializable_diagnostic(
+        prepared_data, tmp_path, monkeypatch):
+    data = ChessData(prepared_data, 8)
+    panel_path = tmp_path / 'panel.json'
+    panel_path.write_text(json.dumps({
+        'dataset_manifest_hash': data.manifest_hash,
+        'validation_row_count': len(data.rows['val']),
+        'selection_seed': 2027,
+        'selection_indices': [0, 1],
+        'confirmation_indices': [i for i in range(2, len(data.rows['val']))],
+    }))
+    panel = load_panel(panel_path, data, split='selection')
+    net = model('temporal').eval()
+    original_forward = net.forward
+
+    def nonfinite_at_sixteen_passes(x, y=None, *, schedule=None):
+        logits, loss = original_forward(x, y, schedule=schedule)
+        if len(schedule.temporal_write_mask) == 15:
+            logits = logits * float('nan')
+        return logits, loss
+
+    monkeypatch.setattr(net, 'forward', nonfinite_at_sixteen_passes)
+
+    _, checks = run_stress_checks(net, data, panel, 'cpu')
+
+    sixteen_pass = next(item for item in checks if item['u_t'] == 15)
+    assert not sixteen_pass['finite']
+    assert sixteen_pass['diagnostic_failure']
+    json.dumps(checks, allow_nan=False)
+
+
+def test_numerical_stress_oom_is_serializable_diagnostic(prepared_data, tmp_path, monkeypatch):
+    data = ChessData(prepared_data, 8)
+    panel_path = tmp_path / 'panel.json'
+    panel_path.write_text(json.dumps({
+        'dataset_manifest_hash': data.manifest_hash,
+        'validation_row_count': len(data.rows['val']),
+        'selection_seed': 2027,
+        'selection_indices': [0, 1],
+        'confirmation_indices': [i for i in range(2, len(data.rows['val']))],
+    }))
+    panel = load_panel(panel_path, data, split='selection')
+    net = model('temporal').eval()
+    original_forward = net.forward
+
+    def out_of_memory_at_sixteen_passes(x, y=None, *, schedule=None):
+        if len(schedule.temporal_write_mask) == 15:
+            raise torch.cuda.OutOfMemoryError('simulated stress OOM')
+        return original_forward(x, y, schedule=schedule)
+
+    monkeypatch.setattr(net, 'forward', out_of_memory_at_sixteen_passes)
+
+    _, checks = run_stress_checks(net, data, panel, 'cpu')
+
+    sixteen_pass = next(item for item in checks if item['u_t'] == 15)
+    assert not sixteen_pass['finite']
+    assert sixteen_pass['diagnostic_failure'].startswith('OutOfMemoryError:')
+    assert sixteen_pass['nll'] is None
+    json.dumps(checks, allow_nan=False)
+
+
 def test_snapshot_checkpoint_evaluation_and_manifest_guard(prepared_data, tmp_path):
     config = dict(architecture='recurrent', update_support=[0, 1, 3],
                   update_probabilities=[[.1, .12, .04], [.12, .26, .08], [.04, .08, .16]],
@@ -116,6 +322,11 @@ def test_snapshot_checkpoint_evaluation_and_manifest_guard(prepared_data, tmp_pa
     assert report['training_seed'] == 1337
     assert report['recurrence_mode'] == 'hybrid'
     assert sum(c['training_update_probability'] for c in report['cells']) == pytest.approx(1.)
+    extended = evaluate_checkpoint(
+        latest.parent / 'ckpt-step000002.pt', batches=1, batch_size=1,
+        mask_seeds=[11], diagnostics=False, cells=[(0, 0), (15, 15)])
+    assert [(cell['u_t'], cell['u_d']) for cell in extended['cells']] == [(0, 0), (15, 15)]
+    assert extended['cells'][-1]['core_passes'] == 16
     broken = torch.load(latest, weights_only=False)
     broken['manifest_hash'] = 'wrong'
     torch.save(broken, tmp_path / 'bad.pt')

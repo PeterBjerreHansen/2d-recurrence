@@ -37,6 +37,38 @@ def supported_evaluation_cells(config, support=PILOT_SUPPORT):
     raise ValueError(f'Unsupported recurrence_mode: {config.recurrence_mode}')
 
 
+def validate_evaluation_cells(config, cells=None, support=PILOT_SUPPORT):
+    """Resolve the default grid or validate a caller-selected ordered cell list.
+
+    Explicit lists must begin with ``(0, 0)`` because reported NLL deltas and
+    prediction-change rates use that cell as their common reference.
+    """
+    if cells is None:
+        return supported_evaluation_cells(config, support)
+    if not isinstance(cells, (list, tuple)) or not cells:
+        raise ValueError('cells must be a nonempty ordered list of (u_t, u_d) pairs')
+    resolved = []
+    seen = set()
+    for cell in cells:
+        if (not isinstance(cell, (list, tuple)) or len(cell) != 2 or
+                any(type(count) is not int or count < 0 for count in cell)):
+            raise ValueError('Each evaluation cell must contain two nonnegative integer update counts')
+        cell = tuple(cell)
+        if cell in seen:
+            raise ValueError(f'Duplicate evaluation cell: {cell}')
+        seen.add(cell)
+        u_t, u_d = cell
+        if ((config.recurrence_mode == 'temporal' and u_d != 0) or
+                (config.recurrence_mode == 'depth' and u_t != 0)):
+            raise ValueError(f'Evaluation cell {cell} is incompatible with recurrence_mode={config.recurrence_mode!r}')
+        if config.recurrence_mode not in ('hybrid', 'temporal', 'depth'):
+            raise ValueError(f'Unsupported recurrence_mode: {config.recurrence_mode}')
+        resolved.append(cell)
+    if resolved[0] != (0, 0):
+        raise ValueError('Explicit evaluation cells must begin with the reference cell (0, 0)')
+    return resolved
+
+
 def distinct_schedules(u_t, u_d, seeds):
     """Sample placements without replacement; deterministic cells run only once."""
     slots = max(u_t, u_d)
@@ -186,7 +218,7 @@ def trajectory_diagnostics(model, x, y, schedule):
 
 def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
                   mask_seeds=(11, 23, 37), training_update_probabilities=None, diagnostics=True,
-                  fixed_batches=None, sampling=None):
+                  fixed_batches=None, sampling=None, cells=None, optional_cells=()):
     if batches < 1 or batch_size < 1 or not mask_seeds or len(set(mask_seeds)) != len(mask_seeds):
         raise ValueError('Positive batch counts and nonempty distinct mask seeds are required')
     device = next(model.parameters()).device
@@ -204,20 +236,41 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
     for x, y in fixed:
         digest.update(x.numpy().tobytes())
         digest.update(y.numpy().tobytes())
+    selected_cells = validate_evaluation_cells(model.config, cells)
+    optional_cells = {tuple(cell) for cell in optional_cells}
+    if ((0, 0) in optional_cells or not optional_cells <= set(selected_cells)):
+        raise ValueError('optional_cells must be selected diagnostic cells, not the (0, 0) reference')
+    if diagnostics and any(max(cell) > 7 for cell in selected_cells):
+        raise ValueError('Sixteen-pass grids require diagnostics=False; use evaluation.stress_checks for per-pass RMS checks')
     was_training = model.training
     model.eval()
-    cells, baseline_predictions = [], []
+    results, failed_cells, baseline_predictions = [], [], []
     try:
-        for u_t, u_d in supported_evaluation_cells(model.config):
+        for u_t, u_d in selected_cells:
             placements = []
+            cell_failure = None
             for seed, schedule in distinct_schedules(u_t, u_d, mask_seeds):
                 total_loss, correct, changed, count = 0., 0, 0, 0
                 with torch.no_grad():
                     for index, (cpu_x, cpu_y) in enumerate(fixed):
                         x, y = cpu_x.to(device), cpu_y.to(device)
-                        logits, loss = model(x, y, schedule=schedule)
+                        try:
+                            logits, loss = model(x, y, schedule=schedule)
+                        except torch.cuda.OutOfMemoryError as error:
+                            if (u_t, u_d) not in optional_cells:
+                                raise
+                            if device.type == 'cuda':
+                                torch.cuda.empty_cache()
+                            cell_failure = dict(u_t=u_t, u_d=u_d,
+                                                error_type=type(error).__name__, error=str(error))
+                            break
                         if not torch.isfinite(logits).all() or not torch.isfinite(loss):
-                            raise FloatingPointError(f'Non-finite grid cell {(u_t, u_d)}')
+                            error = FloatingPointError(f'Non-finite grid cell {(u_t, u_d)}')
+                            if (u_t, u_d) not in optional_cells:
+                                raise error
+                            cell_failure = dict(u_t=u_t, u_d=u_d,
+                                                error_type=type(error).__name__, error=str(error))
+                            break
                         predictions = logits.argmax(-1).cpu()
                         if (u_t, u_d) == (0, 0):
                             baseline_predictions.append(predictions)
@@ -225,10 +278,15 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
                         total_loss += loss.item() * y.numel()
                         correct += (predictions == cpu_y).sum().item()
                         count += y.numel()
+                if cell_failure:
+                    break
                 placements.append(dict(mask_seed=seed, temporal_write_mask=schedule.temporal_write_mask,
                                        depth_write_mask=schedule.depth_write_mask, nll=total_loss / count,
                                        accuracy=correct / count, prediction_change_rate=changed / count,
                                        **compute_estimate(model.config, schedule, data.context_length)))
+            if cell_failure:
+                failed_cells.append(cell_failure)
+                continue
             stats = {}
             for key in ['nll', 'accuracy', 'prediction_change_rate', 'estimated_forward_matmul_flops_per_sequence']:
                 values = [p[key] for p in placements]
@@ -242,13 +300,13 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
                         target_count=count,
                         **stats, placements=placements)
             cell['all_placements_evaluated'] = len(placements) == cell['possible_placements']
-            cell['nll_delta_vs_00'] = stats['nll_mean'] - (cells[0]['nll_mean'] if cells else stats['nll_mean'])
+            cell['nll_delta_vs_00'] = stats['nll_mean'] - (results[0]['nll_mean'] if results else stats['nll_mean'])
             if diagnostics:
                 first = placements[0]
                 schedule = RecurrenceSchedule(first['temporal_write_mask'], first['depth_write_mask'])
                 cell['diagnostics'] = dict(mask_seed=first['mask_seed'], **trajectory_diagnostics(
                     model, fixed[0][0].to(device), fixed[0][1].to(device), schedule))
-            cells.append(cell)
+            results.append(cell)
     finally:
         model.train(was_training)
     target_count = sum(y.numel() for _, y in fixed)
@@ -260,7 +318,8 @@ def evaluate_grid(model, data, *, batches=8, batch_size=2, data_seed=2027,
                 compute_convention='Forward matmul estimate per sequence, multiply-add=2; dense T-by-T attention. '
                 'Includes transformer projections/MLPs, attention, temporal gates/values, depth values, LM head. '
                 'Excludes normalization, softmax, activations, elementwise operations, backward, and kernel overhead; '
-                'not measured hardware FLOPs or a complete compute comparison.', cells=cells)
+                'not measured hardware FLOPs or a complete compute comparison.', cells=results,
+                failed_cells=failed_cells)
 
 
 def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_file=None,
@@ -309,6 +368,16 @@ def evaluate_checkpoint(checkpoint_path, *, device='cpu', dataset=None, panel_fi
     return report
 
 
+def _parse_cell(value):
+    try:
+        pair = tuple(int(part) for part in value.split(','))
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('cells must use U_T,U_D integer syntax') from None
+    if len(pair) != 2 or any(count < 0 for count in pair):
+        raise argparse.ArgumentTypeError('cells must use two nonnegative counts: U_T,U_D')
+    return pair
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--checkpoint', required=True)
@@ -322,7 +391,10 @@ def main():
     parser.add_argument('--panel-split', choices=['selection', 'confirmation'], default='selection')
     parser.add_argument('--mask-seeds', type=int, nargs='+', default=[11, 23, 37])
     parser.add_argument('--num-threads', type=int, default=4)
-    parser.add_argument('--no-diagnostics', action='store_true')
+    parser.add_argument('--no-diagnostics', action='store_true',
+                        help='Disable gradient diagnostics; required for 16-pass cells, which use stress_checks')
+    parser.add_argument('--cell', action='append', type=_parse_cell,
+                        help='Explicit evaluation cell U_T,U_D; repeat in order and begin with 0,0')
     args = parser.parse_args()
     output = Path(args.output)
     if output.suffix != '.json':
@@ -333,7 +405,8 @@ def main():
     report = evaluate_checkpoint(args.checkpoint, device=args.device, dataset=args.dataset,
                                  batches=args.batches, batch_size=args.batch_size, data_seed=args.data_seed,
                                  panel_file=args.panel_file, panel_split=args.panel_split,
-                                 mask_seeds=args.mask_seeds, diagnostics=not args.no_diagnostics)
+                                 mask_seeds=args.mask_seeds, diagnostics=not args.no_diagnostics,
+                                 cells=args.cell)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
     rows = [{k: v for k, v in cell.items() if k not in ['placements', 'diagnostics']} for cell in report['cells']]

@@ -201,6 +201,21 @@ def test_temporal_controller_uses_unprojected_sources_and_bypasses_boundary():
     assert not torch.equal(actual[:, 1], p[:, 1])
 
 
+def test_temporal_gate_initialization_is_configurable_and_complementary():
+    mixer = TemporalMixer(4, memory_gate_init=.25)
+    assert torch.allclose(mixer.gates.weight, torch.zeros_like(mixer.gates.weight))
+    alpha, beta = torch.sigmoid(mixer.gates.bias).chunk(2)
+    torch.testing.assert_close(alpha, torch.full_like(alpha, .25), rtol=0, atol=1e-6)
+    torch.testing.assert_close(beta, torch.full_like(beta, .75), rtol=0, atol=1e-6)
+    assert tiny_model(temporal_memory_gate_init=.25).config.temporal_memory_gate_init == .25
+
+
+@pytest.mark.parametrize('value', [True, 0, 1, -0.1, 1.1, float('nan')])
+def test_temporal_gate_initialization_rejects_invalid_values(value):
+    with pytest.raises(ValueError, match='temporal_memory_gate_init|memory_gate_init'):
+        tiny_model(temporal_memory_gate_init=value)
+
+
 def test_sampler_distribution_masks_and_resume():
     sampler = RecurrenceScheduleSampler(UPDATE_SUPPORT, UPDATE_PROBABILITIES, 19)
     placements = Counter()

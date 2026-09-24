@@ -31,6 +31,7 @@ def test_recurrence_modes_and_legacy_default():
                                                      n_core=1, n_coda=1, n_embd=8,
                                                      n_head=2, block_size=8))
     assert legacy.recurrence_mode == 'hybrid'
+    assert legacy.temporal_memory_gate_init == .1
 
 
 def test_recurrence_mode_capabilities():
