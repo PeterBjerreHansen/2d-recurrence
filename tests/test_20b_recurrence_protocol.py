@@ -161,7 +161,6 @@ def test_freeze_records_fixed_gate_and_is_repeatable(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, 'ROOT', results)
     monkeypatch.setattr(runner, 'PROTOCOL', results / 'protocol.json')
     monkeypatch.setattr(runner, 'PANEL', results / 'panel.json')
-    monkeypatch.setattr(runner, 'ENVIRONMENT', results / 'environment.json')
 
     receipt = runner.freeze()
 
@@ -206,9 +205,11 @@ def test_train_rejects_misplaced_completed_checkpoint_and_unverified_resume(
     protocol['configurations']['temporal']['out_dir'] = str(tmp_path)
     protocol['configurations']['hybrid']['out_dir'] = str(tmp_path)
     monkeypatch.setattr(study, 'run_config', lambda name: config)
-    monkeypatch.setattr(runner, 'preflight', lambda: None)
+    monkeypatch.setattr(runner, 'preflight', lambda name=None: None)
     monkeypatch.setattr(runner, '_write_arm_plan', lambda name: {})
     monkeypatch.setattr(runner, 'train', lambda config: pytest.fail('Training must not start'))
+    # Keep this rejection test independent of the repository's current gate state.
+    monkeypatch.setattr(runner, 'EXACT_RESUME_GATE_PASSED', False)
     checkpoint = tmp_path / 'ckpt.pt'
     torch.save(frozen_checkpoint, checkpoint)
     with pytest.raises(ValueError, match='configuration'):
@@ -216,8 +217,40 @@ def test_train_rejects_misplaced_completed_checkpoint_and_unverified_resume(
     assert runner.train_arm('temporal') == checkpoint
     frozen_checkpoint['iter_num'] = 500
     torch.save(frozen_checkpoint, checkpoint)
-    with pytest.raises(RuntimeError, match='Automatic resume is disabled'):
+    with pytest.raises(RuntimeError, match='continue it with --resume'):
         runner.train_arm('temporal')
+    with pytest.raises(RuntimeError, match='Resume is disabled'):
+        runner.train_arm('temporal', resume=True)
+    checkpoint.unlink()
+    with pytest.raises(RuntimeError, match='refusing to start fresh'):
+        runner.train_arm('temporal', resume=True)
+
+
+def test_resume_continues_the_checkpoint_once_the_gate_passes(frozen_checkpoint, tmp_path, monkeypatch):
+    import torch
+    config = study.run_config('temporal')
+    config['out_dir'] = str(tmp_path)
+    frozen_checkpoint['config']['out_dir'] = str(tmp_path)
+    runner.recorded_protocol()['configurations']['temporal']['out_dir'] = str(tmp_path)
+    monkeypatch.setattr(study, 'run_config', lambda name: dict(config))
+    monkeypatch.setattr(runner, 'preflight', lambda name=None: None)
+    monkeypatch.setattr(runner, '_write_arm_plan', lambda name: {})
+    monkeypatch.setattr(runner, 'EXACT_RESUME_GATE_PASSED', True)
+    frozen_checkpoint['iter_num'] = 500
+    torch.save(frozen_checkpoint, tmp_path / 'ckpt.pt')
+    seen = {}
+
+    def fake_train(resolved):
+        seen['init_from'] = resolved['init_from']
+        final = dict(frozen_checkpoint, iter_num=study.UPDATES)
+        torch.save(final, tmp_path / 'ckpt.pt')
+        return tmp_path / 'ckpt.pt'
+
+    monkeypatch.setattr(runner, 'train', fake_train)
+    runner.train_arm('temporal', resume=True)
+    assert seen['init_from'] == 'resume'
+    [history] = [json.loads(line) for line in (tmp_path / 'run_history.jsonl').read_text().splitlines()]
+    assert history['resumed_from']['step'] == 500
 
 
 def test_live_settings_run_only_at_major_checkpoints():
@@ -269,3 +302,93 @@ def test_live_evaluation_reports_each_declared_setting():
     [temporal] = runner.evaluate_live(_tiny_model('temporal'), 'temporal', study.UPDATES, rows)
     assert temporal['temporal_feedback_enabled'] is True
     assert temporal['target_count'] == 12
+
+
+def _receipt(host='pod-a', platform_name='Linux-6.8', python='3.11.16 (main)', gpu='NVIDIA GeForce RTX 4090',
+             protocol='protocol-hash'):
+    return dict(protocol_sha256=protocol, protocol_branch='branch', protocol_commit='commit', host=host,
+                runtime=dict(python=python, platform=platform_name, torch='2.14.0+cu130', cuda='13.0',
+                             cuda_available=True, cuda_device_count=1, gpu=gpu, bf16_supported=True,
+                             packages={'torch': '2.14.0'}, uv_lock_sha256='lock'))
+
+
+def _environment_entries(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_environment_log_is_per_arm_and_records_host_changes(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, '_arm_output', lambda name: tmp_path / name)
+    runner.record_environment('hybrid', _receipt())
+    runner.record_environment('hybrid', _receipt())
+    runner.record_environment('temporal', _receipt(host='pod-b'))
+    log = tmp_path / 'hybrid' / runner.ENVIRONMENT_LOG
+    assert len(_environment_entries(log)) == 1
+    assert len(_environment_entries(tmp_path / 'temporal' / runner.ENVIRONMENT_LOG)) == 1
+
+    moved = runner.record_environment(
+        'hybrid', _receipt(host='pod-c', platform_name='Linux-6.11', python='3.11.18 (main)'))
+    entries = _environment_entries(log)
+    assert moved['host_change'] is True
+    assert [entry['host'] for entry in entries] == ['pod-a', 'pod-c']
+    assert entries[0]['host_change'] is False
+
+
+@pytest.mark.parametrize('change, message', [
+    (dict(gpu='NVIDIA GeForce RTX 3090'), 'runtime differs'),
+    (dict(python='3.12.1 (main)'), 'runtime differs'),
+    (dict(protocol='other-protocol'), 'frozen protocol differs'),
+])
+def test_environment_log_rejects_pinned_runtime_or_protocol_changes(tmp_path, monkeypatch, change, message):
+    monkeypatch.setattr(runner, '_arm_output', lambda name: tmp_path / name)
+    runner.record_environment('depth', _receipt())
+    with pytest.raises(ValueError, match=message):
+        runner.record_environment('depth', _receipt(host='pod-z', **change))
+
+
+def _integrity_fixture(tmp_path, monkeypatch, frozen_checkpoint, protocol_text='frozen'):
+    import torch
+    protocol = tmp_path / 'protocol.json'
+    protocol.write_text(protocol_text)
+    monkeypatch.setattr(runner, 'PROTOCOL', protocol)
+    digest = runner.file_hash(protocol)
+    results = tmp_path / 'results'
+    results.mkdir()
+    (results / 'plan.json').write_text(json.dumps(dict(protocol_sha256=digest)))
+    (results / runner.ENVIRONMENT_LOG).write_text(json.dumps(dict(protocol_sha256=digest)) + '\n')
+    torch.save(frozen_checkpoint, results / 'ckpt.pt')
+    return results, digest
+
+
+def test_integrity_accepts_matching_results_and_reports_drift(frozen_checkpoint, tmp_path, monkeypatch):
+    frozen_checkpoint['iter_num'] = 500
+    results, digest = _integrity_fixture(tmp_path, monkeypatch, frozen_checkpoint)
+    report = runner.arm_integrity('temporal', results)
+    assert report['ok'], report['problems']
+    assert report['checkpoint']['step'] == 500 and report['checkpoint']['valid']
+
+    (results / 'plan.json').write_text(json.dumps(dict(protocol_sha256='other')))
+    frozen_checkpoint['manifest_hash'] = 'other-dataset'
+    import torch
+    torch.save(frozen_checkpoint, results / 'ckpt.pt')
+    report = runner.arm_integrity('temporal', results)
+    assert not report['ok']
+    assert any('plan.json' in problem for problem in report['problems'])
+    assert any('ckpt.pt is invalid' in problem for problem in report['problems'])
+
+
+def test_integrity_complete_requires_final_step_and_matching_reports(frozen_checkpoint, tmp_path, monkeypatch):
+    import torch
+    results, _ = _integrity_fixture(tmp_path, monkeypatch, frozen_checkpoint)
+    report = runner.arm_integrity('temporal', results, require_complete=True)
+    assert not report['ok']
+    assert len(report['problems']) == len(study.EVALUATION_CHECKPOINT_STEPS)
+    for step in study.EVALUATION_CHECKPOINT_STEPS:
+        retained = results / f'ckpt-step{step:06d}.pt'
+        retained.write_bytes(str(step).encode())
+        (results / f'evaluation-selection-{retained.stem}.json').write_text(
+            json.dumps(dict(checkpoint_sha256=runner.file_hash(retained))))
+    assert runner.arm_integrity('temporal', results, require_complete=True)['ok']
+    last = results / f'ckpt-step{study.UPDATES:06d}.pt'
+    last.write_bytes(b'changed')
+    report = runner.arm_integrity('temporal', results, require_complete=True)
+    assert report['problems'] == [f'step {study.UPDATES}: evaluation report does not match its checkpoint']

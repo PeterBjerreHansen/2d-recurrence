@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path
 import platform
 import random
@@ -36,18 +37,27 @@ DATASET_NAME = 'chess_8M_v1'
 BLOCK_SIZE = 1023
 PANEL = Path(study.PANEL_PATH)
 PROTOCOL = ROOT / 'protocol.json'
-ENVIRONMENT = ROOT / 'environment.json'
 TRANSFER_MANIFEST = Path('TRANSFER_MANIFEST.json')
 ARM_ORDER = study.ARM_ORDER
 MASK_SEEDS = study.MASK_SEEDS
 SOURCE_SUFFIXES = {'.py', '.toml', '.lock', '.json', '.md', '.txt', '.yaml', '.yml'}
 SOURCE_EXCLUDED_PARTS = {'data', 'results', '__pycache__'}
+# Pod scheduling and monitoring runs locally and may be fixed mid-run; it is
+# not part of the experiment's scientific source.
+SOURCE_EXCLUDED_DIRS = (Path('experiments/long_runs/20B_recurrence/ops'),)
 SOURCE_REQUIRED_FILES = {
     Path('data/chess_v1/prepare.py'),
     Path('data/chess_v1/meta.pkl'),
     Path('docs/upstream.json'),
 }
 PACKAGE_NAMES = ('torch', 'numpy', 'chess', 'datasets', 'huggingface-hub')
+ENVIRONMENT_LOG = 'environment.jsonl'
+# An arm may move to a replacement host. These runtime fields must stay fixed;
+# the OS/kernel string, Python patch level, and host identity may change.
+PINNED_RUNTIME_KEYS = ('torch', 'cuda', 'gpu', 'bf16_supported', 'packages', 'uv_lock_sha256')
+# Set to True only after the deterministic >=1,000-update interrupted WSD and
+# curriculum comparison matches exactly, and before freezing.
+EXACT_RESUME_GATE_PASSED = True
 
 
 def _git(*args, binary=False):
@@ -79,6 +89,8 @@ def _source_paths():
             continue
         if (path not in SOURCE_REQUIRED_FILES and
                 any(part in SOURCE_EXCLUDED_PARTS for part in path.parts)):
+            continue
+        if any(path.is_relative_to(directory) for directory in SOURCE_EXCLUDED_DIRS):
             continue
         paths.append(path)
     return sorted(paths)
@@ -385,8 +397,48 @@ def dry_run():
     )
 
 
-def preflight():
-    """Verify a frozen study, complete dataset, and CUDA BF16 runtime."""
+def _python_minor(version):
+    return '.'.join(version.split()[0].split('.')[:2])
+
+
+def record_environment(name, receipt):
+    """Append this host's receipt to the arm's environment log.
+
+    Each arm keeps its own log so arms on separate Pods never collide. A
+    repeated identical receipt is not re-recorded. A new host is appended and
+    marked as a host change; protocol drift or a change in a pinned runtime
+    field is rejected.
+    """
+    path = _arm_output(name) / ENVIRONMENT_LOG
+    entries = ([json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+               if path.is_file() else [])
+    if entries:
+        first = entries[0]
+        if receipt['protocol_sha256'] != first['protocol_sha256']:
+            raise ValueError(f'{name}: frozen protocol differs from the one this arm started with')
+        changed = [key for key in PINNED_RUNTIME_KEYS
+                   if receipt['runtime'].get(key) != first['runtime'].get(key)]
+        if _python_minor(receipt['runtime']['python']) != _python_minor(first['runtime']['python']):
+            changed.append('python')
+        if changed:
+            raise ValueError(f'{name}: runtime differs from the arm\'s first host in {changed}')
+        last = {key: value for key, value in entries[-1].items()
+                if key not in ('recorded_utc', 'host_change')}
+        if last == receipt:
+            return entries[-1]
+    entry = dict(receipt, recorded_utc=datetime.now(timezone.utc).isoformat(),
+                 host_change=bool(entries))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a') as stream:
+        stream.write(json.dumps(entry, allow_nan=False) + '\n')
+    return entry
+
+
+def preflight(name=None):
+    """Verify a frozen study, complete dataset, and CUDA BF16 runtime.
+
+    With an arm name, also record this host in that arm's environment log.
+    """
     data = _materialized_data()
     if data is None:
         raise RuntimeError(f'{DATASET} is incomplete: train.bin and val.bin are required for CUDA preflight')
@@ -398,14 +450,9 @@ def preflight():
     receipt = dict(protocol_sha256=file_hash(PROTOCOL),
                    protocol_branch=recorded['source']['branch'],
                    protocol_commit=recorded['source']['head_commit'],
+                   host=os.environ.get('RUNPOD_POD_ID') or platform.node(),
                    runtime=runtime_environment())
-    if ENVIRONMENT.exists():
-        if json.loads(ENVIRONMENT.read_text()) != receipt:
-            raise ValueError(f'{ENVIRONMENT} does not match this runtime/protocol')
-    else:
-        ENVIRONMENT.parent.mkdir(parents=True, exist_ok=True)
-        ENVIRONMENT.write_text(json.dumps(receipt, indent=2, allow_nan=False) + '\n')
-    return receipt
+    return record_environment(name, receipt) if name is not None else receipt
 
 
 def _arm_output(name):
@@ -433,19 +480,27 @@ def _write_arm_plan(name):
     return expected
 
 
-def _append_history(record):
-    ROOT.mkdir(parents=True, exist_ok=True)
-    with (ROOT / 'run_history.jsonl').open('a') as stream:
+def _append_history(name, record):
+    # Per arm, so separate Pods never append to the same file.
+    path = _arm_output(name) / 'run_history.jsonl'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a') as stream:
         stream.write(json.dumps(record, allow_nan=False) + '\n')
 
 
-def train_arm(name):
+def train_arm(name, resume=False):
+    """Train one arm from scratch, or with ``resume`` continue its checkpoint.
+
+    A fresh start requires that no checkpoint exists. ``resume`` requires a
+    valid checkpoint and never falls back to a fresh start.
+    """
     if name not in ARM_ORDER:
         raise ValueError(name)
-    preflight()
+    preflight(name)
     plan = _write_arm_plan(name)
     config = study.run_config(name)
     checkpoint = Path(config['out_dir']) / 'ckpt.pt'
+    resumed_from = None
     if checkpoint.is_file():
         saved = torch.load(checkpoint, map_location='cpu', weights_only=False)
         _validate_checkpoint(saved, name)
@@ -453,9 +508,17 @@ def train_arm(name):
         if step == study.UPDATES:
             print(f'{name}: already complete at step {step}')
             return checkpoint
-        raise RuntimeError(
-            'Automatic resume is disabled until the production WSD/curriculum '
-            'configuration passes the >=1,000-update exact-resume gate')
+        if not resume:
+            raise RuntimeError(f'{name}: a partial checkpoint exists at step {step}; '
+                               'continue it with --resume instead of starting fresh')
+        if not EXACT_RESUME_GATE_PASSED:
+            raise RuntimeError(
+                'Resume is disabled until the production WSD/curriculum '
+                'configuration passes the >=1,000-update exact-resume gate')
+        config['init_from'] = 'resume'
+        resumed_from = dict(step=step, checkpoint_sha256=file_hash(checkpoint))
+    elif resume:
+        raise RuntimeError(f'{name}: --resume found no checkpoint at {checkpoint}; refusing to start fresh')
     started_utc = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
     result = train(config)
@@ -463,11 +526,64 @@ def train_arm(name):
     final = torch.load(result, map_location='cpu', weights_only=False)
     if final['iter_num'] != study.UPDATES:
         raise RuntimeError(f'{name} stopped at {final["iter_num"]}, expected {study.UPDATES}')
-    _append_history(dict(
-        event='training', arm=name, started_utc=started_utc,
+    _append_history(name, dict(
+        event='training', arm=name, started_utc=started_utc, resumed_from=resumed_from,
         final_step=final['iter_num'], elapsed_seconds=elapsed,
         checkpoint_sha256=file_hash(result), plan=plan))
     return result
+
+
+def arm_integrity(name, results_dir=None, require_complete=False):
+    """Check an arm's results against the frozen protocol; never raises on bad data.
+
+    Used on the Pod each monitoring tick and locally after collection. Checks
+    that the arm plan and every environment receipt carry the frozen protocol
+    hash, and that ``ckpt.pt`` matches the frozen configuration, dataset and
+    panel. With ``require_complete``, also requires the final step and an
+    evaluation report for every retained checkpoint whose recorded hash matches
+    that checkpoint.
+    """
+    results = Path(results_dir) if results_dir is not None else _arm_output(name)
+    protocol_sha256 = file_hash(PROTOCOL)
+    problems = []
+    plan_path = results / 'plan.json'
+    if not plan_path.is_file():
+        problems.append('plan.json is missing')
+    elif json.loads(plan_path.read_text()).get('protocol_sha256') != protocol_sha256:
+        problems.append('plan.json records a different protocol')
+    environment_path = results / ENVIRONMENT_LOG
+    environment = ([json.loads(line) for line in environment_path.read_text().splitlines() if line.strip()]
+                   if environment_path.is_file() else [])
+    if not environment:
+        problems.append(f'{ENVIRONMENT_LOG} is missing or empty')
+    elif any(entry.get('protocol_sha256') != protocol_sha256 for entry in environment):
+        problems.append(f'{ENVIRONMENT_LOG} records a different protocol')
+    checkpoint = dict(exists=(results / 'ckpt.pt').is_file(), sha256=None, step=None, valid=False)
+    if checkpoint['exists']:
+        path = results / 'ckpt.pt'
+        checkpoint['sha256'] = file_hash(path)
+        try:
+            saved = torch.load(path, map_location='cpu', weights_only=False)
+            checkpoint['step'] = saved['iter_num']
+            _validate_checkpoint(saved, name)
+            checkpoint['valid'] = True
+        except Exception as error:  # report, never crash the monitor
+            problems.append(f'ckpt.pt is invalid: {str(error)[:200]}')
+    elif require_complete:
+        problems.append('ckpt.pt is missing')
+    if require_complete:
+        if checkpoint['step'] != study.UPDATES:
+            problems.append(f"final step is {checkpoint['step']}, expected {study.UPDATES}")
+        for step in study.EVALUATION_CHECKPOINT_STEPS:
+            retained = results / f'ckpt-step{step:06d}.pt'
+            report = results / f'evaluation-selection-{retained.stem}.json'
+            if not retained.is_file() or not report.is_file():
+                problems.append(f'step {step}: checkpoint or evaluation report missing')
+            elif json.loads(report.read_text()).get('checkpoint_sha256') != file_hash(retained):
+                problems.append(f'step {step}: evaluation report does not match its checkpoint')
+    return dict(arm=name, results=str(results), protocol_sha256=protocol_sha256,
+                checkpoint=checkpoint, environment_hosts=len(environment),
+                ok=not problems, problems=problems)
 
 
 def _checkpoint_for(name, step):
@@ -625,9 +741,18 @@ def main():
     freeze_parser.add_argument('--refresh', action='store_true',
                                help='Refresh only before any arm has produced a checkpoint')
     sub.add_parser('dry-run')
-    sub.add_parser('preflight')
+    preflight_parser = sub.add_parser('preflight')
+    preflight_parser.add_argument('arm', nargs='?', choices=ARM_ORDER,
+                                  help="Record this host in the arm's environment log")
     train_parser = sub.add_parser('train')
     train_parser.add_argument('arm', choices=ARM_ORDER)
+    train_parser.add_argument('--resume', action='store_true',
+                              help='Continue the existing checkpoint; never start fresh')
+    integrity_parser = sub.add_parser('integrity')
+    integrity_parser.add_argument('arm', choices=ARM_ORDER)
+    integrity_parser.add_argument('--results-dir', help='Check a copied results directory instead')
+    integrity_parser.add_argument('--complete', action='store_true',
+                                  help='Also require the final step and every evaluation report')
     evaluate_parser = sub.add_parser('evaluate')
     evaluate_parser.add_argument('arm', choices=ARM_ORDER)
     evaluate_parser.add_argument('--step', type=int, choices=study.CHECKPOINT_STEPS)
@@ -644,9 +769,11 @@ def main():
     elif args.command == 'dry-run':
         print(json.dumps(dry_run(), indent=2))
     elif args.command == 'preflight':
-        print(json.dumps(preflight(), indent=2))
+        print(json.dumps(preflight(args.arm), indent=2))
     elif args.command == 'train':
-        train_arm(args.arm)
+        train_arm(args.arm, resume=args.resume)
+    elif args.command == 'integrity':
+        print(json.dumps(arm_integrity(args.arm, args.results_dir, args.complete)))
     elif args.command == 'evaluate':
         evaluate_arm(args.arm, args.step, args.split, args.device)
     elif args.command == 'study':

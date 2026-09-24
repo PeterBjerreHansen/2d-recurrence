@@ -1,0 +1,32 @@
+{
+  "spend_cap_usd": 80.0,
+  "max_pods": 4,
+  "arm_priority": [
+    "hybrid",
+    "temporal",
+    "depth",
+    "transformer"
+  ],
+  "bundle": "~/path/to/20B_recurrence.tar.gz",
+  "gpu_id": "NVIDIA GeForce RTX 4090",
+  "cloud_type": "COMMUNITY",
+  "image": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404",
+  "min_cuda_version": "13.0",
+  "minimum_download_mb_per_second": 20.0,
+  "download_probe_bytes": 50000000,
+  "volume_gb": 30,
+  "container_disk_gb": 30,
+  "projected_hours_per_arm": 48,
+  "projected_budget_margin_fraction": 0.1,
+  "planning_rate_usd_per_hr": 0.34,
+  "storage_usd_per_gb_month": 0.2,
+  "stop_margin_hours": 1.5,
+  "min_balance_hours": 24,
+  "acquire_attempts_per_tick": 2,
+  "resume_enabled": true,
+  "max_restarts_per_arm": 3,
+  "stall_ticks": 2,
+  "disk_alert_fraction": 0.9,
+  "allow_release": false,
+  "ssh_key": "~/.runpod/ssh/runpodctl-ssh-key"
+}

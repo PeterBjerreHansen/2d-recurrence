@@ -82,10 +82,14 @@ from sharing one GPU across multiple arms. Keep one process per card.
 The live deploy form showed, on 2026-09-24, a Community RTX 4090 at `$0.34/GPU-hour` with
 **On-Demand** pricing and no Spot/interruptible option on that selected offer.
 Community availability and the price must be checked again in the chosen
-region before launch. Do not assume this is Spot pricing. At the measured
-`~1.49 updates/s`, one recurrent arm is roughly 36.5 hours of training work;
-the four-arm wall time and bill will also include evaluation, storage,
-provisioning, and recovery. Set a total spend cap before deployment.
+region before launch. Do not assume this is Spot pricing. The deterministic
+1,000-update RTX 4090 check measured 0.845 seconds per update (about 1.18
+updates/s). That projects to 46 hours of training work per arm; use 48 hours
+for planning. The check used synthetic rows, so full-dataset I/O may change the
+rate. Four cards at `$0.34/hour` for 48 hours cost `$65.28` for GPU time. The
+monitor's storage estimate and 10% margin bring the planned balance to about
+`$75.28`, under the `$80` cap. Evaluations, provisioning, and recovery are
+included only through that margin.
 
 Storage/recovery layout: run four Community RTX 4090 Pods, one arm per Pod.
 Give each Pod a **30 GB Pod Volume Disk** at `/workspace` for its checkout,
@@ -115,31 +119,35 @@ spend cap is reached. Transfer and SHA-256-verify each completed arm's
 checkpoints and protocol/environment/panel files locally before releasing
 the Pod and storage.
 
-**Resume gate:** the 1,000-update WSD-plus-curriculum resume sanity run did
-not exactly match its uninterrupted baseline (model and optimizer differed;
-sampler and RNG matched). That run did not enable deterministic kernels. The
-100-update comparison also diverged without them (maximum model difference
-0.001) and matched bitwise with them, so the likely cause is CUDA
-nondeterminism amplified over 500 updates rather than missing resume state.
-Bitwise equality under production (nondeterministic) kernels cannot pass: two
-uninterrupted runs differ as well. Clear the gate by repeating the 1,000-update
-comparison with deterministic kernels, which receipts now record:
+**Resume gate passed:** on 2026-09-25, a deterministic 1,000-update
+WSD/curriculum comparison matched model, optimizer, scaler, recurrence sampler,
+RNG, and every compared post-resume training metric exactly. LR formula error
+was zero. It ran on Torch 2.14.0+cu130 on one Secure RTX 4090. Auto-review
+blocked transfer of the local real-data sample to that Pod, so synthetic
+32-token rows were generated there. This validates resume mechanics under the
+locked CUDA stack, not data quality. The machine-readable result is at
+`experiments/benchmarks/recurrent_runtime/results/20260925-4090-wsd-sanity-1000-deterministic-synthetic/sanity.json`.
+
+The earlier nondeterministic run differed in model and optimizer state; a
+100-update comparison also diverged without deterministic kernels and matched
+bitwise with them. Production runs therefore resume with ordinary kernels,
+where a resumed run is statistically, not bitwise, equivalent to an
+uninterrupted one. The deterministic comparison command was:
 
 ```sh
 uv run python -m experiments.benchmarks.recurrent_runtime --stage sanity \
   --updates 1000 --deterministic --run-id 20260925-4090-wsd-sanity-1000-deterministic
 ```
 
-An exact match shows that resume restores all training state across the WSD
-and curriculum boundaries; production runs then resume with ordinary kernels.
-Until it passes, the study runner refuses automatic resume.
+`EXACT_RESUME_GATE_PASSED` is enabled, so `train <arm> --resume` is allowed.
+The full frozen dataset and host still need the normal preflight before the
+20B run.
 The trainer now saves the latest recovery checkpoint every 1,000 updates
 without evaluation, evaluates every 10,000 updates (plus the initial and final
 evaluation), and retains only the named curve checkpoints. The separate
-post-training evaluation of retained curve checkpoints is unchanged. The study runner refuses automatic resume until the longer
-production-settings test passes; the generic trainer remains available for
-the controlled resume test. With hourly polling, recovery could wait up to about an hour
-to be detected and then replay up to one checkpoint interval of work.
+post-training evaluation of retained curve checkpoints is unchanged. With
+hourly polling, recovery could wait up to about an hour to be detected and
+then replay up to one checkpoint interval of work.
 
 Training requires complete `train.bin` and `val.bin` files and a CUDA
 BF16-capable GPU per concurrent arm. The runner does not provision hardware.
@@ -165,9 +173,22 @@ uv run python -m experiments.long_runs.20B_recurrence.run study --evaluate-check
 
 `study` trains sequentially in transformer, hybrid, temporal, depth order and
 is not the four-Pod launcher. For parallel execution, run one arm-specific
-`train <arm>` command on each Pod. Completed arms are accepted only after their checkpoint configuration, dataset,
-panel, and step match the frozen arm. Incomplete arms are not automatically
-resumed while the resume gate is unresolved. Checkpoint evaluation uses
+`train <arm>` command on each Pod; arms may start at different times from the
+same frozen bundle.
+
+`preflight` alone checks the host without writing anything. `preflight <arm>`,
+which `train <arm>` also runs, appends this host's runtime receipt to
+`<arm>_20B/results/environment.jsonl`. Each arm keeps its own log, so Pods never
+write the same receipt file. An arm may move to a replacement host: the new
+host is appended and marked `host_change`. The frozen protocol, GPU model,
+torch/CUDA build, Python minor version, package versions and `uv.lock` must
+match the arm's first host, or preflight refuses to continue. Completed arms are accepted only after their checkpoint configuration, dataset,
+panel, and step match the frozen arm. `train <arm>` starts fresh only when no checkpoint exists; it refuses a
+partial checkpoint. `train <arm> --resume` continues a valid checkpoint and
+never starts fresh; the deterministic resume gate has passed and the flag is
+set in `run.py`. `integrity <arm>` checks an arm's plan, environment log and
+checkpoint against the frozen protocol (`--complete` also requires the final
+step and matching evaluation reports). Checkpoint evaluation uses
 `evaluate <arm> --step <step>` and always recomputes the requested report;
 there is no report-cache reuse or cache-validation workflow.
 `dry-run` does not freeze a protocol, write artifacts, or train. The transfer

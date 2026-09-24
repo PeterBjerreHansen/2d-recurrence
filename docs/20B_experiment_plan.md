@@ -160,7 +160,7 @@ The 1,000-update WSD-plus-curriculum sanity run verified the LR formula and curr
 
 That run used ordinary, nondeterministic CUDA kernels. The 100-update comparison diverged the same way without deterministic kernels (maximum model difference 0.001) and matched bitwise with them. The mismatch is therefore most likely kernel nondeterminism amplified over 500 updates, not missing resume state. Bitwise equality with production kernels is not an achievable gate, because two uninterrupted runs would also differ.
 
-**Remaining launch gate:** repeat the 1,000-update interrupted WSD/curriculum comparison with `--deterministic`. Require exact model, optimizer, sampler, RNG and training-metric equality before enabling automatic resume. Production runs then resume with ordinary kernels, where a resumed run is statistically, not bitwise, equivalent to an uninterrupted one.
+**Deterministic resume gate passed (2026-09-25):** the 1,000-update WSD/curriculum comparison with `--deterministic` matched the model, optimizer, scaler, recurrence sampler, RNG state and every compared post-resume training metric exactly. The LR formula error was zero. It ran on one Secure RTX 4090 with Torch 2.14.0+cu130. To avoid exporting local dataset files after an automatic review block, the Pod generated synthetic 32-token rows with the same row size; this verifies exact resume mechanics under the locked CUDA stack, not data quality or full-dataset throughput. `EXACT_RESUME_GATE_PASSED` is enabled. Production runs then resume with ordinary kernels, where a resumed run is statistically, not bitwise, equivalent to an uninterrupted one. The machine-readable result is in `experiments/benchmarks/recurrent_runtime/results/20260925-4090-wsd-sanity-1000-deterministic-synthetic/sanity.json`.
 
 ## Execution on Community RTX 4090s
 
@@ -170,7 +170,7 @@ On 2026-09-24 the deploy form showed a Community RTX 4090 at **$0.34/GPU-hour, O
 
 On 2026-09-24, every available Community 4090 host that was rented for the resume probe had a faulted GPU: `cuInit` returned 999, and `nvidia-smi` reported "GPU Recovery Action: Reboot". Check that CUDA initializes on each Pod before transferring data.
 
-At the measured recurrent rate (about 1.49 updates/s for the 200-update `5 × 20` hybrid probe), a 195,504-update recurrent arm projects to about **36.5 hours of training work**. That excludes evaluations, checkpoint I/O, provisioning, transfers and recovery. Use about 37 hours as a first planning estimate, not a service guarantee. Four cards at `$0.34/hour` for 37 hours would cost about **$50** before storage and overhead, if all four stayed billed for the whole interval. Set an explicit total spend cap before launch; the monitor must stop and alert before exceeding it.
+The deterministic 1,000-update `5 × 20` RTX 4090 check measured 0.845 seconds per training update (1.18 updates/s). At that rate, a 195,504-update recurrent arm projects to about **46 hours of training work**. This excludes evaluations, checkpoint I/O, provisioning, transfers and recovery, and the synthetic rows may not capture full-dataset I/O. Use 48 hours per arm for initial planning. Four Community cards at `$0.34/hour` for 48 hours cost about **$65** for GPU time; the configured storage estimate adds about **$3**, and a 10% margin gives a projected campaign budget of **$75.28**. Set an explicit total spend cap before launch; the monitor must stop and alert before exceeding it.
 
 ### Storage
 
@@ -192,7 +192,7 @@ The runner writes:
 - checkpoints at the evaluation interval of **10,000 updates** (about 1 hour 52 minutes at the measured rate);
 - the named curve checkpoints.
 
-Only the named checkpoints are kept as separate snapshots; recovery saves replace `ckpt.pt`. The final step is evaluated even though it does not fall on the interval, and the separate named-checkpoint study evaluations are unchanged. Automatic resume in the study runner stays disabled until the resume gate above passes. With hourly polling, a failure could take up to about an hour to detect, and recovery then replays up to one checkpoint interval of work.
+Only the named checkpoints are kept as separate snapshots; recovery saves replace `ckpt.pt`. The final step is evaluated even though it does not fall on the interval, and the separate named-checkpoint study evaluations are unchanged. The deterministic resume gate above has passed, so `train <arm> --resume` is enabled; it never falls back to a fresh start. With hourly polling, a failure could take up to about an hour to detect, and recovery then replays up to one checkpoint interval of work.
 
 On GPU interruption, keep the original Pod and volume. If needed, restart it with zero GPUs to retrieve the latest checkpoint, then transfer and verify it before terminating the Pod or moving the arm to a replacement. The Pod Volume Disk alone does **not** protect against host or storage loss or Pod termination. Verify the zero-GPU retrieval and checkpoint-transfer path before launch, and choose and test an external checkpoint backup if recovery must survive host or storage loss.
 
