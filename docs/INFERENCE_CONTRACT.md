@@ -82,7 +82,12 @@ and hybrid modes.
 The slow live oracle is distinct from the parallel training graph. The latter
 uses a supplied write schedule over full sequences; differences between the
 two executions are expected and are useful evaluation results, not cache
-correctness failures.
+correctness failures. One case is an exact identity: a depth-only checkpoint
+with `depth_specialized` caches and `J` core calls computes the same function
+as its training-graph cell `(0, J-1)`, because every core pass then attends to
+same-depth states of earlier tokens. The 20B study uses this as a consistency
+check. Temporal and hybrid checkpoints have no such identity, since live
+temporal memory is chained through every earlier token.
 
 ## CLI and reports
 
@@ -94,3 +99,6 @@ temporal-feedback setting, final cache length, and cache bytes.
 
 `evaluation/live_inference.py` provides a small deterministic comparison of
 cached live decoding against the slow oracle for supplied token sequences.
+Its `evaluate_teacher_forced` function computes live next-character NLL and
+accuracy on stored validation rows, resetting all state at each row boundary
+as training does. Rows are decoded sequentially, one row at a time.

@@ -1,21 +1,62 @@
-# Two-axis recurrent ChessGPT
+# 2D recurrence: training looped and feedback transformers at once
 
-A character-level chess language model combining temporal feedback across positions with recurrent depth. The default is **variation A**: one prelude block, one block between temporal and depth injection, four recurrent-core blocks, one temporal-source block, and one coda block. The eight-block backbone has width 512, eight heads, learned positions, and tied embedding/unembedding weights.
+**Looped transformers and temporally recurrent (feedback) transformers are both trained the same way: run the model several times over the whole sequence, and let each pass read state left behind by the previous one. If the training loop is the same, you can train both mechanisms in one model, in one trajectory, for little extra cost.**
+
+This repository tests that idea on a small character-level chess language model: the [ChessGPT](https://github.com/adamkarvonen/train_ChessGPT) backbone, with 8 layers and width 512, trained on PGN text.
+
+![Training-time information flow in four models: vanilla, looped, temporally recurrent, and hybrid](docs/figures/training_time_layer_wise.png)
+
+## The idea in four pictures
+
+Read the figure as a 2×2 grid. The columns switch **depth recurrence** off and on. The rows switch **temporal recurrence** off and on. Each recurrent panel shows two consecutive training passes over the same three positions.
+
+- **Top left, vanilla transformer.** One pass, bottom to top. Position *t* sees earlier positions only through attention.
+- **Top right, looped (depth-recurrent) model.** A shared *recurrent core* runs several times. On pass *i*, the core output from pass *i−1* at the **same position** is mixed in before the core (orange **D**). This is the [Huginn](https://arxiv.org/abs/2502.05171)-style looped transformer: more computation per token, no new core parameters.
+- **Bottom left, temporally recurrent model.** A late-layer state from pass *i−1* at the **previous position** *t−1* is mixed in early on pass *i* (purple **T**). A high-level state flows forward in time, as in feedback transformers.
+- **Bottom right, hybrid.** Both reads at once. Depth state comes from the top of the recurrent core, and temporal state from a separate *T-source* layer above it. Temporal state is injected below a *T-buffer* layer, depth state above it.
+
+The two recurrent models differ in only two ways: **where** the state is read, and whether it is **shifted by one position**. Both are trained by unrolling passes over the whole sequence in parallel, so one training loop serves both.
+
+In this repository, the temporal-only and depth-only models are restrictions of the hybrid. They keep the same eight-layer layout, including the T-source layer. The bottom-left panel shows the generic feedback idea.
+
+## One sampler trains both
+
+For every microbatch, training draws a pair of update counts `(U_T, U_D)`, for example `(3, 1)`. It then runs `max(U_T, U_D) + 1` passes and writes each state after a random subset of the non-final passes:
 
 ```text
-embeddings -> L1 -> temporal mix -> L2 -> depth mix -> L3-L6 -> L7 -> L8 -> head
-                      ^                    ^           |      |
-                      |                    +-- depth --+      |
-                      +-------- shifted temporal memory -----+
+pass:              1   2   3   4
+temporal write:    ✓   ✓   ✓   –
+depth write:       –   ✓   –   –
 ```
 
-Temporal memory comes from L7 and depth state from L6. Every available state is read; randomized masks control writes only. The prelude runs once per training trajectory. The buffer and core run on each pass; L7 runs for temporal writes and final prediction, and L8 runs only for final prediction. The [contract](docs/RECURRENCE_CONTRACT.md) contains the detailed sketch, equations, initialization, and masking semantics. See also the [proposal](docs/proposal.md) and [implementation plan](docs/implementation_plan.md).
+Every pass reads whatever state exists; a state that isn't rewritten is simply held. Only the final pass is supervised, and gradients flow through the whole trajectory. The model is never told how many passes it will get.
 
-A is the practical default after a near-tied [A/B comparison](experiments/ablations/architecture_sites/REPORT.md). B was slightly better at late predictive NLL, but below the predeclared selection margin. The implementation retains both layouts and configurable boundaries; the result does not establish a universal advantage for separation.
+So `(0,0)` is an ordinary transformer, `(U,0)` trains the temporal axis, `(0,U)` trains the depth axis, and mixed pairs train the two together. A single checkpoint can be evaluated anywhere on the `(U_T, U_D)` surface.
 
-## Setup and training
+**How cheap is it?** In the 5B-character study, with the same distribution of pass counts, a hybrid update took about as long as a temporal-only update (1.00 s vs. 1.03 s) and about 11% longer than a depth-only update (0.90 s). Each arm ran on its own RTX 3090 pod. Most of the cost is the extra passes themselves, which both single-axis models already pay.
 
-Use Python 3.11 and uv. The lockfile records dependencies. Commands run from the repository root.
+## At inference, the two axes separate again
+
+![Inference-time information flow in the same four models](docs/figures/inference_time_layer_wise.png)
+
+Parallel multi-pass training is only a way to *train* recurrence. When generating, the model runs token by token:
+
+- **Depth** loops the recurrent core `d` times *within* the current token. The depth state is discarded at the next token.
+- **Temporal** state is written once per token by the T-source and read by the *next* token, across the whole sequence.
+
+During training, `U` passes chain the temporal state only `U` positions back. At inference the chain runs through every earlier token. The repository implements both executions and reports them separately. It does not assume they agree.
+
+## What has been found so far
+
+| Scale | Comparison | Result |
+| --- | --- | --- |
+| 1B characters | Hybrid checkpoint vs. transformer | The `(3,3)` hybrid path beat the transformer by about 0.003–0.004 NLL. Temporal-only and depth-only execution of the same checkpoint each helped. |
+| 5B characters | Separately trained temporal, depth and hybrid models | Depth trailed by about 0.002 NLL. Temporal led the hybrid early on; the gap shrank to about 0.0006 by the end. |
+| 20B characters | Four arms, curriculum toward four passes | Prepared, not yet launched. See the [20B study](experiments/long_runs/20B_recurrence/README.md). |
+
+These are single-seed results. Protocols and caveats are in the [experiment index](experiments/README.md).
+
+## Quick start
 
 ```sh
 uv sync --frozen --python 3.11
@@ -24,79 +65,22 @@ uv run python data/chess_v1/prepare.py --file lichess_100mb_blocks.zip --out-dir
 uv run python train.py configs/local/recurrent_mps.py
 ```
 
-Reuse a prepared dataset only if its manifest matches. The MPS config is a bounded batch-8 local check, not the serious comparison profile. Use `configs/local/transformer_mps.py` for its ordinary-model counterpart. CPU smoke checks remain under `experiments/smoke/configs/`.
+This runs a small local check on Apple MPS. The [usage guide](docs/usage.md) covers the full-corpus setup, resume rules, evaluation and generation.
 
-The serious CUDA settings, full-corpus protocol, completed supervision ablation and completed 1B pair are described in the [experiment index](experiments/README.md). The 64B profiles remain prepared but unlaunched. Start with the [execution handoff](experiments/ablations/deep_supervision/HANDOFF.md). These runs use effective batch 100; creating configs does not launch training.
+## Where to go next
 
-## Configurable architecture
+| If you want to… | Read |
+| --- | --- |
+| Understand the model step by step | [Concepts](docs/concepts.md) |
+| See the exact training equations, initialization and masking | [Recurrence contract](docs/RECURRENCE_CONTRACT.md) |
+| Understand token-by-token generation and KV caches | [Inference contract](docs/INFERENCE_CONTRACT.md) |
+| Train, resume, evaluate or generate | [Usage guide](docs/usage.md) |
+| Find experiments, protocols and results | [Experiment index](experiments/README.md) |
+| See what is done and what comes next | [Implementation plan and status](docs/implementation_plan.md) |
+| Read the original research proposal | [Proposal](docs/proposal.md) (historical) |
 
-The five counts follow physical block order: prelude, buffer, core, source, coda. They sum to `n_layer`; the core must be nonempty. Other segments may be empty or contain several blocks.
+## Background
 
-| Layout | `n_prelude` | `n_buffer` | `n_core` | `n_source` | `n_coda` |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Default A | 1 | 1 | 4 | 1 | 1 |
-| B, coincident | 1 | 0 | 6 | 0 | 1 |
-| Original experiments | 2 | 0 | 4 | 1 | 1 |
-
-Changing counts moves source/destination boundaries within the ordered architecture. Empty buffer means adjacent injection sites; empty source means both candidates are the core output. These are not new module types or independent duplicated weights. Historical configs explicitly pin their layout.
-
-## Experiments and results
-
-The [experiment index](experiments/README.md) is the entry point for protocols, configs, scripts, reports, and retained artifacts.
-
-```text
-experiments/
-  serious.py                     # shared frozen batch-100 CUDA profile
-  run_serious.py                  # benchmark, time-matched ablation, decision, paired runs
-  ablations/architecture_sites/  # retained A/B evidence
-  ablations/deep_supervision/     # controlled deep-supervision comparison
-  sweeps/baseline_lr_selection/  # retained LR selection and 10k continuation
-  long_runs/{model}_{1B,64B}/     # transformer and recurrent_a, each with local results/
-  archive/early_pilots/           # reports and small artifacts; checkpoints retired
-  smoke/                         # runnable small checks and validation notes
-```
-
-Each experiment owns its `results/`; there is no global results directory. Code, configs, protocols, and concise reports are tracked; checkpoints, logs, plots, and raw reports stay local and ignored. Shared datasets remain in `data/`. Original paths embedded in historical checkpoints and receipts are intentionally unchanged; [relocations.json](experiments/relocations.json) records where they moved. The architecture ablation retains its original transfer archive, which can reproduce the pre-cleanup source snapshot.
-
-Reusable metrics live in `evaluation/`. Experiment-specific analysis lives with its experiment. For example, rebuild the completed A/B summary on CPU without provisioning a GPU:
-
-```sh
-uv run python -m experiments.ablations.architecture_sites.run summarize
-```
-
-This reads the preserved protocol/checkpoints and writes derived summaries under that experiment's `results/analysis/`, preserving the original decision. The runner requires the frozen CUDA environment for new training/evaluation; use a fresh `--results-dir` inside the experiment for an explicitly specified rerun. It does not automatically launch additional runs.
-
-## Evaluation and execution modes
-
-Training samples exact update counts from a configured distribution and randomly places the writes. The default schedule uses counts in `{0,1,3}`. For each pair, the model performs `max(U_T,U_D)+1` passes, trains only the final prediction, and retains gradients through all held states. Evaluation uses independent fixed schedules without advancing training RNG.
-
-```sh
-uv run python -m evaluation.recurrence_grid \
-  --checkpoint experiments/ablations/architecture_sites/results/separated/ckpt-step010000.pt \
-  --panel-file experiments/ablations/architecture_sites/panel.json \
-  --device=mps --output experiments/ablations/architecture_sites/results/recheck-mps.json
-```
-
-A provided panel evaluates every specified row exactly once. Without a panel the evaluator samples fixed batches with replacement. All nine pilot cells use identical batches; asymmetric cells have three distinct mask placements, and deterministic cells are evaluated once. Placement variation is not variation across training seeds. Reported FLOPs estimate forward matrix multiplications, not total training compute. State/gradient diagnostics probe one fixed batch without altering model gradients.
-
-Recurrent evaluation and generation support both the **parallel training graph**
-and fixed-depth **live** execution. Training-graph generation must specify
-`--execution=training_graph` and recomputes the prefix using a fixed write
-schedule. Live generation uses sequential prompt prefill, temporal feedback,
-and incremental KV caches; use `--execution=live --depth-steps J` for depth or
-hybrid checkpoints. The [live inference contract](docs/INFERENCE_CONTRACT.md)
-defines prompt handoff, cache policies, and the distinction between the two
-executions. Do not interpret training update counts as live inference loop
-counts.
-
-Generation samples without a legal-move mask and stops at the first completed illegal or malformed move, with no retry or repair. Reports retain the offending text, board, legal continuation length, and stop reason. Unfinished moves at a length/context limit count as truncation. Game separators are distinct from valid terminal board positions or declared results. Generation output defaults beside its checkpoint and refuses to overwrite an existing report.
-
-## Data and reproducibility
-
-The reference vocabulary uses `uint8` character IDs. Stored rows contain 1,024 characters; normal inputs and targets contain 1,023. Short test contexts preserve the storage stride. Internal game markers retain inherited causal context. The split uses seed 2357 and 1% validation; preparation rejects malformed rows, unknown characters, and exact overlap between splits. It does not assert game-disjoint generalization. Training validates the manifest, vocabulary, and data hashes.
-
-Checkpoints include model, optimizer, scaler, completed update count, random generators, recurrence sampler, configuration, dataset/panel identity, and environment provenance. Resume with the same config plus `--init_from=resume`; `max_iters` is an absolute stopping step. Moving a panel without changing its content is allowed. Other training-setting changes are rejected. Raising the stopping step does not extend the LR decay schedule.
-
-New checkpoints store the complete layout. Old checkpoints are loaded with their original missing-field defaults, not today's A defaults. Resume equivalence is tested on CPU; CUDA can introduce small numerical differences. Under DDP, rank zero broadcasts each microbatch schedule and global accumulation must divide evenly across workers. Load only trusted checkpoints and vocabulary files.
-
-The project retains Karvonen/nanoGPT ancestry and the MIT license. [Upstream provenance](docs/upstream.json) records the reference revision; the ordinary transformer computation remains in `model.py`.
+- Looped / recurrent-depth transformers: [Huginn](https://arxiv.org/abs/2502.05171) ([code](https://github.com/seal-rg/recurrent-pretraining)), [Ouro](https://arxiv.org/abs/2510.25741)
+- Temporal feedback: [Full-Bandwidth Transformer](https://arxiv.org/abs/2608.08888), [multipass-transformer-training](https://github.com/PeterBjerreHansen/multipass-transformer-training), [multipass-transformer-memory](https://github.com/PeterBjerreHansen/multipass-transformer-memory)
+- Chess language modeling: [train_ChessGPT](https://github.com/adamkarvonen/train_ChessGPT), [chess world models](https://adamkarvonen.github.io/machine_learning/2024/01/03/chess-world-models.html)

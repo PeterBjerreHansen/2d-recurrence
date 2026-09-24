@@ -13,12 +13,11 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 | [1B time-dependent update schedule](ablations/1B_update_schedule/README.md) | New six-arm ablation protocol for fixed versus hard 1-to-3 update growth; freeze before launch |
 | [Temporal gate initialization](ablations/temporal_gate_init/README.md) | Completed 250M two-arm preflight; `.25` was only marginally ahead, so retain `.10` for the 20B proposal |
 | [20B recurrence-axis study](long_runs/20B_recurrence/README.md) | Four-arm plan updated for Community RTX 4090s; no 20B training launched; live-feedback NLL added at major checkpoints; deterministic 1,000-update resume check must pass before freeze/launch |
-| [Archived early pilots](archive/early_pilots/README.md) | Reports and small artifacts retained; obsolete scripts and checkpoints deleted |
 | [Smoke checks](smoke/README.md) | Small reproducible pipeline checks and historical validation notes |
 
 ## Serious profile
 
-`serious.py` is the shared source for batch-100 runs: full `lichess_6gb_blocks.zip` pinned to revision `1a932e1abca935aae585f417ede39ecde4f2a620`, upstream 1% split with seed 2357, context 1,023, eight blocks, width 512, eight heads, AdamW 3e-4 to 3e-5, betas .9/.95, weight decay .1, clipping 1, dropout 0. The physical batch is 5 with 20 accumulation steps. CUDA BF16 and eager execution apply to both models. Precision and microbatch feasibility must pass the A6000 benchmark; any needed revision is shared and made before the experiment is frozen. These are comparable reference settings, not a claim of bitwise reproduction of upstream software.
+`serious.py` is the shared source for batch-100 runs: full `lichess_6gb_blocks.zip` pinned to revision `1a932e1abca935aae585f417ede39ecde4f2a620`, upstream 1% split with seed 2357, context 1,023, eight blocks, width 512, eight heads, AdamW 3e-4 to 3e-5, betas .9/.95, weight decay .1, clipping 1, dropout 0. The physical batch is 5 with 20 accumulation steps. CUDA BF16 and eager execution apply to both models. Precision and microbatch feasibility are benchmarked on the target GPU before an experiment is frozen (A6000 for the 1B series, RTX 4090 for the 20B study); any needed revision is shared. These are comparable reference settings, not a claim of bitwise reproduction of upstream software.
 
 The 1B and 64B labels count target characters rounded up to complete updates: 9,776 updates / 1,000,084,800 characters, and 625,611 updates / 64,000,005,300 characters. Karvonen's exact published schedule is 600,000 updates / 61.38B characters. The paired runs are data-matched; training GPU time is reported separately. Each horizon starts from scratch and has its own cosine schedule. Warmup is 2% capped at 2,000 updates.
 
@@ -30,6 +29,6 @@ The 1B and 64B labels count target characters rounded up to complete updates: 9,
 
 The architecture ablation, LR sweep, and supervision comparison keep their source, protocol, and local raw artifacts. Source-freeze checks may reject rerunning historical experiments under current code; use the preserved source archive for exact reproduction. The new series has separate output paths.
 
-The early 100/1,000-update pilots and old smoke checkpoints were retired to reduce clutter. Their reports and small artifacts remain, but obsolete launch scripts and large checkpoints do not. [relocations.json](relocations.json) preserves old paths and marks retired records. Historical JSON and checkpoint contents are not rewritten to look like new runs.
+The early 100/1,000-update pilots and old smoke checkpoints were retired to reduce clutter. Their archive directory was removed in commit `739d45d` and remains available in Git history. [relocations.json](relocations.json) preserves old paths and marks retired records. Historical JSON and checkpoint contents are not rewritten to look like new runs.
 
 The 1B pair is complete and documented in [LONG_BASELINE_RESULTS.md](long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). The temporal-only, depth-only, and matched-hybrid schedule definitions are owned by the [5B recurrence-axis study](long_runs/5B_axis/README.md), alongside its runner and resolved configuration entry points.

@@ -1,6 +1,23 @@
 # Implementation Plan: Two-Axis Recurrent Character-Level Chess Transformer
 
-Stages 0–9, the subsequent longer baseline and architecture A/B comparison, and the fixed-depth portion of Stage 14 are complete. Variation A is now the default; the model retains configurable ordered injection and source boundaries. See the [experiment index](../experiments/README.md) for protocols, results, and historical validations. Adaptive live-depth exit remains future work.
+This page records the staged plan the implementation followed and where each stage stands. Stage descriptions below are kept as written for reference. The [experiment index](../experiments/README.md) has protocols and results, and the [concepts page](concepts.md) explains the model.
+
+## Status
+
+*As of 2026-09-24.*
+
+| Stage | Status |
+| --- | --- |
+| 0–8: bootstrap, baseline, contract, layout, sampler, temporal, depth, hybrid, verification | Done |
+| 9: hybrid signs of life | Done; the 1B pair showed a small recurrent benefit |
+| 10: expand the update grid to `{0,…,7}` | Not done, and deliberately deferred. The 20B study trains at most four passes and evaluates 8 and 16 as diagnostics. |
+| 11: component baselines | Done as separately trained temporal-only, depth-only and hybrid arms (`recurrence_mode`), in the 5B axis study and the prepared 20B study. Multi-seed runs and the parameter-matched reference are not done. |
+| 12: complete compute accounting | Partial: structural block counts, forward matmul FLOP estimates and measured throughput are reported; profiler-level accounting is not. |
+| 13: curriculum and supervision | Supervision: done (final-only selected). Curriculum: time-dependent update schedules are implemented; the 1B fixed-vs-growth ablation is prepared but not launched. The 20B study uses a curriculum. Transfer/intervention studies and adaptive allocation are not started. |
+| 14: live inference | Fixed-depth live execution, KV caches, slow reference and live NLL are done; adaptive exit is future work. |
+| 15–16: self-play, interpretability | Not started |
+
+Layout A is the default after the near-tied A/B comparison; the ordered injection and source boundaries remain configurable.
 
 ## Governing contract
 
@@ -195,6 +212,8 @@ Look for stable four-pass execution, useful prediction changes under recurrence,
 
 ## Stage 10: Expand the update grid
 
+*Status: deferred. See the [20B plan](20B_experiment_plan.md#out-of-scope-8-pass-training) for when to add `U=7`.*
+
 Once the pilot behaves sensibly, expand to $U_T,U_D\in\{0,\ldots,7\}$, giving up to eight core passes. Reuse the same sampler and contract with configuration changes only. Reevaluate the surface and examine behavior across adjacent update counts. The generic implementation must also accept other nonnegative supports, including the $(2,4)$ and $(4,1)$ explanatory examples.
 
 ## Stage 11: Component baselines
@@ -251,27 +270,7 @@ Defer board-state probes, gate analysis, latent interventions, and mechanistic s
 
 ## Repository structure
 
-```text
-models/recurrent_2d.py           # configurable layout and shared mixers
-recurrence/schedule.py          # write-count sampling and RNG state
-evaluation/                     # reusable evaluators, not experiment-specific reports
-configs/                        # current reusable reference/default configs
-experiments/
-  ablations/architecture_sites/ # A/B configs, runner, report, local results/
-  ablations/deep_supervision/    # time-matched deep-supervision comparison
-  sweeps/baseline_lr_selection/  # retained LR experiment
-  long_runs/{1B_baseline,64B_core}/ # paired serious profiles, own results/
-  archive/early_pilots/          # reports only; obsolete checkpoints retired
-  smoke/                        # small pipeline checks and historical validations
-  relocations.json              # old paths in immutable provenance -> current locations
-data/chess_v1/prepare.py
-docs/RECURRENCE_CONTRACT.md
-docs/proposal.md
-docs/implementation_plan.md
-tests/
-```
-
-Experiment source and concise reports are tracked. Each experiment owns an ignored `results/` directory for checkpoints, logs, metrics, plots, and frozen receipts. Shared dataset versions remain under `data/`. Historical result files retain their original embedded paths and hashes; use the relocation map instead of rewriting scientific records.
+The current layout is described in the [usage guide](usage.md#repository-layout). Experiment source and concise reports are tracked. Each experiment owns an ignored `results/` directory for checkpoints, logs, metrics, plots, and frozen receipts. Shared dataset versions remain under `data/`. Historical result files retain their original embedded paths and hashes; use the relocation map instead of rewriting scientific records.
 
 ## Coding order
 
@@ -284,8 +283,8 @@ Experiment source and concise reports are tracked. Each experiment owns an ignor
 
 ## Remaining decisions
 
-Mixer architecture, normalization, initialization, masking, and ordered site configuration are implemented and recorded in the contract. Variation A is the accepted default after the near-tied architecture comparison. A later training extension needs an explicit LR schedule beyond 10k updates. Stage 14 fixed-depth live execution, slow-reference validation, recurrent attention-cache semantics, prompt handoff, and cache reporting are implemented. Adaptive exit remains a later extension. No cleanup step launches a new experiment.
+Mixer architecture, normalization, initialization, masking, and ordered site configuration are implemented and recorded in the contract. Layout A is the accepted default after the near-tied architecture comparison. Long horizons use the WSD learning-rate schedule. Stage 14 fixed-depth live execution, slow-reference validation, recurrent attention-cache semantics, prompt handoff, cache reporting, and teacher-forced live NLL are implemented. Adaptive exit remains a later extension. No cleanup step launches a new experiment.
 
-## Immediate experimental progression
+## Current experimental progression
 
-The maintained run protocol is [the experiment index](../experiments/README.md), with commands in [the supervision handoff](../experiments/ablations/deep_supervision/HANDOFF.md). The measured supervision comparison and matched transformer/A 1B pair are complete; the final-only objective is recorded in [LONG_BASELINE_RESULTS.md](../experiments/long_runs/1B_baseline/LONG_BASELINE_RESULTS.md). The 64B profiles are prepared future runs, not an automatic continuation. They use the full pinned Lichess corpus and effective batch 100; the MPS profiles are local checks. Next, validate live-feedback inference on the completed recurrent checkpoint, then decide whether to expand the evaluation grid or freeze separately trained temporal-only/depth-only controls with matching max-update-count distributions and explicit compute accounting.
+The matched 1B transformer/A pair and the deep-supervision comparison are complete ([results](../experiments/long_runs/1B_baseline/LONG_BASELINE_RESULTS.md)). The 5B recurrence-axis study trained separate temporal-only, depth-only and hybrid arms. The next step is the [20B four-arm study](20B_experiment_plan.md), which is waiting on a deterministic 1,000-update resume check before freeze and launch. The 64B profiles are prepared future runs, not an automatic continuation. Expanding the update grid, multi-seed comparisons and adaptive scheduling follow the 20B result.

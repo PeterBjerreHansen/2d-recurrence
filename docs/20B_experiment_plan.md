@@ -1,315 +1,231 @@
-If I were freezing the 20B experiment today, I would make it a **four-arm, four-pass-specialized discovery run**, with WSD and a curriculum that removes `U=0` early.
+# 20B recurrence-axis study: experiment plan
 
-Your existing evidence is enough that I would stop changing architecture and optimizer. The 1B pair already shows useful recurrence, and the recurrent checkpoint shows the combined `(3,3)` path outperforming either axis alone.  The point of 20B is now to see whether that separation becomes substantial with training scale.
+The 20B study is a **four-arm discovery run** of the default layout A: ordinary transformer, temporal-only, depth-only and hybrid. Each arm trains on 20B characters with a curriculum toward four-pass execution and a warmup–stable–decay (WSD) learning rate. Architecture and optimizer are held fixed at the serious profile. The question is whether the combined two-axis path gains an advantage over either axis alone as training scale grows.
 
-This plan was updated on **2026-09-24** with the completed temporal-gate preflight and the short RTX 4090 microbatch, concurrency, WSD, and resume probes. Those probes narrow the launch configuration; they are not evidence that a 20B result is already established.
+The runner, configuration and launch procedure are in the [study README](../experiments/long_runs/20B_recurrence/README.md). This page records the protocol and the reasoning behind it. It was last updated on **2026-09-24**, after the temporal-gate preflight and the short RTX 4090 microbatch, concurrency, WSD and resume probes. Those probes narrow the launch configuration; they are not evidence about the 20B result.
 
-## What the recent runs changed
+## Research question
 
-The RTX 4090 probes used the late hybrid update distribution, effective batch 100, and 200 updates per throughput condition. They favor keeping the reference microbatch rather than trading away schedule draws for a small throughput gain:
+> Can two-axis recurrence, when allowed to specialize to iterative computation, gain a training-scale-dependent advantage over either recurrence axis by itself?
 
-| Physical batch × accumulation | Measured chars/s | Peak allocated VRAM | Clipped updates |
-| ----------------------------- | ---------------: | ------------------: | --------------: |
-| `5 × 20`                      | 152,625          | 3.06 GiB            | 61.5%           |
-| `10 × 10`                     | 158,176          | 5.61 GiB            | 64.0%           |
-| `20 × 5`                      | 155,207          | 10.73 GiB           | 59.5%           |
-| `25 × 4`                      | 147,349          | 13.28 GiB           | 64.0%           |
+A hybrid model beating the transformer would be useful but unsurprising: the recurrent model gets more computation. The comparison of interest is
 
-`10 × 10` was only **3.6% faster** than `5 × 20`, used about **1.8× the VRAM**, and halves the independent recurrence-schedule draws per optimizer update. These short runs are throughput probes, not a learning-quality comparison. Freeze `5 × 20` for the 20B arms; it retains 20 schedule draws per update and leaves the most memory headroom. Keep future exploratory throughput conditions to the lower end—**200 updates each**—unless a specific longer sanity test is needed.
+$$
+L_{\text{hybrid}(3,3)} < \min\left(L_{\text{temporal}(3,0)},\ L_{\text{depth}(0,3)}\right)
+$$
 
-A separate CUDA-MPS concurrency probe at `5 × 20` measured aggregate training-only throughput of 151.4k, 170.9k, and 161.4k chars/s for one, two, and four processes on one 4090. End-to-end rates, including startup/evaluation, were 107.9k, 105.4k, and 114.9k chars/s. The 2-process end-to-end rate was slightly below the single-process reference; four processes gained only about 6.5%. This does not justify co-locating several 20B arms on one card. Run **one arm per GPU**, with no MPS multiplexing in the production run.
+at identical data exposure and a matched distribution of executed passes. The strongest version of the result would be both gaps, $L_D - L_H$ and $L_T - L_H$, **growing from 4B → 10B → 18B → 20B**.
 
-The 250M temporal-gate preflight completed both arms at 2,444 updates on one RTX 3090. At the final checkpoint, initialization `.25` was numerically ahead of `.10` by only about 0.001 NLL in each of `(0,0)`, `(1,1)`, and `(3,3)`. This is a one-seed, short-run difference, not a decision-grade win. Keep the existing **`.10` gate initialization** for 20B and record `.25` as a sensitivity result; do not tune the 20B gate from this small delta.
+Earlier evidence points weakly in this direction. In the completed 1B hybrid checkpoint, temporal-only and depth-only execution of that checkpoint each improved over ordinary execution, and `(3,3)` was better again. In the earlier 10k continuation, the `(3,3)` advantage over `(1,0)` grew between 5k and 10k updates. Both are comparisons within a single checkpoint, not between separately trained models.
 
-The 1,000-update WSD-plus-curriculum sanity run verified the LR formula and curriculum boundaries, but its resume comparison did not match exactly after restarting at update 500: sampler and RNG state matched, while model and optimizer state did not (maximum model difference 0.01365). That run used ordinary nondeterministic CUDA kernels. The 100-update comparison diverged the same way without deterministic kernels (maximum model difference 0.001) and matched bitwise with them, so the mismatch is most likely kernel nondeterminism amplified over 500 updates, not missing resume state. Bitwise equality with production kernels is not an achievable gate, because two uninterrupted runs would also differ. **Remaining launch gate:** repeat the 1,000-update interrupted WSD/curriculum comparison with `--deterministic` and require exact model, optimizer, sampler, RNG, and training-metric equality before enabling automatic resume. Production runs then resume with ordinary kernels; a resumed run is statistically, not bitwise, equivalent to an uninterrupted one.
+**Interpretation limits.** The arms are matched in data and in the distribution of passes, not in parameters or FLOPs: temporal, depth and hybrid execute different source and mixer work. A hybrid win supports this two-axis architecture under matched exposure and pass distributions, not a compute-independent advantage, so compute estimates stay attached to every NLL comparison. There is one training seed per arm. Checkpoints along a trajectory are correlated observations, and mask-placement variation is not training-seed variation. The evaluated axis and diagonal cells each have only one possible mask placement, so the study can tell which direction the gaps move, not whether they exceed seed noise.
 
-## Proposed run protocol (freeze after launch gates pass)
+## Protocol
 
-| Setting                 | Recommendation                       |
-| ----------------------- | ------------------------------------ |
-| Horizon                 | **20B target characters / arm**      |
-| Updates                 | **195,504**                          |
-| Arms                    | Transformer, Temporal, Depth, Hybrid |
-| Architecture            | Current **A**                        |
-| Width / layers / heads  | 512 / 8 / 8                          |
-| Context                 | 1,023 chars                          |
-| Effective batch         | 100                                  |
-| Physical batch          | **5 × 20 accumulation**              |
-| Objective               | **Final-only**                       |
-| Optimizer               | AdamW                                |
-| Peak LR                 | **3e-4**                             |
-| Betas                   | `(0.9, 0.95)`                        |
-| Weight decay            | `0.1`                                |
-| Grad clip               | `1.0`                                |
-| Dropout                 | `0`                                  |
-| Precision               | BF16                                 |
-| Recurrence support      | `{0,1,3}`                            |
-| Maximum execution depth | **4 passes**                         |
-| Hybrid diagonal mass    | **0.8**                              |
-| LR schedule             | **WSD**                              |
-| Seeds/data ordering     | matched across arms                  |
-| Temporal gate init      | **0.10** (retain current default)    |
-| Hardware                | **Four Runpod Community RTX 4090s**, one arm per GPU |
-| Runtime offer           | Community RTX 4090 showed **$0.34/GPU-hour, On-Demand** in the deploy form on 2026-09-24; confirm region, capacity, and rate again at launch |
+Freeze after the launch gates pass.
 
-I would keep those settings identical to the serious profile wherever possible. Your current serious runs already use AdamW `3e-4`, `.9/.95`, WD `.1`, clip 1, BF16 and final-only supervision; this isn't the time to introduce optimizer innovations.
+| Setting | Value |
+| --- | --- |
+| Horizon | **20B target characters per arm** (20,000,059,200 actual) |
+| Updates | **195,504** |
+| Arms | Transformer, temporal, depth, hybrid |
+| Architecture | Layout **A** (1/1/4/1/1) |
+| Width / layers / heads | 512 / 8 / 8 |
+| Context | 1,023 characters |
+| Effective batch | 100 |
+| Physical batch | **5 × 20 accumulation** |
+| Objective | **Final-only** |
+| Optimizer | AdamW, betas `(0.9, 0.95)`, weight decay `0.1`, grad clip `1.0` |
+| Peak LR | **3e-4** |
+| Dropout | `0` |
+| Precision | BF16 |
+| Update support | `{0, 1, 3}` |
+| Maximum execution depth | **4 passes** |
+| Hybrid diagonal mass | **0.8** |
+| LR schedule | **WSD** |
+| Seeds and data order | matched across arms |
+| Temporal gate initialization | **0.10** (current default) |
+| Hardware | **Four Runpod Community RTX 4090s**, one arm per GPU |
 
-The live deploy form labels this as **Community Cloud** and lists its instance pricing as **On-Demand**, with no Spot/interruptible option on the selected offer. The form warns that Community Cloud is unpredictable, so keep recovery safeguards, but do not describe this specific offer as Spot or budget on an assumed Spot eviction discount. The displayed `$0.34` was for an unpinned region and is a snapshot, not a reservation or price guarantee. Recheck each offer in the chosen region before deployment; do not silently substitute Secure pricing or another GPU if four suitable offers are unavailable.
-
-At the measured recurrent rate (`~1.49 updates/s` for the 200-update `5 × 20` hybrid probe), a 195,504-update recurrent arm projects to about **36.5 hours of training work**, excluding evaluations, checkpoint I/O, provisioning, transfers, and recovery. Use **~37 hours** as a first planning estimate, not a service guarantee. Four cards at `$0.34/hour` for 37 hours would be about **$50** before disk/storage and overhead if all four remained billed for the full interval. Set an explicit total spend cap before launch; the monitor must stop and alert before exceeding it.
+Optimizer settings match the existing serious runs (AdamW `3e-4`, `.9/.95`, weight decay `.1`, clip 1, BF16, final-only supervision). This study introduces no optimizer changes.
 
 ### Pass curriculum
 
-This is the main change I'd make:
+The update-count distribution shifts toward four passes during training:
 
-| Characters | Optimizer steps, approx. | `P(U=0)` | `P(U=1)` | `P(U=3)` |
-| ---------- | -----------------------: | -------: | -------: | -------: |
-| 0–1B       |                  0–9,776 |  **.10** |  **.80** |  **.10** |
-| 1–4B       |             9,776–39,101 |  **.05** |  **.60** |  **.35** |
-| 4–10B      |            39,101–97,752 |    **0** |  **.40** |  **.60** |
-| 10–20B     |           97,752–195,504 |    **0** |  **.20** |  **.80** |
+| Characters | Optimizer steps (approx.) | `P(U=0)` | `P(U=1)` | `P(U=3)` |
+| --- | ---: | ---: | ---: | ---: |
+| 0–1B | 0–9,776 | .10 | .80 | .10 |
+| 1–4B | 9,776–39,101 | .05 | .60 | .35 |
+| 4–10B | 39,101–97,752 | 0 | .40 | .60 |
+| 10–20B | 97,752–195,504 | 0 | .20 | .80 |
 
-That is a stronger specialization curriculum than I initially suggested.
+- **Early:** `U=0` gives a little scaffolding while the ordinary transformer computation forms.
+- **By 4B:** `U=0` is gone.
+- **Final half:** 80% four-pass and 20% two-pass. The `U=1` share keeps every recurrent application under pressure to be useful, while training concentrates on the four-pass endpoint.
 
-Early on, `U=0` provides a little scaffolding while representations and the ordinary transformer computation are forming. By 4B, it is gone completely. The final **half of training is 80% four-pass and 20% two-pass**.
+Per arm:
 
-I like that balance. It's enough `U=1` that every recurrent application is pressured to be useful, but the model is overwhelmingly optimizing for the four-pass endpoint you actually care about.
+- **Temporal** uses `(U_T, U_D) = (U, 0)`.
+- **Depth** uses `(0, U)`.
+- **Hybrid** keeps the same distribution over `max(U_T, U_D)` and puts 80% of each nonzero bucket on the diagonal, as in the 5B protocol. In the late phase most four-pass hybrid examples are therefore `(3,3)`, while a minority are asymmetric, so the model never sees only lockstep states.
 
-For temporal:
+Phase boundaries are absolute optimizer steps frozen in the configuration.
 
-$$
-(U_T,U_D)=(U,0).
-$$
+### Learning rate: warmup–stable–decay
 
-For depth:
+| Phase | Steps | LR |
+| --- | ---: | --- |
+| Warmup | 0–2,000 | `0 → 3e-4`, linear |
+| Stable | 2,000–175,954 | `3e-4`, constant |
+| Decay | 175,954–195,504 | `3e-4 → 3e-5`, linear |
 
-$$
-(U_T,U_D)=(0,U).
-$$
+Step 175,954 is about 18B characters, so the last 2B characters are the cooldown. The stable phase is a continuing training trunk. A short final decay produces the finished checkpoint without tying the whole trajectory to a predetermined cosine horizon ([Wen et al., 2024](https://arxiv.org/abs/2410.05192)). Huginn's released large-run configuration similarly used a 4,096-step warmup and a trapezoidal schedule. Its configured horizon was longer than the run reached, so its reported training was effectively warmup plus stable.
 
-For hybrid, preserve your existing construction: the table has the **same distribution over \(\max(U_T,U_D)\)** and 80% of each nonzero bucket goes on the diagonal. Your 5B protocol already gets this matching right.
+The schedule also avoids increasing recurrence depth while the LR is falling. The last curriculum transition is at 10B characters, followed by another 8B characters at peak LR, so the model has a long period to specialize to deeper computation.
 
-That means, for example, in the late 80%-`U=3` phase, most hybrid high-depth examples are `(3,3)`, while a minority are asymmetric. I think that's desirable: specialize heavily toward the true hybrid while preventing the model from seeing only lockstep states.
+**Indexing.** Optimizer-step indices are zero-based:
 
-## LR: WSD
+- `lr_decay_start=175954` is the first cooldown update.
+- `lr_decay_iters=195504` counts optimizer updates, so the final update (index 195,503) uses the minimum LR exactly.
+- Checkpoint step 195,504 records the completed run.
 
-I'd now use a canonical warmup–stable–decay rather than cosine:
+The trainer accepts `lr_schedule='cosine'`, `'constant'` or `'wsd'`. If it is omitted, the historical `decay_lr` behavior applies: `decay_lr=False` means constant LR from step zero. This study selects WSD explicitly.
 
-| Phase  |           Steps |                   LR |
-| ------ | --------------: | -------------------: |
-| Warmup |         0–2,000 |    `0 → 3e-4` linear |
-| Stable |   2,000–175,954 |  **`3e-4` constant** |
-| Decay  | 175,954–195,504 | `3e-4 → 3e-5` linear |
+**Keep the 18B pre-decay checkpoint permanently.** If the 20B result argues for continuing, a longer stable branch should start from it rather than from the annealed 20B model.
 
-Step 175,954 is about **18B characters**, so the last 2B characters are the cooldown.
+## Evaluation
 
-This is exactly the use case WSD was designed for: the stable phase is a continuing training trunk, while a short final decay produces the finished checkpoint without tying the whole optimization trajectory to a predetermined cosine horizon. ([arXiv][1])
+Training stops at four passes; evaluation goes further. At the major checkpoints, each arm is evaluated on the training graph at:
 
-Implementation uses zero-based optimizer-step indices. `lr_decay_start=175954`
-is the first cooldown update. `lr_decay_iters=195504` counts optimizer updates,
-so the final update at index 195,503 uses the minimum LR exactly; checkpoint
-step 195,504 records the completed run.
+| Test depth | Temporal | Depth | Hybrid |
+| --- | --- | --- | --- |
+| 1 pass | `(0,0)` | `(0,0)` | `(0,0)` |
+| 2 passes | `(1,0)` | `(0,1)` | `(1,1)` |
+| 4 passes | `(3,0)` | `(0,3)` | **`(3,3)`** |
+| 8 passes | `(7,0)` | `(0,7)` | `(7,7)` |
+| 16 passes | `(15,0)` | `(0,15)` | `(15,15)` |
 
-It also fits recurrent-model precedent reasonably well. Huginn's released large-run configuration has a 4,096-step warmup and a trapezoidal schedule with stable training plus a terminal cooldown; because its configured horizon was much longer than the run actually reached, the reported training effectively spent its time in warmup/stable operation.
-
-Most importantly for **your** experiment, this avoids a nasty interaction:
-
-$$
-\text{increasing recurrence depth}
-\quad+\quad
-\text{simultaneously decreasing LR}.
-$$
-
-Your final transition to 80% four-pass occurs at 10B, while LR stays at `3e-4` for another **8B characters**. So the model gets a long period to genuinely specialize to deeper computation.
-
-I would save the **18B pre-decay checkpoint permanently**. If the result at 20B screams “keep going,” that is the checkpoint from which I would continue a 40B stable branch rather than resuming the already-annealed 20B model.
-
-The trainer now accepts `lr_schedule='cosine'`, `'constant'`, or `'wsd'`; an
-omitted schedule preserves the historical `decay_lr` behavior. In particular,
-`decay_lr=False` still means constant LR from step zero, while this 20B study
-selects WSD explicitly.
-
-## Evaluation is where I'd be more ambitious than training
-
-Train at no more than four passes, but evaluate substantially beyond that.
-
-At major checkpoints I would evaluate:
-
-| Test depth | Temporal | Depth    | Hybrid      |
-| ---------- | -------- | -------- | ----------- |
-| 1 pass     | `(0,0)`  | `(0,0)`  | `(0,0)`     |
-| 2 passes   | `(1,0)`  | `(0,1)`  | `(1,1)`     |
-| 4 passes   | `(3,0)`  | `(0,3)`  | **`(3,3)`** |
-| 8 passes   | `(7,0)`  | `(0,7)`  | `(7,7)`     |
-| 16 passes  | `(15,0)` | `(0,15)` | `(15,15)`   |
-
-The **primary comparison is four passes**. Eight and sixteen are extrapolation diagnostics, not acceptance criteria.
-
-Huginn explicitly exploits variable recurrent depth as an inference-time compute axis, while subsequent work also shows that deeper execution can help, saturate, or degrade depending on the learned recurrent dynamics. ([OpenReview][2]) So I'd measure this rather than assume it.
-
-Your code already supports arbitrary recurrence counts at the schedule level, and you've previously used eight-pass `U=7` stress schedules.
+The **four-pass cells are the primary comparison.** Eight and sixteen passes are extrapolation diagnostics, not acceptance criteria. They are evaluation-only; training support stays `{0,1,3}`. Huginn uses variable recurrent depth as an inference-time compute axis ([Geiping et al., 2025](https://arxiv.org/abs/2502.05171)), and later work shows that deeper execution can help, saturate or degrade depending on the learned dynamics. The study measures this rather than assuming it.
 
 ### Live-feedback NLL
 
-The training graph runs every pass over the whole sequence in parallel, so pass *b* reads temporal memory only *b−1* hops deep. Deployed temporal feedback is sequential: each token consumes memory from the fully computed preceding token. At the five major checkpoints the runner therefore also records teacher-forced live NLL on the 128-row selection panel: temporal at one core pass per token, hybrid at one and four, and depth at four (which must equal its `(0,3)` cell). Read the training-graph and live results side by side. The live temporal model uses one core pass per token against four for depth and hybrid, so compute estimates stay attached.
+The training graph runs every pass over the whole sequence in parallel, so pass *b* reads temporal memory that is only *b−1* hops deep. Deployed temporal feedback is sequential: each token reads memory from the fully computed preceding token.
+
+At the five major checkpoints, the runner therefore also records teacher-forced live NLL on the 128-row selection panel:
+
+- temporal at one core pass per token;
+- hybrid at one and at four;
+- depth at four, which must equal its `(0,3)` cell.
+
+Read training-graph and live results side by side. The live temporal model uses one core pass per token against four for depth and hybrid, so compute estimates stay attached.
 
 ### Checkpoints
 
-I'd definitely retain/evaluate around:
+- **Major checkpoints — 1B, 4B, 10B, 18B and 20B:** these mark the curriculum boundaries and the start of the LR decay. They get the full 1/2/4/8/16-pass table, live NLL, and per-pass activation RMS and finite-value stress checks on a fixed batch for the 8- and 16-pass schedules.
+- **Curve checkpoints — 2B, 8B, 14B and 16B:** only the primary four-pass cell and the `(0,0)` reference.
 
-**1B → 4B → 10B → 18B → 20B**
+The standard study command evaluates every retained nonzero checkpoint. Full-unroll gradient diagnostics are not run at 8 or 16 passes. A non-finite optional extrapolation cell or stress check is recorded as a diagnostic failure; it does not invalidate the primary metrics or stop later arms. A failure in a required primary measurement is fatal.
 
-because those have semantic meaning: curriculum boundaries and LR-decay boundary.
+The key plot is four-pass NLL against characters for all four independently trained models.
 
-I'd additionally keep perhaps 2B, 8B, 14B, and 16B for curves, but they don't need the complete expensive evaluation suite.
+## Launch evidence from the probes
 
-The really valuable plot will be the four-pass NLL versus characters for all four independently trained models.
+### Microbatch
 
-The 20B runner evaluates the full 1/2/4/8/16-pass table at the 1B, 4B, 10B,
-18B, and 20B checkpoints. The additional 2B, 8B, 14B, and 16B checkpoints
-evaluate only the primary four-pass comparison and `(0,0)` reference. The
-standard study command evaluates every retained nonzero checkpoint. Sixteen-
-pass cells are evaluation-only; they do not expand training support beyond
-`{0,1,3}`. These cells use the training graph; live-feedback NLL is recorded
-separately (see above). At major checkpoints the runner also records per-pass activation
-RMS and finite-value checks on a fixed batch for the 8- and 16-pass stress
-schedules. It does not run full-unroll gradient diagnostics at those depths.
-Non-finite optional extrapolation cells and stress checks are recorded as
-diagnostic failures, but do not invalidate the primary four-pass metrics or
-stop later study arms. A failure in a required primary measurement remains
-fatal.
+The RTX 4090 probes used the late hybrid update distribution, effective batch 100, and 200 updates per condition:
 
-## Community 4090 execution and hourly recovery
+| Physical batch × accumulation | Measured chars/s | Peak allocated VRAM | Clipped updates |
+| --- | ---: | ---: | ---: |
+| `5 × 20` | 152,625 | 3.06 GiB | 61.5% |
+| `10 × 10` | 158,176 | 5.61 GiB | 64.0% |
+| `20 × 5` | 155,207 | 10.73 GiB | 59.5% |
+| `25 × 4` | 147,349 | 13.28 GiB | 64.0% |
 
-The intended layout is four independent Community RTX 4090 Pods, one arm per
-GPU. Give each Pod a **30 GB Pod Volume Disk** mounted at `/workspace`; keep
-that arm's checkout, local dataset copy, and results there. The dataset is
-about 7.9 GB and comparable current result directories are about 3.6–3.8 GB,
-so 30 GB leaves room for the environment, logs, and checkpoint-write overhead.
-Allocate a separate **30 GB container disk** for the temporary upstream
-archive, package caches, and preparation scratch; clear disposable staging
-data after preflight. Container Disk is temporary; the Pod Volume Disk is
-per-Pod and survives stop/restart. Runpod's [zero-GPU recovery mode](https://docs.runpod.io/pods/troubleshooting/zero-gpus)
-can expose that volume when the GPU is unavailable, but the volume remains
-tied to its host and is not portable to another Pod. Community Pods cannot
-attach [Runpod Network Volumes](https://docs.runpod.io/storage/network-volumes),
-which are Secure-Cloud-only.
+`10 × 10` was only 3.6% faster than `5 × 20`, used about 1.8× the VRAM, and halves the independent recurrence-schedule draws per optimizer update. These are throughput probes, not a learning-quality comparison. `5 × 20` is frozen: it keeps 20 schedule draws per update and leaves the most memory headroom.
 
-On GPU interruption, keep the original Pod and volume. If needed, restart it
-with zero GPUs to retrieve the latest checkpoint, then transfer and verify it
-before terminating the Pod or moving the arm to a replacement. The Pod Volume
-Disk alone does **not** protect against host/storage loss or Pod termination;
-verify the zero-GPU retrieval and checkpoint-transfer path before launch, and
-choose/test external checkpoint backup if recovery must survive host/storage
-loss. The runner now writes its latest recovery checkpoint every **1,000
-updates** without evaluation, as well as at evaluation intervals (`10,000`
-updates) and named curve checkpoints. Only the named checkpoints are retained
-as separate snapshots; recovery saves replace `ckpt.pt`. Set in-training
-evaluation to every **10,000 updates**; at the measured rate this is roughly
-1 hour 52 minutes between periodic evaluations. The final step is evaluated
-even though it does not land on that interval. The separate named-checkpoint
-study evaluations remain unchanged. Automatic resume in the study runner is
-disabled pending the production-settings exact-resume gate. With hourly
-polling, recovery could wait up to about an hour to be detected and then replay
-up to one checkpoint interval of work.
+The high clipping rates reflect the start of training; in the completed 5B runs, no update was clipped after step 40,000. Future exploratory throughput conditions should stay at about 200 updates each unless a longer sanity test is needed.
 
-At current published rates, a 30 GB Pod Volume Disk is about `$3/month` per
-running Pod and `$6/month` while stopped; four cost about `$12/month` running
-or `$24/month` stopped. A 30 GB container disk is about `$3/month` per running
-Pod and is not retained when stopped. These storage costs are small for a
-~37-hour run, but recheck rates at deployment and remove unneeded storage after
-verified transfer. ([Runpod pricing](https://www.runpod.io/pricing))
+### Concurrency
 
-After the exact-resume gate above passes, use a monitoring model on an
-**hourly checkup**. For each arm it should inspect provider/Pod state, the
-runner heartbeat and latest step, log tail, durable checkpoint age/hash,
-protocol/environment/panel hashes, disk health, and budget. While an arm is
-healthy it should remain quiet. If a Pod or process has stopped unexpectedly,
-it should acquire a per-arm lock and ensure no worker for that arm is alive.
-If the Pod still has its GPU, validate the newest checkpoint and frozen
-protocol, then restart **only that arm** and verify that the step advances. If
-the GPU is unavailable, preserve the old Pod, use zero-GPU recovery to access
-its volume, then transfer and verify the checkpoint and frozen artifacts on a
-replacement before resuming that arm. If the old volume cannot be accessed,
-alert; never start fresh. Retries are bounded by the approved spend cap;
-missing/corrupt checkpoints, hash mismatches, protocol drift, repeated restart
-failure, or budget exhaustion must stop automatic retries and alert.
+A CUDA-MPS concurrency probe at `5 × 20` measured aggregate training-only throughput of 151.4k, 170.9k and 161.4k chars/s for one, two and four processes on one 4090. End-to-end rates, including startup and evaluation, were 107.9k, 105.4k and 114.9k chars/s. Two processes were slightly below the single-process rate end to end, and four gained only about 6.5%. The production run uses **one arm per GPU**, with no MPS multiplexing.
 
-On completion, copy each arm's full result directory and logs to the local
-repository, compare SHA-256 hashes for checkpoints and
-protocol/environment/panel receipts, and only then stop/delete its Pod and
-any no-longer-needed storage. Retain the original Pod until any needed
-checkpoint recovery/transfer has been verified. This avoids continued GPU
-charges after successful transfer; the Pod Volume Disk is not a substitute for
-an external backup if the Community host is lost.
+### Temporal-gate initialization
 
-## What result am I actually looking for?
+The 250M preflight completed both arms at 2,444 updates on one RTX 3090. At the final checkpoint, initialization `.25` was ahead of `.10` by only about 0.001 NLL in each of `(0,0)`, `(1,1)` and `(3,3)`. This is a one-seed, short-run difference, not a decision-grade win. The study keeps the existing **`.10`** and records `.25` as a sensitivity result.
 
-The primary question isn't merely:
+### Resume
 
-$$
-L_\text{hybrid}<L_\text{transformer}.
-$$
+The 1,000-update WSD-plus-curriculum sanity run verified the LR formula and curriculum boundaries, but its resume comparison did not match exactly after restarting at update 500. Sampler and RNG state matched; model and optimizer state did not (maximum model difference 0.01365).
 
-A recurrent model gets more computation, so that's useful but unsurprising.
+That run used ordinary, nondeterministic CUDA kernels. The 100-update comparison diverged the same way without deterministic kernels (maximum model difference 0.001) and matched bitwise with them. The mismatch is therefore most likely kernel nondeterminism amplified over 500 updates, not missing resume state. Bitwise equality with production kernels is not an achievable gate, because two uninterrupted runs would also differ.
 
-The interesting result is:
+**Remaining launch gate:** repeat the 1,000-update interrupted WSD/curriculum comparison with `--deterministic`. Require exact model, optimizer, sampler, RNG and training-metric equality before enabling automatic resume. Production runs then resume with ordinary kernels, where a resumed run is statistically, not bitwise, equivalent to an uninterrupted one.
 
-$$
-\boxed{
-L_{\text{hybrid}(3,3)}
-<
-\min(
-L_{\text{temporal}(3,0)},
-L_{\text{depth}(0,3)}
-)
-}
-$$
+## Execution on Community RTX 4090s
 
-with identical data exposure and a matched distribution of executed passes.
+### Cost and runtime
 
-This does **not** match parameter counts or FLOPs: the temporal, depth, and
-hybrid arms execute different source and mixer work. A win supports this
-particular two-axis architecture under matched exposure and pass distributions,
-not a compute-independent advantage. Keep compute estimates with the NLL
-comparison. This is one training seed per arm; checkpoints are correlated
-observations, and mask-placement variation is not evidence of robustness across
-training seeds. The evaluated axis and diagonal cells each have only one
-possible mask placement.
+On 2026-09-24 the deploy form showed a Community RTX 4090 at **$0.34/GPU-hour, On-Demand**, with no Spot or interruptible option on that offer. The form warns that Community Cloud is unpredictable, so recovery safeguards stay in place, but the budget must not assume a Spot discount. The price was for an unpinned region and is a snapshot, not a reservation. Recheck each offer in the chosen region before deployment. Do not silently substitute Secure pricing or another GPU if four suitable offers are unavailable.
 
-Even better would be if
+On 2026-09-24, every available Community 4090 host that was rented for the resume probe had a faulted GPU: `cuInit` returned 999, and `nvidia-smi` reported "GPU Recovery Action: Reboot". Check that CUDA initializes on each Pod before transferring data.
 
-$$
-L_D-L_H
-\quad\text{and}\quad
-L_T-L_H
-$$
+At the measured recurrent rate (about 1.49 updates/s for the 200-update `5 × 20` hybrid probe), a 195,504-update recurrent arm projects to about **36.5 hours of training work**. That excludes evaluations, checkpoint I/O, provisioning, transfers and recovery. Use about 37 hours as a first planning estimate, not a service guarantee. Four cards at `$0.34/hour` for 37 hours would cost about **$50** before storage and overhead, if all four stayed billed for the whole interval. Set an explicit total spend cap before launch; the monitor must stop and alert before exceeding it.
 
-**increase from 4B → 10B → 18B → 20B.**
+### Storage
 
-That would be the pattern I'd find genuinely exciting: both forms of recurrence work independently, but joint temporal/depth recurrence acquires an increasing advantage as pretraining proceeds.
+Four independent Community RTX 4090 Pods, one arm per GPU. Give each Pod a **30 GB Pod Volume Disk** mounted at `/workspace`, and keep that arm's checkout, dataset copy and results there. The dataset is about 7.9 GB, and comparable result directories are about 3.6–3.8 GB, so 30 GB leaves room for the environment, logs and checkpoint-write overhead.
 
-Your existing evidence already points weakly in that direction: in the completed 1B recurrent checkpoint, temporal-only and depth-only execution each improved over ordinary execution, while `(3,3)` was better again.  And your older 10k continuation showed the `(3,3)` advantage over `(1,0)` getting larger between 5k and 10k.
+Allocate a separate **30 GB container disk** for the temporary upstream archive, package caches and preparation scratch, and clear disposable staging data after preflight.
 
-## One thing I would *not* do
+- **Persistence:** the container disk is temporary. The Pod Volume Disk is per-Pod and survives stop and restart.
+- **Zero-GPU recovery:** Runpod's [zero-GPU recovery mode](https://docs.runpod.io/pods/troubleshooting/zero-gpus) can expose the volume when the GPU is unavailable. The volume stays tied to its host and is not portable to another Pod.
+- **Network volumes:** Community Pods cannot attach [Runpod Network Volumes](https://docs.runpod.io/storage/network-volumes), which are Secure-Cloud-only.
 
-I would **not add 8-pass training support to this run**, even probabilistically.
+At current published rates, a 30 GB Pod Volume Disk costs about `$3/month` per running Pod and `$6/month` while stopped: about `$12/month` running or `$24/month` stopped for four. A 30 GB container disk costs about `$3/month` per running Pod and is not retained when stopped. These costs are small for a ~37-hour run. Recheck rates at deployment and remove unneeded storage after a verified transfer ([Runpod pricing](https://www.runpod.io/pricing)).
 
-If the 20B checkpoint gives something like:
+### Checkpointing and recovery
 
-$$
-L_1 > L_2 > L_4
-$$
+The runner writes:
 
-and four-pass gains are still growing with scale, *then* you have a very clean justification for the next experiment to add `U=7`.
+- the latest recovery checkpoint every **1,000 updates**, without evaluation;
+- checkpoints at the evaluation interval of **10,000 updates** (about 1 hour 52 minutes at the measured rate);
+- the named curve checkpoints.
 
-If the four-pass gain saturates, you've saved a lot of compute and learned that increasing recurrence depth isn't the immediate lever.
+Only the named checkpoints are kept as separate snapshots; recovery saves replace `ckpt.pt`. The final step is evaluated even though it does not fall on the interval, and the separate named-checkpoint study evaluations are unchanged. Automatic resume in the study runner stays disabled until the resume gate above passes. With hourly polling, a failure could take up to about an hour to detect, and recovery then replays up to one checkpoint interval of work.
 
-So the experiment stays conceptually tight:
+On GPU interruption, keep the original Pod and volume. If needed, restart it with zero GPUs to retrieve the latest checkpoint, then transfer and verify it before terminating the Pod or moving the arm to a replacement. The Pod Volume Disk alone does **not** protect against host or storage loss or Pod termination. Verify the zero-GPU retrieval and checkpoint-transfer path before launch, and choose and test an external checkpoint backup if recovery must survive host or storage loss.
 
-> **Can two-axis recurrence, when actually allowed to specialize to iterative computation, produce a training-scale-dependent advantage over either recurrence axis by itself?**
+### Hourly monitoring
 
-I think **20B, maximum four passes, anneal `U=0` to zero, late training 80% `U=3`, final-only supervision, and WSD** is the best-shot version of that experiment with the evidence you currently have.
+After the resume gate passes, a monitoring model runs an **hourly checkup**. For each arm it inspects:
 
-[1]: https://arxiv.org/abs/2410.05192?utm_source=chatgpt.com "Understanding Warmup-Stable-Decay Learning Rates: A River Valley Loss Landscape Perspective"
-[2]: https://openreview.net/pdf?id=8ZiElzQxf1&utm_source=chatgpt.com "Jonas Geiping, Sean McLeish, Neel Jain, John Kirchenbauer, Siddharth Singh, Brian R Bartoldson, Bhavya Kailkhura, Abhinav Bhatele, and Tom Goldstein. 2025. Scaling up test-time compute with latent reasoning: A recurrent depth approach. *Preprint*, arXiv:2502.05171."
+- provider and Pod state;
+- the runner heartbeat and latest step;
+- the log tail;
+- durable checkpoint age and hash;
+- protocol, environment and panel hashes;
+- disk health and budget.
+
+While an arm is healthy the monitor stays quiet. If a Pod or process has stopped unexpectedly:
+
+1. Acquire a per-arm lock and ensure no worker for that arm is alive.
+2. **If the Pod still has its GPU:** validate the newest checkpoint and the frozen protocol, restart **only that arm**, and verify that the step advances.
+3. **If the GPU is unavailable:** preserve the old Pod, use zero-GPU recovery to reach its volume, then transfer and verify the checkpoint and frozen artifacts on a replacement before resuming that arm.
+4. **If the old volume cannot be accessed:** alert. Never start fresh.
+
+Retries are bounded by the approved spend cap. Missing or corrupt checkpoints, hash mismatches, protocol drift, repeated restart failure or budget exhaustion stop automatic retries and raise an alert.
+
+### Completion
+
+On completion:
+
+1. Copy each arm's full result directory and logs to the local repository.
+2. Compare SHA-256 hashes for checkpoints and for the protocol, environment and panel receipts.
+3. Only then stop and delete the Pod and any storage that is no longer needed.
+
+Keep the original Pod until any needed checkpoint recovery or transfer has been verified. This avoids GPU charges after a successful transfer; the Pod Volume Disk is not a substitute for an external backup if the Community host is lost.
+
+## Out of scope: 8-pass training
+
+This run does not add 8-pass (`U=7`) training support, even with small probability. If the 20B checkpoints show $L_1 > L_2 > L_4$ with four-pass gains still growing, that is a clean justification for adding `U=7` in the next experiment. If the four-pass gain saturates, the study has shown that more recurrence depth is not the immediate lever, without spending the extra compute.

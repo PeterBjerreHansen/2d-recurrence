@@ -1,5 +1,7 @@
 # Project Proposal: Two-Axis Recurrent Transformer for Character-Level Chess
 
+> **Historical document.** This is the original research proposal, kept as written. Parts of it describe work that is now done (live inference, component baselines) or deliberately deferred (the `{0,…,7}` grid). For the current model, see the [concepts page](concepts.md) and the [recurrence contract](RECURRENCE_CONTRACT.md); for status, see the [implementation plan](implementation_plan.md#status).
+
 ## 1. Research objective
 
 This project combines temporal feedback with recurrent depth in a character-level chess language model. Ordinary causal attention already carries latent information across positions. The temporal mechanism adds a specific pathway: feed a later representation from one token back into the computation of the next token. The [Full-Bandwidth Transformer paper](https://arxiv.org/abs/2608.08888) explores this kind of feedback. Across model depth, the project reuses a shared transformer core to spend more computation without adding unique core parameters, following the motivation of [Huginn](https://arxiv.org/abs/2502.05171) and its [official implementation](https://github.com/seal-rg/recurrent-pretraining).
