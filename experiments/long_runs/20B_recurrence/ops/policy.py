@@ -1,6 +1,5 @@
 """Pure scheduling policy and spend accounting for the 20B arms (no I/O)."""
 from datetime import datetime
-import re
 from importlib import import_module
 
 study = import_module('experiments.long_runs.20B_recurrence.study')
@@ -88,22 +87,6 @@ def recently_faulted(faulted_machines, machine, at, hours):
     """True if this machine failed a health check within the last ``hours``."""
     seen = faulted_machines.get(machine)
     return bool(seen) and minutes_since(seen, at) < hours * 60
-
-
-def cpu_is_fast(cpu, config):
-    """Desktop/workstation-class single-thread speed; the hybrid is CPU-dispatch bound."""
-    return bool(cpu) and any(re.search(pattern, cpu) for pattern in config['fast_cpu_patterns'])
-
-
-def survey_due(state, config, at):
-    """Sample for a fast host while any running arm sits on a known slow CPU."""
-    interval = config['fast_host_survey_minutes']
-    if not interval:
-        return False
-    slow = any(arm['phase'] == 'running' and arm.get('cpu') and not cpu_is_fast(arm['cpu'], config)
-               for arm in state['arms'].values())
-    last = state.get('last_survey_utc')
-    return slow and (last is None or minutes_since(last, at) >= interval)
 
 
 def alert_key(alert):

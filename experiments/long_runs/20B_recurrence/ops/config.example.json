@@ -39,16 +39,6 @@
   "fast_tick_minutes": 10,
   "faulted_machine_hours": 12,
   "min_power_fraction": 0.9,
-  "fast_cpu_patterns": [
-    "Ryzen",
-    "Threadripper",
-    "Core\\(TM\\) i[79]-1[2-4]",
-    "Core\\(TM\\) Ultra",
-    "Xeon\\(R\\) w[579]-",
-    "EPYC 9\\d{3}",
-    "EPYC 4\\d{3}"
-  ],
-  "fast_host_survey_minutes": 60,
   "macos_notifications": true,
   "notify_repeat_hours": 6,
   "daily_summary_hour": 9,

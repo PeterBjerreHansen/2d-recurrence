@@ -348,33 +348,6 @@ def test_bootstrap_extracts_without_preserving_the_packing_owner():
     assert 'tar --no-same-owner -xzf' in inspect.getsource(pods.bootstrap)
 
 
-def test_cpu_classification_uses_fast_patterns():
-    config = _config()
-    assert not policy.cpu_is_fast('AMD EPYC 7532 32-Core Processor', config)
-    assert not policy.cpu_is_fast('AMD EPYC 7K62 48-Core Processor', config)
-    assert not policy.cpu_is_fast('Intel(R) Xeon(R) Platinum 8352V CPU @ 2.10GHz', config)
-    assert not policy.cpu_is_fast(None, config)
-    for fast in ('AMD Ryzen 9 7950X 16-Core Processor', 'AMD Ryzen Threadripper PRO 7975WX',
-                 '13th Gen Intel(R) Core(TM) i9-13900K', 'AMD EPYC 9354 32-Core Processor',
-                 'Intel(R) Xeon(R) w7-3465X'):
-        assert policy.cpu_is_fast(fast, config), fast
-
-
-def test_fast_host_survey_runs_hourly_only_while_an_arm_is_on_a_slow_cpu():
-    config = _config(fast_host_survey_minutes=60)
-    state = cli.new_state()
-    assert not policy.survey_due(state, config, NOW)  # nothing running
-    state['arms']['hybrid'].update(phase='running', cpu='AMD EPYC 7532 32-Core Processor')
-    assert policy.survey_due(state, config, NOW)
-    state['last_survey_utc'] = _ago(30)
-    assert not policy.survey_due(state, config, NOW)
-    state['last_survey_utc'] = _ago(61)
-    assert policy.survey_due(state, config, NOW)
-    state['arms']['hybrid']['cpu'] = 'AMD Ryzen 9 7950X'
-    assert not policy.survey_due(state, config, NOW)
-    assert not policy.survey_due(state, _config(fast_host_survey_minutes=0), NOW)
-
-
 def test_alerts_notify_once_then_repeat_only_after_the_interval():
     alerts = ['hybrid: no training progress since step 5\n    log: step 5', 'FAST HOST: healthy Community RTX 4090']
     fresh, notified = policy.fresh_alerts(alerts, {}, NOW, repeat_hours=6)
