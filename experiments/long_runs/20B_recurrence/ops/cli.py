@@ -62,6 +62,11 @@ DEFAULT_CONFIG = dict(
     fast_tick_minutes=10,
     faulted_machine_hours=12,
     min_power_fraction=0.9,
+    # CPU models with desktop/workstation single-thread speed. The recurrent arms
+    # are CPU-dispatch bound: on EPYC 7532 hosts they ran ~1.6x slower.
+    fast_cpu_patterns=[r'Ryzen', r'Threadripper', r'Core\(TM\) i[79]-1[2-4]', r'Core\(TM\) Ultra',
+                       r'Xeon\(R\) w[579]-', r'EPYC 9\d{3}', r'EPYC 4\d{3}'],
+    fast_host_survey_minutes=60,  # 0 disables the hourly fast-host sample
     slow_tick_minutes=60,
     disk_alert_fraction=0.9,
     allow_release=False,
@@ -200,12 +205,12 @@ def stop_everything(state, alerts):
 # --------------------------------------------------------------------------
 # Actions
 
-def _discard(name, state, pod_id, host, event, reason):
+def _discard(name, state, pod_id, host, event, reason, cpu=None):
     deleted, detail = pods.delete_pod(pod_id)
     if deleted:
         end_pod(state, pod_id)
     save_state(state)
-    log_event(arm=name, event=event, pod=pod_id, host=host, deleted=deleted, health=reason, detail=detail)
+    log_event(arm=name, event=event, pod=pod_id, host=host, cpu=cpu, deleted=deleted, health=reason, detail=detail)
     if not deleted:
         raise RuntimeError(f'Faulted Pod {pod_id} could not be deleted: {detail}')
 
@@ -236,8 +241,11 @@ def acquire(name, state, config, context):
         record['cost_per_hr'] = (info or {}).get('costPerHr')
         host = info['machine']['podHostId'] if info else None
         machine = policy.machine_id(host)
+        cpu = pods.cpu_name(info)
+        if machine:
+            state.setdefault('machine_cpus', {})[machine] = cpu
         if machine and policy.recently_faulted(faulted, machine, now(), config['faulted_machine_hours']):
-            _discard(name, state, pod_id, host, 'known_faulted_pod', f'machine {machine} failed recently')
+            _discard(name, state, pod_id, host, 'known_faulted_pod', f'machine {machine} failed recently', cpu)
             stopped[cloud] = f'only known-faulted {cloud.title()} machines offered (e.g. {machine})'
             return None, stopped[cloud]
         candidate = pods.Pod(pod_id, host, config['ssh_key']) if host else None
@@ -247,21 +255,73 @@ def acquire(name, state, config, context):
             download_probe_bytes=config['download_probe_bytes'],
             min_power_fraction=config['min_power_fraction']) if candidate else (False, 'Pod host is unavailable'))
         if host and usable:
-            log_event(arm=name, event='pod_acquired', pod=pod_id, host=host)
-            return (pod_id, host), 'acquired'
+            log_event(arm=name, event='pod_acquired', pod=pod_id, host=host, cpu=cpu,
+                      fast_cpu=policy.cpu_is_fast(cpu, config))
+            return (pod_id, host, cpu), 'acquired'
         if machine:
             faulted[machine] = now().isoformat()
-        _discard(name, state, pod_id, host, 'faulted_pod', health_reason)
+        _discard(name, state, pod_id, host, 'faulted_pod', health_reason, cpu)
         stopped[cloud] = f'offered {cloud.title()} machine {machine} failed its health check ({health_reason})'
         return None, stopped[cloud]
     return None, 'no healthy Pod this tick'
+
+
+def survey_fast_host(state, config, alerts):
+    """Rent one 4090 per cloud, read its CPU, check it if fast, and delete it.
+
+    Runs at most every ``fast_host_survey_minutes`` while a running arm is on
+    a slow CPU. Each sample lives about a minute. A healthy fast host raises a
+    FAST HOST alert so a human can migrate a slow arm (pause, copy results,
+    ``train <arm> --resume`` on the new Pod).
+    """
+    state['last_survey_utc'] = now().isoformat()
+    faulted = state.setdefault('faulted_machines', {})
+    for cloud in ('COMMUNITY', 'SECURE'):
+        pod_id = pods.create_pod(config, 'fast-host-survey', cloud)
+        if pod_id is None:
+            log_event(event='survey_no_capacity', cloud=cloud)
+            continue
+        record = dict(pod_id=pod_id, arm='survey', cloud=cloud, cost_per_hr=None, created_utc=now().isoformat())
+        state['pods'].append(record)
+        save_state(state)
+        usable, health, cpu, host = False, 'no host', None, None
+        try:
+            info = pods.wait_for_host(pod_id, timeout=300)
+            record['cost_per_hr'] = (info or {}).get('costPerHr')
+            host = info['machine']['podHostId'] if info else None
+            machine, cpu = policy.machine_id(host), pods.cpu_name(info)
+            if machine:
+                state.setdefault('machine_cpus', {})[machine] = cpu
+            fast = policy.cpu_is_fast(cpu, config)
+            if fast and not policy.recently_faulted(faulted, machine, now(), config['faulted_machine_hours']):
+                usable, health = pods.Pod(pod_id, host, config['ssh_key']).check_usable(
+                    config['min_cuda_version'],
+                    minimum_download_mb_per_second=config['minimum_download_mb_per_second'],
+                    download_probe_bytes=config['download_probe_bytes'],
+                    min_power_fraction=config['min_power_fraction'])
+            else:
+                health = 'slow CPU' if not fast else f'machine {machine} failed recently'
+        finally:
+            deleted, detail = pods.delete_pod(pod_id)
+            if deleted:
+                end_pod(state, pod_id)
+            save_state(state)
+            log_event(event='fast_host_survey', cloud=cloud, host=host, cpu=cpu, usable=usable,
+                      health=health, deleted=deleted)
+            if not deleted:
+                alerts.append(f'Survey Pod {pod_id} could not be deleted ({detail}); delete it by hand')
+        if usable:
+            alerts.append(f"FAST HOST: healthy {cloud.title()} RTX 4090 with {cpu} "
+                          f"(machine {policy.machine_id(host)}, ${record['cost_per_hr']}/h) is available now; "
+                          'a slow-CPU arm could migrate to it')
+            return
 
 
 def launch(name, arm, state, config, context):
     acquired, reason = acquire(name, state, config, context)
     if acquired is None:
         return f'not started: {reason}'
-    arm['pod_id'], arm['pod_host'] = acquired
+    arm['pod_id'], arm['pod_host'], arm['cpu'] = acquired
     arm['phase'] = 'running'
     save_state(state)
     pod = arm_pod(arm, config)
@@ -341,8 +401,10 @@ def tick(dry_run=False, force=False):
         arm = state['arms'][name]
         observation = None
         if arm['phase'] == 'running' and arm['pod_id']:
-            observation = dict(pod=pods.pod_status(pods.pod_info(arm['pod_id'])),
-                               frozen_protocol_sha256=frozen_protocol)
+            info = pods.pod_info(arm['pod_id'])
+            if not arm.get('cpu'):
+                arm['cpu'] = pods.cpu_name(info)
+            observation = dict(pod=pods.pod_status(info), frozen_protocol_sha256=frozen_protocol)
             if observation['pod'] == 'RUNNING':
                 try:
                     observation.update(pods.observe(arm_pod(arm, config), name))
@@ -354,7 +416,8 @@ def tick(dry_run=False, force=False):
                                           committed_cost=committed_cost(state, config, now())))
         action, reason = policy.decide(arm, observation, config, blocker=blocker, at=now())
         summary[name] = dict(phase=arm['phase'], action=action, reason=reason,
-                             step=(observation or {}).get('last_step'))
+                             step=(observation or {}).get('last_step'), cpu=arm.get('cpu'),
+                             fast_cpu=policy.cpu_is_fast(arm.get('cpu'), config) if arm.get('cpu') else None)
         if action == 'none' and arm['phase'] == 'alert':
             alerts.append(f'{name}: {reason}')
         if dry_run or action in ('none', 'wait'):
@@ -397,6 +460,12 @@ def tick(dry_run=False, force=False):
             alerts.append(alert_text(name, arm['alert'], observation))
             log_event(arm=name, event='alert', reason=arm['alert'])
         save_state(state)
+    if not (dry_run or stopping) and policy.survey_due(state, config, now()):
+        try:
+            survey_fast_host(state, config, alerts)
+        except Exception as error:
+            alerts.append(f'fast-host survey failed: {str(error)[:200]}')
+            log_event(event='fast_host_survey_failed', reason=str(error)[:300])
     cadence = policy.next_tick_minutes(state['arms'], config)
     if not dry_run:
         state['next_due_utc'] = (now() + timedelta(minutes=cadence)).isoformat()

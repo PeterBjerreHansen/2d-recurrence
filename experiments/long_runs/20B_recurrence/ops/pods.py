@@ -71,7 +71,13 @@ def runpodctl_json(*args):
 
 def pod_info(pod_id):
     return graphql('query { pod(input:{podId:"%s"}) { id desiredStatus costPerHr '
-                   'machine { podHostId } runtime { uptimeInSeconds gpus { id } } } }' % pod_id)['pod']
+                   'machine { podHostId cpuType { displayName } } '
+                   'runtime { uptimeInSeconds gpus { id } } } }' % pod_id)['pod']
+
+
+def cpu_name(info):
+    """The host CPU model Runpod reports for a Pod's machine, or None."""
+    return (((info or {}).get('machine') or {}).get('cpuType') or {}).get('displayName')
 
 
 def pod_status(info):
