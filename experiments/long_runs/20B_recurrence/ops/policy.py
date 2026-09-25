@@ -106,6 +106,27 @@ def survey_due(state, config, at):
     return slow and (last is None or minutes_since(last, at) >= interval)
 
 
+def alert_key(alert):
+    """The first line identifies an alert; attached log tails vary between ticks."""
+    return alert.splitlines()[0]
+
+
+def fresh_alerts(alerts, notified, at, repeat_hours):
+    """Alerts not notified within ``repeat_hours``, plus the updated notified map."""
+    fresh, updated = [], dict(notified)
+    for alert in alerts:
+        key = alert_key(alert)
+        if minutes_since(notified.get(key), at) >= repeat_hours * 60 or key not in notified:
+            fresh.append(alert)
+            updated[key] = at.isoformat()
+    return fresh, updated
+
+
+def daily_summary_due(last_date, local_now, hour):
+    """True once per local day, at the first tick at or after ``hour``."""
+    return local_now.hour >= hour and last_date != local_now.date().isoformat()
+
+
 def next_tick_minutes(arms, config):
     """Poll often while an arm still needs a Pod, then settle to hourly monitoring."""
     pending = any(arm['phase'] == 'pending' for arm in arms.values())

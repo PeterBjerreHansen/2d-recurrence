@@ -67,6 +67,9 @@ DEFAULT_CONFIG = dict(
     fast_cpu_patterns=[r'Ryzen', r'Threadripper', r'Core\(TM\) i[79]-1[2-4]', r'Core\(TM\) Ultra',
                        r'Xeon\(R\) w[579]-', r'EPYC 9\d{3}', r'EPYC 4\d{3}'],
     fast_host_survey_minutes=60,  # 0 disables the hourly fast-host sample
+    macos_notifications=True,  # post alerts and news to Notification Center
+    notify_repeat_hours=6,  # re-notify a persisting alert at most this often
+    daily_summary_hour=9,  # local hour of the once-a-day status notification
     slow_tick_minutes=60,
     disk_alert_fraction=0.9,
     allow_release=False,
@@ -362,6 +365,39 @@ def check_bundle(config):
         return completed.returncode, completed.stdout[-2000:]
 
 
+def notify(title, message, sound=None):
+    """Post a macOS notification; never let a notification failure break a tick."""
+    import subprocess
+    quote = lambda text: json.dumps(' '.join(str(text).split()))  # AppleScript-compatible string
+    script = f'display notification {quote(message[:240])} with title {quote(title)}'
+    if sound:
+        script += f' sound name {quote(sound)}'
+    try:
+        subprocess.run(['osascript', '-e', script], capture_output=True, timeout=20)
+    except Exception as error:
+        log_event(event='notify_failed', reason=str(error)[:200])
+
+
+def send_notifications(report, state, config):
+    """Notify new alerts, arm news, and a daily summary."""
+    if not config['macos_notifications']:
+        return
+    fresh, state['notified'] = policy.fresh_alerts(
+        report['alerts'], state.get('notified', {}), now(), config['notify_repeat_hours'])
+    for alert in fresh:
+        urgent = 'FAST HOST' in alert or 'failed' in alert or 'FAILED' in alert
+        notify('20B campaign ALERT', policy.alert_key(alert), 'Glass' if urgent else 'Ping')
+    for line in report.get('news', []):
+        notify('20B campaign', line, 'Hero')
+    local_now = datetime.now()
+    if policy.daily_summary_due(state.get('last_daily_summary_date'), local_now, config['daily_summary_hour']):
+        state['last_daily_summary_date'] = local_now.date().isoformat()
+        arms = '; '.join(f"{name} {arm['phase']}" + (f" @{arm['step']}" if arm.get('step') else '')
+                         for name, arm in report['arms'].items())
+        notify('20B campaign daily status',
+               f"{arms}. Spend ${report['spend_usd']} of ${report['spend_cap_usd']}, balance ${report['balance_usd']:.2f}")
+
+
 def alert_text(name, reason, observation):
     tail = (observation or {}).get('log_tail', '').strip().splitlines()[-5:]
     return f'{name}: {reason}' + (('\n    log: ' + '\n    log: '.join(tail)) if tail else '')
@@ -382,6 +418,7 @@ def tick(dry_run=False, force=False):
         return dict(utc=now().isoformat(), not_due=True, next_due_utc=due,
                     next_tick_minutes=policy.next_tick_minutes(state['arms'], config), arms={}, alerts=[])
     alerts = []
+    news = []  # arms started, resumed or collected this tick
     if not dry_run:
         verify_bundle(config, state)
         state['campaign_start_utc'] = state['campaign_start_utc'] or now().isoformat()
@@ -425,6 +462,8 @@ def tick(dry_run=False, force=False):
         try:
             if action == 'acquire':
                 summary[name]['reason'] = launch(name, arm, state, config, context)
+                if summary[name]['reason'] == 'started':
+                    news.append(f"{name} started on {policy.arm_cloud(name, config).title()} ({arm.get('cpu')})")
             elif action == 'healthy':
                 if observation['last_step'] != arm.get('last_step'):
                     arm.update(last_step=observation['last_step'], progress_utc=now().isoformat())
@@ -438,10 +477,12 @@ def tick(dry_run=False, force=False):
                 pods.start_job(arm_pod(arm, config), name, resume=True)
                 arm.update(job_started_utc=now().isoformat(), progress_utc=now().isoformat())
                 log_event(arm=name, event='resumed', restarts=arm['restarts'], reason=reason)
+                news.append(f'{name} resumed: {reason}')
             elif action == 'collect':
                 destination = collect(name, arm, config)
                 arm['phase'] = 'collected'
                 log_event(arm=name, event='collected', destination=str(destination))
+                news.append(f'{name} finished and was collected')
             elif action == 'release':
                 deleted, detail = pods.delete_pod(arm['pod_id'])
                 if not deleted:
@@ -471,11 +512,15 @@ def tick(dry_run=False, force=False):
         state['next_due_utc'] = (now() + timedelta(minutes=cadence)).isoformat()
         save_state(state)
     spend, spend_detail = spend_now(state, config)
-    return dict(utc=now().isoformat(), dry_run=dry_run, next_tick_minutes=cadence,
-                pending_arms=[name for name, arm in state['arms'].items() if arm['phase'] == 'pending'],
-                spend_usd=round(spend, 2), spend_detail=spend_detail,
-                spend_cap_usd=config['spend_cap_usd'], balance_usd=account['balance'],
-                burn_usd_per_hr=account['burn_per_hr'], arms=summary, alerts=alerts)
+    report = dict(utc=now().isoformat(), dry_run=dry_run, next_tick_minutes=cadence,
+                  pending_arms=[name for name, arm in state['arms'].items() if arm['phase'] == 'pending'],
+                  spend_usd=round(spend, 2), spend_detail=spend_detail,
+                  spend_cap_usd=config['spend_cap_usd'], balance_usd=account['balance'],
+                  burn_usd_per_hr=account['burn_per_hr'], arms=summary, alerts=alerts, news=news)
+    if not dry_run:
+        send_notifications(report, state, config)
+        save_state(state)
+    return report
 
 
 def main():
@@ -486,6 +531,7 @@ def main():
     tick_parser.add_argument('--force', action='store_true', help='Run a full tick even if the next one is not due yet')
     sub.add_parser('status', help='Print the local state')
     sub.add_parser('check-bundle', help="Run the Pod bootstrap's tests on an extracted bundle, locally")
+    sub.add_parser('notify-test', help='Post a test macOS notification')
     sub.add_parser('pause', help='Make ticks do nothing (use before any manual Pod work)')
     sub.add_parser('unpause', help='Let ticks act again')
     clear = sub.add_parser('clear-alert', help='Return an arm from alert after a human fix')
@@ -503,6 +549,8 @@ def main():
         print(f"NEXT_TICK_MINUTES {report.get('next_tick_minutes')}")
         for alert in report['alerts']:
             print(f'ALERT {alert}')
+    elif args.command == 'notify-test':
+        notify('20B campaign', 'Test notification: alerts from the campaign tick will look like this.', 'Glass')
     elif args.command == 'check-bundle':
         code, tail = check_bundle(load_config())
         print(tail)

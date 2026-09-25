@@ -373,3 +373,34 @@ def test_fast_host_survey_runs_hourly_only_while_an_arm_is_on_a_slow_cpu():
     state['arms']['hybrid']['cpu'] = 'AMD Ryzen 9 7950X'
     assert not policy.survey_due(state, config, NOW)
     assert not policy.survey_due(state, _config(fast_host_survey_minutes=0), NOW)
+
+
+def test_alerts_notify_once_then_repeat_only_after_the_interval():
+    alerts = ['hybrid: no training progress since step 5\n    log: step 5', 'FAST HOST: healthy Community RTX 4090']
+    fresh, notified = policy.fresh_alerts(alerts, {}, NOW, repeat_hours=6)
+    assert fresh == alerts
+    changed_tail = ['hybrid: no training progress since step 5\n    log: other tail']
+    assert policy.fresh_alerts(changed_tail, notified, NOW + timedelta(hours=1), 6)[0] == []
+    assert policy.fresh_alerts(changed_tail, notified, NOW + timedelta(hours=7), 6)[0] == changed_tail
+
+
+def test_daily_summary_fires_once_per_day_after_the_hour():
+    morning = datetime(2026, 9, 26, 9, 5)
+    assert policy.daily_summary_due(None, morning, 9)
+    assert not policy.daily_summary_due('2026-09-26', morning, 9)
+    assert not policy.daily_summary_due('2026-09-25', datetime(2026, 9, 26, 8, 55), 9)
+
+
+def test_notifications_carry_alerts_news_and_are_deduplicated(monkeypatch):
+    sent = []
+    monkeypatch.setattr(cli, 'notify', lambda title, message, sound=None: sent.append((title, message, sound)))
+    state = cli.new_state()
+    state['last_daily_summary_date'] = datetime.now().date().isoformat()
+    report = dict(alerts=['FAST HOST: healthy Secure RTX 4090 with AMD Ryzen 9 7950X'],
+                  news=['depth started on Community (AMD Ryzen 9 7950X)'], arms={},
+                  spend_usd=1, spend_cap_usd=100, balance_usd=100.0)
+    cli.send_notifications(report, state, _config())
+    assert [(title, sound) for title, _, sound in sent] == [('20B campaign ALERT', 'Glass'), ('20B campaign', 'Hero')]
+    sent.clear()
+    cli.send_notifications(dict(report, news=[]), state, _config())
+    assert sent == []

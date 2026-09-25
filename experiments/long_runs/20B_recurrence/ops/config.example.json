@@ -49,6 +49,9 @@
     "EPYC 4\\d{3}"
   ],
   "fast_host_survey_minutes": 60,
+  "macos_notifications": true,
+  "notify_repeat_hours": 6,
+  "daily_summary_hour": 9,
   "slow_tick_minutes": 60,
   "disk_alert_fraction": 0.9,
   "allow_release": false,
