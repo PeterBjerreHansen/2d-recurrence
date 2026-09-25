@@ -21,6 +21,15 @@ REMOTE_STAGE = '/root/stage'
 STUDY_DIR = 'experiments/long_runs/20B_recurrence'
 RUN_MODULE = 'experiments.long_runs.20B_recurrence.run'
 BEGIN, END = '__OPS_BEGIN__', '__OPS_END__'
+# The bundle has no Git metadata and no ops/ directory (it is excluded from the
+# frozen source). These tests cannot pass there; they cover local tooling and
+# freeze-time provenance, not training.
+BUNDLE_TEST_EXCLUSIONS = (
+    '--ignore=tests/test_20b_ops.py',
+    '--deselect=tests/test_20b_recurrence_protocol.py::test_freeze_records_fixed_gate_and_is_repeatable',
+    '--deselect=tests/test_update_schedule_study.py::test_source_snapshot_status_is_scoped_to_study_runtime',
+)
+BUNDLE_TEST_COMMAND = 'uv run pytest -q ' + ' '.join(BUNDLE_TEST_EXCLUSIONS)
 GRAPHQL = 'https://api.runpod.io/graphql'
 
 
@@ -334,7 +343,7 @@ rm -f {REMOTE_STAGE}/{bundle_name}
 pip install -q uv
 cd {REMOTE_REPO}
 uv sync --frozen --python 3.11
-uv run pytest -q
+{BUNDLE_TEST_COMMAND}
 uv run python -m {RUN_MODULE} preflight {name}
 ''')
     status, tail = pod.wait_background('bootstrap', timeout=3600)

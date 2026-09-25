@@ -12,7 +12,7 @@ Local state lives in the ignored ``results/ops/`` directory: ``config.json``
 """
 import argparse
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 from importlib import import_module
@@ -53,7 +53,12 @@ DEFAULT_CONFIG = dict(
     acquire_attempts_per_tick=2,
     resume_enabled=False,
     max_restarts_per_arm=3,
-    stall_ticks=2,
+    stall_minutes=90,
+    startup_minutes=60,
+    unreachable_minutes=60,
+    fast_tick_minutes=10,
+    faulted_machine_hours=12,
+    slow_tick_minutes=60,
     disk_alert_fraction=0.9,
     allow_release=False,
     ssh_key='~/.runpod/ssh/runpodctl-ssh-key',
@@ -109,7 +114,8 @@ def verify_bundle(config, state):
 
 def new_state():
     return dict(arms={name: dict(phase='pending', pod_id=None, pod_host=None, restarts=0,
-                                 last_step=None, stall_ticks=0, unreachable_ticks=0, alert=None)
+                                 last_step=None, progress_utc=None, job_started_utc=None,
+                                 unreachable_since_utc=None, alert=None)
                       for name in study.ARM_ORDER},
                 pods=[], campaign_start_utc=None, bundle_verified=None)
 
@@ -192,19 +198,44 @@ def stop_everything(state, alerts):
 # --------------------------------------------------------------------------
 # Actions
 
-def acquire(name, state, config):
-    """Create Pods until one initializes CUDA; delete faulted ones at once."""
+def _discard(name, state, pod_id, host, event, reason):
+    deleted, detail = pods.delete_pod(pod_id)
+    if deleted:
+        end_pod(state, pod_id)
+    save_state(state)
+    log_event(arm=name, event=event, pod=pod_id, host=host, deleted=deleted, health=reason, detail=detail)
+    if not deleted:
+        raise RuntimeError(f'Faulted Pod {pod_id} could not be deleted: {detail}')
+
+
+def acquire(name, state, config, context):
+    """Create a Pod and keep it only if its GPU, driver and network are usable.
+
+    Faulted machines are remembered for ``faulted_machine_hours``; a Pod that
+    lands on one is deleted without further checks. After any failure the
+    rest of this tick stops acquiring, because Community stock is usually the
+    same few machines.
+    """
+    if context.get('stop_acquiring'):
+        return None, context['stop_acquiring']
+    faulted = state.setdefault('faulted_machines', {})
     for attempt in range(config['acquire_attempts_per_tick']):
         pod_id = pods.create_pod(config, f'20b-{name}')
         if pod_id is None:
             log_event(arm=name, event='no_capacity', attempt=attempt)
-            return None
+            context['stop_acquiring'] = 'no Community 4090 with a CUDA 13 driver available'
+            return None, context['stop_acquiring']
         record = dict(pod_id=pod_id, arm=name, cost_per_hr=None, created_utc=now().isoformat())
         state['pods'].append(record)
         save_state(state)
         info = pods.wait_for_host(pod_id)
         record['cost_per_hr'] = (info or {}).get('costPerHr')
         host = info['machine']['podHostId'] if info else None
+        machine = policy.machine_id(host)
+        if machine and policy.recently_faulted(faulted, machine, now(), config['faulted_machine_hours']):
+            _discard(name, state, pod_id, host, 'known_faulted_pod', f'machine {machine} failed recently')
+            context['stop_acquiring'] = f'only known-faulted machines offered (e.g. {machine})'
+            return None, context['stop_acquiring']
         candidate = pods.Pod(pod_id, host, config['ssh_key']) if host else None
         usable, health_reason = (candidate.check_usable(
             config['min_cuda_version'],
@@ -212,22 +243,19 @@ def acquire(name, state, config):
             download_probe_bytes=config['download_probe_bytes']) if candidate else (False, 'Pod host is unavailable'))
         if host and usable:
             log_event(arm=name, event='pod_acquired', pod=pod_id, host=host)
-            return pod_id, host
-        deleted, detail = pods.delete_pod(pod_id)
-        if deleted:
-            end_pod(state, pod_id)
-        save_state(state)
-        log_event(arm=name, event='faulted_pod', pod=pod_id, host=host, deleted=deleted,
-                  health=health_reason, detail=detail)
-        if not deleted:
-            raise RuntimeError(f'Faulted Pod {pod_id} could not be deleted: {detail}')
-    return None
+            return (pod_id, host), 'acquired'
+        if machine:
+            faulted[machine] = now().isoformat()
+        _discard(name, state, pod_id, host, 'faulted_pod', health_reason)
+        context['stop_acquiring'] = f'offered machine {machine} failed its health check ({health_reason})'
+        return None, context['stop_acquiring']
+    return None, 'no healthy Pod this tick'
 
 
-def launch(name, arm, state, config):
-    acquired = acquire(name, state, config)
+def launch(name, arm, state, config, context):
+    acquired, reason = acquire(name, state, config, context)
     if acquired is None:
-        return 'no healthy Pod available this hour'
+        return f'not started: {reason}'
     arm['pod_id'], arm['pod_host'] = acquired
     arm['phase'] = 'running'
     save_state(state)
@@ -240,6 +268,7 @@ def launch(name, arm, state, config):
         stopped, detail = pods.stop_pod(arm['pod_id'])
         log_event(arm=name, event='bootstrap_failed_pod_stopped', stopped=stopped, detail=detail)
         raise
+    arm.update(job_started_utc=now().isoformat(), progress_utc=now().isoformat())
     log_event(arm=name, event='started', pod=arm['pod_id'])
     return 'started'
 
@@ -250,6 +279,24 @@ def collect(name, arm, config):
                         lambda results: run.arm_integrity(name, results, require_complete=True))
 
 
+def check_bundle(config):
+    """Run the Pod bootstrap's test command inside an extracted copy of the bundle.
+
+    Catches bundle-only failures on this Mac before any GPU is rented. The
+    training data file is skipped to save disk; no test needs it.
+    """
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix='20b-bundle-check-') as directory:
+        subprocess.run(['tar', '-xzf', str(Path(config['bundle']).expanduser()), '-C', directory,
+                        '--exclude=data/chess_8M_v1/train.bin'], check=True)
+        environment = {key: value for key, value in __import__('os').environ.items() if key != 'VIRTUAL_ENV'}
+        subprocess.run(['uv', 'sync', '--frozen', '--python', '3.11', '-q'], cwd=directory, check=True, env=environment)
+        completed = subprocess.run(pods.BUNDLE_TEST_COMMAND.split(), cwd=directory, env=environment,
+                                   capture_output=True, text=True)
+        return completed.returncode, completed.stdout[-2000:]
+
+
 def alert_text(name, reason, observation):
     tail = (observation or {}).get('log_tail', '').strip().splitlines()[-5:]
     return f'{name}: {reason}' + (('\n    log: ' + '\n    log: '.join(tail)) if tail else '')
@@ -258,11 +305,17 @@ def alert_text(name, reason, observation):
 # --------------------------------------------------------------------------
 # Tick
 
-def tick(dry_run=False):
+def tick(dry_run=False, force=False):
     if PAUSED.exists():
         return dict(utc=now().isoformat(), paused=True, arms={}, alerts=[])
     config = load_config()
     state = load_state()
+    due = state.get('next_due_utc')
+    # A tick called early (for example, a 10-minute schedule during hourly
+    # monitoring) does nothing; two minutes of slack absorb scheduler jitter.
+    if due and not (dry_run or force) and now() < datetime.fromisoformat(due) - timedelta(minutes=2):
+        return dict(utc=now().isoformat(), not_due=True, next_due_utc=due,
+                    next_tick_minutes=policy.next_tick_minutes(state['arms'], config), arms={}, alerts=[])
     alerts = []
     if not dry_run:
         verify_bundle(config, state)
@@ -278,6 +331,7 @@ def tick(dry_run=False):
     if stopping and not dry_run:
         stop_everything(state, alerts)
     summary = {}
+    context = {}  # per-tick scratch, e.g. stop acquiring after a faulted Pod
     for name in config['arm_priority']:
         arm = state['arms'][name]
         observation = None
@@ -293,7 +347,7 @@ def tick(dry_run=False):
                    policy.acquire_blocker(spend, account['burn_per_hr'], account['balance'],
                                           len(policy.open_pods(state['pods'])), config,
                                           remaining_arm_hours=remaining_arm_hours(state, config, now())))
-        action, reason = policy.decide(arm, observation, config, blocker=blocker)
+        action, reason = policy.decide(arm, observation, config, blocker=blocker, at=now())
         summary[name] = dict(phase=arm['phase'], action=action, reason=reason,
                              step=(observation or {}).get('last_step'))
         if action == 'none' and arm['phase'] == 'alert':
@@ -302,16 +356,19 @@ def tick(dry_run=False):
             continue
         try:
             if action == 'acquire':
-                summary[name]['reason'] = launch(name, arm, state, config)
+                summary[name]['reason'] = launch(name, arm, state, config, context)
             elif action == 'healthy':
-                arm.update(last_step=observation['last_step'], stall_ticks=0, unreachable_ticks=0)
+                if observation['last_step'] != arm.get('last_step'):
+                    arm.update(last_step=observation['last_step'], progress_utc=now().isoformat())
+                arm['unreachable_since_utc'] = None
             elif action == 'stalled':
-                arm['stall_ticks'] = arm.get('stall_ticks', 0) + 1
+                arm['unreachable_since_utc'] = None
             elif action == 'unreachable':
-                arm['unreachable_ticks'] = arm.get('unreachable_ticks', 0) + 1
+                arm['unreachable_since_utc'] = arm.get('unreachable_since_utc') or now().isoformat()
             elif action == 'restart':
                 arm['restarts'] += 1
                 pods.start_job(arm_pod(arm, config), name, resume=True)
+                arm.update(job_started_utc=now().isoformat(), progress_utc=now().isoformat())
                 log_event(arm=name, event='resumed', restarts=arm['restarts'], reason=reason)
             elif action == 'collect':
                 destination = collect(name, arm, config)
@@ -335,10 +392,14 @@ def tick(dry_run=False):
             alerts.append(alert_text(name, arm['alert'], observation))
             log_event(arm=name, event='alert', reason=arm['alert'])
         save_state(state)
+    cadence = policy.next_tick_minutes(state['arms'], config)
     if not dry_run:
+        state['next_due_utc'] = (now() + timedelta(minutes=cadence)).isoformat()
         save_state(state)
     spend, spend_detail = spend_now(state, config)
-    return dict(utc=now().isoformat(), dry_run=dry_run, spend_usd=round(spend, 2), spend_detail=spend_detail,
+    return dict(utc=now().isoformat(), dry_run=dry_run, next_tick_minutes=cadence,
+                pending_arms=[name for name, arm in state['arms'].items() if arm['phase'] == 'pending'],
+                spend_usd=round(spend, 2), spend_detail=spend_detail,
                 spend_cap_usd=config['spend_cap_usd'], balance_usd=account['balance'],
                 burn_usd_per_hr=account['burn_per_hr'], arms=summary, alerts=alerts)
 
@@ -348,7 +409,9 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     tick_parser = sub.add_parser('tick', help='Observe every arm and act once')
     tick_parser.add_argument('--dry-run', action='store_true', help='Observe and decide, but act on nothing')
+    tick_parser.add_argument('--force', action='store_true', help='Run a full tick even if the next one is not due yet')
     sub.add_parser('status', help='Print the local state')
+    sub.add_parser('check-bundle', help="Run the Pod bootstrap's tests on an extracted bundle, locally")
     sub.add_parser('pause', help='Make ticks do nothing (use before any manual Pod work)')
     sub.add_parser('unpause', help='Let ticks act again')
     clear = sub.add_parser('clear-alert', help='Return an arm from alert after a human fix')
@@ -357,12 +420,20 @@ def main():
     args = parser.parse_args()
     if args.command == 'tick':
         with tick_lock():
-            report = tick(args.dry_run)
+            report = tick(args.dry_run, args.force)
         print(json.dumps(report, indent=2))
         if report.get('paused'):
             print('PAUSED: no action taken')
+        if report.get('not_due'):
+            print(f"NOT DUE: next full tick at {report['next_due_utc']}")
+        print(f"NEXT_TICK_MINUTES {report.get('next_tick_minutes')}")
         for alert in report['alerts']:
             print(f'ALERT {alert}')
+    elif args.command == 'check-bundle':
+        code, tail = check_bundle(load_config())
+        print(tail)
+        print('BUNDLE TESTS PASSED' if code == 0 else f'BUNDLE TESTS FAILED (exit {code})')
+        raise SystemExit(code)
     elif args.command == 'status':
         print(json.dumps(load_state(), indent=2))
     elif args.command in ('pause', 'unpause'):
@@ -376,7 +447,9 @@ def main():
     else:
         with tick_lock():
             state = load_state()
-            state['arms'][args.arm].update(phase=args.phase, alert=None, stall_ticks=0, unreachable_ticks=0)
+            state['arms'][args.arm].update(phase=args.phase, alert=None, unreachable_since_utc=None,
+                                           progress_utc=now().isoformat())
+            state['next_due_utc'] = None
             save_state(state)
             log_event(arm=args.arm, event='alert_cleared', phase=args.phase)
 

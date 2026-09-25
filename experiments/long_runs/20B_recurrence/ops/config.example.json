@@ -25,7 +25,12 @@
   "acquire_attempts_per_tick": 2,
   "resume_enabled": true,
   "max_restarts_per_arm": 3,
-  "stall_ticks": 2,
+  "stall_minutes": 90,
+  "startup_minutes": 60,
+  "unreachable_minutes": 60,
+  "fast_tick_minutes": 10,
+  "faulted_machine_hours": 12,
+  "slow_tick_minutes": 60,
   "disk_alert_fraction": 0.9,
   "allow_release": false,
   "ssh_key": "~/.runpod/ssh/runpodctl-ssh-key"

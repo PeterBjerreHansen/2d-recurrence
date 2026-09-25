@@ -33,7 +33,15 @@ This directory is excluded from the frozen source hash (`SOURCE_EXCLUDED_DIRS` i
 | `collected` | Delete the Pod if `allow_release` is true; otherwise alert that it is ready to release. |
 | `alert` | Do nothing and repeat the alert until a human clears it. |
 
-Alerts include the last lines of the arm's job log. An unreachable Pod or a stalled step alerts after `stall_ticks` consecutive ticks. The step counter stays still during post-training evaluation, and that phase is recognized as healthy.
+Alerts include the last lines of the arm's job log. Thresholds are in minutes, so they don't depend on how often ticks run:
+
+- a Pod unreachable for `unreachable_minutes` alerts;
+- a training step unchanged for `stall_minutes` alerts;
+- a job with no logged step `startup_minutes` after it started alerts.
+
+The step counter stays still during post-training evaluation, and that phase is recognized as healthy.
+
+**Cadence.** Every tick reports `next_tick_minutes`: `fast_tick_minutes` (10) while any arm is still `pending`, otherwise `slow_tick_minutes` (60). The monitoring agent reschedules itself to match. A tick called before it is due returns `not_due` and does nothing, so a missed schedule switch is harmless. `tick --force` overrides this for a human. A tick that is acquiring or collecting can hold the lock for over an hour; later ticks then report the lock and do nothing.
 
 ## Setup (after the resume gate and the freeze)
 

@@ -61,17 +61,43 @@ def test_running_arm_actions(observation, action):
     assert _decide(_arm(last_step=1_000), observation) == action
 
 
-def test_stall_alerts_only_after_repeated_ticks_and_not_during_evaluation():
-    assert _decide(_arm(last_step=1_000), _observation()) == 'stalled'
-    assert _decide(_arm(last_step=1_000, stall_ticks=1), _observation()) == 'alert'
+NOW = datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
+
+
+def _ago(minutes):
+    return (NOW - timedelta(minutes=minutes)).isoformat()
+
+
+def test_stall_and_startup_alerts_use_minutes_not_tick_counts():
+    config = _config(stall_minutes=90, startup_minutes=60)
+    decide = lambda arm, observation: policy.decide(arm, observation, config, at=NOW)[0]
+    assert decide(_arm(last_step=1_000, progress_utc=_ago(20)), _observation()) == 'stalled'
+    assert decide(_arm(last_step=1_000, progress_utc=_ago(95)), _observation()) == 'alert'
     finished = _observation(last_step=study.UPDATES)
-    assert _decide(_arm(last_step=study.UPDATES, stall_ticks=5), finished) == 'healthy'
+    assert decide(_arm(last_step=study.UPDATES, progress_utc=_ago(600)), finished) == 'healthy'
+    starting = _observation(last_step=None)
+    assert decide(_arm(job_started_utc=_ago(10)), starting) == 'healthy'
+    assert decide(_arm(job_started_utc=_ago(65)), starting) == 'alert'
 
 
-def test_unreachable_pod_alerts_only_after_repeated_ticks():
+def test_unreachable_pod_alerts_after_a_time_threshold():
+    config = _config(unreachable_minutes=60)
     observation = dict(pod='RUNNING', error='ssh timeout', frozen_protocol_sha256='frozen')
-    assert _decide(_arm(), observation) == 'unreachable'
-    assert _decide(_arm(unreachable_ticks=1), observation) == 'alert'
+    decide = lambda arm: policy.decide(arm, observation, config, at=NOW)[0]
+    assert decide(_arm()) == 'unreachable'
+    assert decide(_arm(unreachable_since_utc=_ago(30))) == 'unreachable'
+    assert decide(_arm(unreachable_since_utc=_ago(61))) == 'alert'
+
+
+def test_cadence_is_fast_until_every_arm_has_left_pending():
+    config = _config(fast_tick_minutes=10, slow_tick_minutes=60)
+    arms = cli.new_state()['arms']
+    assert policy.next_tick_minutes(arms, config) == 10
+    for name in ('hybrid', 'temporal', 'depth'):
+        arms[name]['phase'] = 'running'
+    assert policy.next_tick_minutes(arms, config) == 10
+    arms['transformer']['phase'] = 'alert'
+    assert policy.next_tick_minutes(arms, config) == 60
 
 
 def test_restart_resumes_only_from_a_valid_checkpoint():
@@ -241,3 +267,53 @@ def test_candidate_health_rejects_a_slow_locked_torch_download(monkeypatch):
                                             download_probe_bytes=50_000_000)
     assert not usable
     assert '1.0 MB/s' in reason
+
+
+def test_early_tick_is_not_due_and_touches_nothing(tmp_path, monkeypatch):
+    state = cli.new_state()
+    state['next_due_utc'] = (datetime.now(timezone.utc) + timedelta(minutes=50)).isoformat()
+    monkeypatch.setattr(cli, 'PAUSED', tmp_path / 'PAUSED')
+    monkeypatch.setattr(cli, 'load_config', lambda: _config())
+    monkeypatch.setattr(cli, 'load_state', lambda: state)
+    monkeypatch.setattr(cli, 'verify_bundle', lambda config, state: None)
+    monkeypatch.setattr(cli.pods, 'account', lambda: pytest.fail('an early tick must not act'))
+    report = cli.tick()
+    assert report['not_due'] and report['next_tick_minutes'] == 10
+    # Two minutes of slack absorb scheduler jitter.
+    state['next_due_utc'] = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    monkeypatch.setattr(cli.pods, 'account', lambda: (_ for _ in ()).throw(RuntimeError('reached account')))
+    with pytest.raises(RuntimeError, match='reached account'):
+        cli.tick()
+
+
+def test_faulted_machines_are_remembered_for_a_while():
+    assert policy.machine_id('30pka6640iqv7f-64411a5a') == '64411a5a'
+    faulted = {'64411a5a': _ago(60)}
+    assert policy.recently_faulted(faulted, '64411a5a', NOW, hours=12)
+    assert not policy.recently_faulted(faulted, '6441176e', NOW, hours=12)
+    assert not policy.recently_faulted({'64411a5a': _ago(13 * 60)}, '64411a5a', NOW, hours=12)
+
+
+def test_a_failed_acquisition_stops_further_attempts_this_tick(monkeypatch):
+    created = []
+    monkeypatch.setattr(cli, 'save_state', lambda state: None)
+    monkeypatch.setattr(cli, 'log_event', lambda **event: None)
+    monkeypatch.setattr(cli.pods, 'create_pod', lambda config, name: created.append(name) or f'pod{len(created)}')
+    monkeypatch.setattr(cli.pods, 'wait_for_host', lambda pod_id: dict(costPerHr=0.34, machine=dict(podHostId=f'{pod_id}-64411a5a')))
+    monkeypatch.setattr(cli.pods, 'delete_pod', lambda pod_id: (True, 'deleted'))
+    state = cli.new_state()
+    state['faulted_machines'] = {'64411a5a': datetime.now(timezone.utc).isoformat()}
+    context = {}
+    assert cli.acquire('hybrid', state, _config(), context)[0] is None
+    assert cli.acquire('temporal', state, _config(), context)[0] is None
+    assert created == ['20b-hybrid']  # the second arm did not rent a Pod
+    assert state['pods'][0]['ended_utc']
+
+
+def test_bundle_test_exclusions_name_real_tests():
+    from pathlib import Path
+    for option in pods.BUNDLE_TEST_EXCLUSIONS:
+        path = option.split('=', 1)[1].split('::')[0]
+        assert Path(path).is_file(), option
+        if '::' in option:
+            assert f"def {option.split('::')[1]}(" in Path(path).read_text(), option

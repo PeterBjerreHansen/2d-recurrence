@@ -57,11 +57,34 @@ def acquire_blocker(spend, burn_per_hr, balance, pods_in_use, config, *, remaini
     return None
 
 
-def decide(arm, observation, config, *, blocker=None):
+def minutes_since(timestamp, at):
+    return (at - datetime.fromisoformat(timestamp)).total_seconds() / 60 if timestamp else 0.0
+
+
+def machine_id(pod_host):
+    """Runpod's podHostId is '<pod id>-<machine id>'; the machine outlives Pods."""
+    return pod_host.rsplit('-', 1)[-1] if pod_host else None
+
+
+def recently_faulted(faulted_machines, machine, at, hours):
+    """True if this machine failed a health check within the last ``hours``."""
+    seen = faulted_machines.get(machine)
+    return bool(seen) and minutes_since(seen, at) < hours * 60
+
+
+def next_tick_minutes(arms, config):
+    """Poll often while an arm still needs a Pod, then settle to hourly monitoring."""
+    pending = any(arm['phase'] == 'pending' for arm in arms.values())
+    return config['fast_tick_minutes'] if pending else config['slow_tick_minutes']
+
+
+def decide(arm, observation, config, *, blocker=None, at=None):
     """Choose one action for one arm.
 
     ``observation`` is None when the arm has no Pod. ``blocker`` is the
     account-level reason, if any, that a pending arm may not acquire a Pod.
+    Stall, startup and unreachable thresholds are in minutes (from ``at``),
+    so they do not depend on how often ticks run.
     """
     phase = arm['phase']
     if phase in ('alert', 'released'):
@@ -79,8 +102,8 @@ def decide(arm, observation, config, *, blocker=None):
         return 'alert', (f"Pod is {observation['pod']}; keep it and use zero-GPU recovery "
                          'to retrieve the latest checkpoint')
     if observation.get('error'):
-        if arm.get('unreachable_ticks', 0) + 1 >= config['stall_ticks']:
-            return 'alert', f"Pod unreachable: {observation['error']}"
+        if minutes_since(arm.get('unreachable_since_utc'), at) >= config['unreachable_minutes']:
+            return 'alert', f"Pod unreachable for {config['unreachable_minutes']}+ min: {observation['error']}"
         return 'unreachable', f"Pod unreachable: {observation['error']}"
     if not observation['gpu_ok']:
         return 'alert', 'GPU no longer initializes (cuInit failed); keep the Pod and recover the checkpoint'
@@ -97,9 +120,13 @@ def decide(arm, observation, config, *, blocker=None):
         step = observation['last_step']
         if step == study.UPDATES:
             return 'healthy', 'training complete; evaluating retained checkpoints'
-        if step is not None and step == arm.get('last_step'):
-            if arm.get('stall_ticks', 0) + 1 >= config['stall_ticks']:
-                return 'alert', f'no training progress since step {step}'
+        if step is None:
+            if minutes_since(arm.get('job_started_utc'), at) >= config['startup_minutes']:
+                return 'alert', f"no training step logged {config['startup_minutes']}+ min after the job started"
+            return 'healthy', 'job starting'
+        if step == arm.get('last_step'):
+            if minutes_since(arm.get('progress_utc'), at) >= config['stall_minutes']:
+                return 'alert', f"no training progress since step {step} for {config['stall_minutes']}+ min"
             return 'stalled', f'no progress since step {step}'
         return 'healthy', f'step {step}'
     checkpoint = integrity['checkpoint']
