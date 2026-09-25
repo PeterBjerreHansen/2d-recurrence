@@ -247,6 +247,11 @@ def acquire(name, state, config, context):
             stopped[cloud] = f'only known-faulted {cloud.title()} machines offered (e.g. {machine})'
             return None, stopped[cloud]
         candidate = pods.Pod(pod_id, host, config['ssh_key']) if host else None
+        if candidate and not candidate.wait_for_ssh():
+            # Not a machine fault: the Pod never became reachable. Don't block the machine.
+            _discard(name, state, pod_id, host, 'unreachable_pod', 'SSH not ready within 5 minutes', cpu)
+            stopped[cloud] = f'offered {cloud.title()} Pod never became reachable over SSH'
+            return None, stopped[cloud]
         usable, health_reason = (candidate.check_usable(
             config['min_cuda_version'],
             minimum_download_mb_per_second=config['minimum_download_mb_per_second'],

@@ -395,3 +395,18 @@ def test_notify_opens_a_detached_dialog_with_urgency_icon(monkeypatch):
     launched.clear()
     cli.notify('20B campaign', 'depth started')
     assert len(launched) == 1 and 'with icon note' in launched[0][2]
+
+
+def test_unreachable_new_pod_is_deleted_but_its_machine_is_not_blocked(monkeypatch):
+    monkeypatch.setattr(cli, 'save_state', lambda state: None)
+    monkeypatch.setattr(cli, 'log_event', lambda **event: None)
+    monkeypatch.setattr(cli.pods, 'create_pod', lambda config, name, cloud: 'pod1')
+    monkeypatch.setattr(cli.pods, 'wait_for_host', lambda pod_id: dict(costPerHr=0.74, machine=dict(podHostId='pod1-64411450')))
+    monkeypatch.setattr(cli.pods, 'delete_pod', lambda pod_id: (True, 'deleted'))
+    monkeypatch.setattr(cli.pods.Pod, 'wait_for_ssh', lambda self, timeout=300, poll=15: False)
+    monkeypatch.setattr(cli.pods.Pod, 'check_usable', lambda self, *a, **k: pytest.fail('health check needs SSH'))
+    state = cli.new_state()
+    acquired, reason = cli.acquire('depth', state, _config(), {})
+    assert acquired is None and 'reachable' in reason
+    assert '64411450' not in state.get('faulted_machines', {})
+    assert state['pods'][0]['ended_utc']

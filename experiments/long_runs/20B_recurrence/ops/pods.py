@@ -279,6 +279,18 @@ rm -f {REMOTE_OPS}/{name}.exit
 setsid nohup bash -c 'bash {REMOTE_OPS}/{name}.sh > {REMOTE_OPS}/{name}.log 2>&1; echo $? > {REMOTE_OPS}/{name}.exit' > /dev/null 2>&1 &
 echo started''')
 
+    def wait_for_ssh(self, timeout=300, poll=15):
+        """True once the Pod answers over the SSH proxy; new Pods need a minute or two."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                if self.run('echo ready', timeout=60).splitlines()[-1] == 'ready':
+                    return True
+            except Exception:
+                pass
+            time.sleep(poll)
+        return False
+
     def wait_background(self, name, timeout, poll=30):
         deadline = time.time() + timeout
         while time.time() < deadline:
