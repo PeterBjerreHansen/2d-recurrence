@@ -43,13 +43,13 @@ The step counter stays still during post-training evaluation, and that phase is 
 
 **Host CPUs and fast-host alerts.** The recurrent arms are limited by how fast the host CPU dispatches GPU work: on AMD EPYC 7532 hosts the hybrid ran about 1.6× slower than on the probe host. Every rented Pod's CPU model is recorded in `events.jsonl` and `state.json` (`machine_cpus`), and each tick reports every running arm's CPU and whether it matches `fast_cpu_patterns` (desktop and workstation families). While any running arm is on a slow CPU, the tick samples one Community and one Secure 4090 every `fast_host_survey_minutes` (60). Each sample lives about a minute: the tool reads its CPU and, if it's fast, runs the full health check, then deletes it. A healthy fast host raises `ALERT FAST HOST: ...`. Migrating an arm is manual: pause, copy the arm's results to a new Pod, run `train <arm> --resume` there, then update `state.json` and unpause. The per-arm environment log accepts the new host because the GPU model is unchanged.
 
-**Notifications.** The tick posts macOS notifications itself, whatever the scheduling agent shows:
+**Notifications.** The tick opens macOS dialog windows itself, whatever the scheduling agent shows. Notification Center banners from `osascript` are silently dropped on this Mac. A dialog opens without blocking the tick and stays until you click OK. You get one:
 
-- each new alert, with a louder sound for `FAST HOST` and failures;
-- each arm that starts, resumes or is collected;
-- one status summary a day, at the first tick after `daily_summary_hour` (09:00).
+- for each new alert (warning icon; a sound for `FAST HOST` and failures);
+- for each arm that starts, resumes or is collected;
+- once a day, at the first tick after `daily_summary_hour` (09:00), with a status summary.
 
-A persisting alert is re-notified at most every `notify_repeat_hours` (6). Run `cli.py notify-test` to check that notifications reach you from the process that runs the ticks.
+A persisting alert opens a new dialog at most every `notify_repeat_hours` (6). `cli.py notify-test` opens a test dialog.
 
 **Cadence.** Every tick reports `next_tick_minutes`: `fast_tick_minutes` (10) while any arm is still `pending`, otherwise `slow_tick_minutes` (60). The monitoring agent reschedules itself to match. A tick called before it is due returns `not_due` and does nothing, so a missed schedule switch is harmless. `tick --force` overrides this for a human. A tick that is acquiring or collecting can hold the lock for over an hour; later ticks then report the lock and do nothing.
 

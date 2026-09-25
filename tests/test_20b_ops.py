@@ -404,3 +404,21 @@ def test_notifications_carry_alerts_news_and_are_deduplicated(monkeypatch):
     sent.clear()
     cli.send_notifications(dict(report, news=[]), state, _config())
     assert sent == []
+
+
+def test_notify_opens_a_detached_dialog_with_urgency_icon(monkeypatch):
+    launched = []
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            assert kwargs.get('start_new_session') is True  # never blocks the tick
+            launched.append(command)
+
+    monkeypatch.setattr('subprocess.Popen', FakePopen)
+    assert cli.notify('20B campaign ALERT', 'FAST HOST: "quoted" text', 'Glass') == (0, '')
+    sound, dialog = launched
+    assert sound[0] == 'afplay' and sound[1].endswith('Glass.aiff')
+    assert dialog[0] == 'osascript' and 'with icon caution' in dialog[2] and '\\"quoted\\"' in dialog[2]
+    launched.clear()
+    cli.notify('20B campaign', 'depth started')
+    assert len(launched) == 1 and 'with icon note' in launched[0][2]

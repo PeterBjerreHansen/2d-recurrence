@@ -366,17 +366,23 @@ def check_bundle(config):
 
 
 def notify(title, message, sound=None):
-    """Post a macOS notification; never let a notification failure break a tick."""
+    """Show a macOS dialog; it stays until dismissed and never blocks the tick.
+
+    Notification Center banners from osascript are silently dropped on this
+    Mac (macOS 27), so dialogs are used instead. ``sound`` marks urgency.
+    """
     import subprocess
     quote = lambda text: json.dumps(' '.join(str(text).split()))  # AppleScript-compatible string
-    script = f'display notification {quote(message[:240])} with title {quote(title)}'
-    if sound:
-        script += f' sound name {quote(sound)}'
+    icon = 'caution' if sound == 'Glass' else 'note'
+    script = (f'display dialog {quote(message[:600])} with title {quote(title)} '
+              f'buttons {{"OK"}} default button 1 with icon {icon}')
     try:
-        completed = subprocess.run(['osascript', '-e', script], capture_output=True, text=True, timeout=20)
-        if completed.returncode != 0:
-            log_event(event='notify_failed', reason=completed.stderr[-200:])
-        return completed.returncode, completed.stderr.strip()
+        if sound:
+            subprocess.Popen(['afplay', f'/System/Library/Sounds/{sound}.aiff'],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        subprocess.Popen(['osascript', '-e', script], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return 0, ''
     except Exception as error:
         log_event(event='notify_failed', reason=str(error)[:200])
         return None, str(error)[:200]
@@ -556,8 +562,7 @@ def main():
     elif args.command == 'notify-test':
         code, error = notify('20B campaign', 'Test notification: alerts from the campaign tick will look like this.', 'Glass')
         if code == 0:
-            print('Notification posted. It appears under "Script Editor" in System Settings > Notifications; '
-                  'if no banner showed, allow notifications there and check Focus.')
+            print('Test dialog opened; click OK to close it.')
         else:
             print(f'Notification failed (exit {code}): {error}')
     elif args.command == 'check-bundle':
