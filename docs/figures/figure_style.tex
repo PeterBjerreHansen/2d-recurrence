@@ -1,0 +1,65 @@
+% Shared palette and TikZ styles for the information-flow figures.
+%
+% Each figure sets its cell size before loading this file:
+%   \def\figcellw{0.80cm}\def\figcellh{0.36cm}
+%   \input{figure_style}
+\providecommand{\figcellw}{0.80cm}
+\providecommand{\figcellh}{0.36cm}
+
+% ------------------------------------------------------------
+% Palette
+% ------------------------------------------------------------
+\definecolor{frameblue}{RGB}{42,66,167}
+\definecolor{headerfill}{RGB}{238,242,252}
+\definecolor{activefill}{RGB}{210,235,250}
+\definecolor{activedraw}{RGB}{0,137,225}
+\definecolor{ghostfill}{RGB}{222,228,236}
+\definecolor{ghostdraw}{RGB}{145,154,168}
+\definecolor{depthfill}{RGB}{249,221,187}
+\definecolor{depthdraw}{RGB}{216,108,19}
+\definecolor{tempfill}{RGB}{229,210,252}
+\definecolor{tempdraw}{RGB}{119,45,205}
+
+% ------------------------------------------------------------
+% Styles
+% ------------------------------------------------------------
+\tikzset{
+  % Frames and headers
+  panel/.style={draw=frameblue, rounded corners=4pt, line width=0.9pt},
+  header/.style={draw=frameblue, fill=headerfill, rounded corners=4pt, line width=0.9pt},
+  sideheader/.style={header},
+  descbox/.style={draw=frameblue!55, fill=white, rounded corners=2.5pt, line width=0.6pt,
+    inner sep=2pt, align=center, font=\footnotesize,
+    execute at begin node={\hyphenpenalty=10000\exhyphenpenalty=10000\relax}},
+  divider/.style={draw=frameblue, dashed, line width=0.8pt},
+  % Layer and block cells
+  cell/.style={rounded corners=2pt, minimum width=\figcellw, minimum height=\figcellh, inner sep=0pt},
+  active/.style={cell, draw=activedraw, fill=activefill, line width=0.82pt},
+  ghost/.style={cell, draw=ghostdraw, fill=ghostfill, fill opacity=0.42, draw opacity=0.58, line width=0.72pt},
+  depthmark/.style={cell, draw=depthdraw, fill=depthfill, line width=0.95pt},
+  tempmark/.style={cell, draw=tempdraw, fill=tempfill, line width=0.95pt},
+  depthcell/.style={depthmark},
+  tempcell/.style={tempmark},
+  ghostdepth/.style={cell, draw=depthdraw, fill=depthfill, fill opacity=0.28, draw opacity=0.55, line width=0.90pt},
+  ghosttemp/.style={cell, draw=tempdraw, fill=tempfill, fill opacity=0.28, draw opacity=0.55, line width=0.90pt},
+  notrun/.style={cell, draw=ghostdraw, dashed, draw opacity=0.7, line width=0.6pt},
+  stateT/.style={cell, draw=tempdraw, fill=tempfill, inner sep=1pt, line width=0.9pt, font=\footnotesize},
+  stateD/.style={cell, draw=depthdraw, fill=depthfill, inner sep=1pt, line width=0.9pt, font=\footnotesize},
+  % State injection points
+  injectD/.style={circle, draw=depthdraw, fill=depthfill, minimum size=3.6mm,
+    inner sep=0pt, line width=0.85pt, font=\bfseries\scriptsize},
+  injectT/.style={circle, draw=tempdraw, fill=tempfill, minimum size=3.6mm,
+    inner sep=0pt, line width=0.85pt, font=\bfseries\scriptsize},
+  % Arrows
+  flow/.style={-{Latex[length=1.8mm]}, draw=black, line width=0.82pt},
+  injflow/.style={-{Latex[length=1.25mm]}, draw=black, line width=0.82pt},
+  ghostflow/.style={-{Latex[length=1.5mm]}, draw=black!38, line width=0.58pt},
+  dread/.style={-{Latex[length=1.9mm]}, draw=depthdraw, dashed, line width=0.95pt},
+  tread/.style={-{Latex[length=1.9mm]}, draw=tempdraw, dashed, line width=0.95pt},
+  % Labels
+  brace label/.style={midway, xshift=-0.86cm, align=right, text width=1.32cm, font=\footnotesize},
+  rlabel/.style={anchor=east, font=\footnotesize, align=right, text width=1.65cm},
+  stage/.style={anchor=east, font=\footnotesize, align=right, text width=1.8cm},
+  tinylabel/.style={font=\footnotesize, align=center},
+  legendtext/.style={anchor=west, font=\footnotesize},
+}

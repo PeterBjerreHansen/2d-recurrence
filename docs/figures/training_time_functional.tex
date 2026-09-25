@@ -1,55 +1,8 @@
 \documentclass[tikz,border=7pt]{standalone}
 \usepackage{amsmath}
 \usetikzlibrary{arrows.meta,calc,positioning,decorations.pathreplacing}
-
-% ------------------------------------------------------------
-% Palette
-% ------------------------------------------------------------
-\definecolor{frameblue}{RGB}{42,66,167}
-\definecolor{headerfill}{RGB}{238,242,252}
-\definecolor{activefill}{RGB}{210,235,250}
-\definecolor{activedraw}{RGB}{0,137,225}
-\definecolor{ghostfill}{RGB}{222,228,236}
-\definecolor{ghostdraw}{RGB}{145,154,168}
-\definecolor{depthfill}{RGB}{249,221,187}
-\definecolor{depthdraw}{RGB}{216,108,19}
-\definecolor{tempfill}{RGB}{229,210,252}
-\definecolor{tempdraw}{RGB}{119,45,205}
-
-% ------------------------------------------------------------
-% Styles
-% ------------------------------------------------------------
-\tikzset{
-  panel/.style={draw=frameblue, rounded corners=4pt, line width=0.9pt},
-  header/.style={draw=frameblue, fill=headerfill, rounded corners=4pt, line width=0.9pt},
-  sideheader/.style={draw=frameblue, fill=headerfill, rounded corners=4pt, line width=0.9pt},
-  active/.style={draw=activedraw, fill=activefill, rounded corners=2pt,
-    minimum width=0.82cm, minimum height=0.36cm, inner sep=0pt, line width=0.85pt},
-  ghost/.style={draw=ghostdraw, fill=ghostfill, fill opacity=0.42, draw opacity=0.58,
-    rounded corners=2pt, minimum width=0.80cm, minimum height=0.38cm, inner sep=0pt, line width=0.75pt},
-  depthcell/.style={draw=depthdraw, fill=depthfill, rounded corners=2pt,
-    minimum width=0.80cm, minimum height=0.38cm, inner sep=0pt, line width=0.95pt},
-  tempcell/.style={draw=tempdraw, fill=tempfill, rounded corners=2pt,
-    minimum width=0.80cm, minimum height=0.38cm, inner sep=0pt, line width=0.95pt},
-  injectD/.style={circle, draw=depthdraw, fill=depthfill, minimum size=3.4mm,
-    inner sep=0pt, line width=0.85pt, font=\bfseries\scriptsize},
-  injectT/.style={circle, draw=tempdraw, fill=tempfill, minimum size=3.4mm,
-    inner sep=0pt, line width=0.85pt, font=\bfseries\scriptsize},
-  flow/.style={-{Latex[length=1.8mm]}, draw=black, line width=0.82pt},
-  ghostflow/.style={-{Latex[length=1.5mm]}, draw=black!38, line width=0.58pt},
-  dread/.style={-{Latex[length=1.9mm]}, draw=depthdraw, dashed, line width=0.95pt},
-  tread/.style={-{Latex[length=1.9mm]}, draw=tempdraw, dashed, line width=0.95pt},
-  divider/.style={draw=frameblue, dashed, line width=0.8pt},
-  rlabel/.style={anchor=east,font=\scriptsize,align=right,text width=1.65cm},
-  descbox/.style={draw=frameblue!55, fill=white, rounded corners=2.5pt, line width=0.6pt, inner sep=1.6pt, align=center, font=\scriptsize},
-}
-
-% ------------------------------------------------------------
-% Generic stacked pass macros with explicit y positions
-% ------------------------------------------------------------
-\newcommand{\DrawActiveCol}[3]{%
-  % #1 prefix, #2 x, #3 list of name/y pairs already expanded below by panel
-}
+\def\figcellw{0.82cm}\def\figcellh{0.38cm}
+\input{figure_style}
 
 \begin{document}
 \begin{tikzpicture}[x=1cm,y=1cm]
@@ -57,7 +10,7 @@
 % ------------------------------------------------------------
 % Title
 % ------------------------------------------------------------
-\node[font=\bfseries\huge] at (11.9,17.30)
+\node[font=\bfseries\LARGE] at (11.9,17.30)
   {Training-time information flows};
 
 % ------------------------------------------------------------
@@ -78,7 +31,7 @@
 % ============================================================
 \begin{scope}[shift={(2.35,7.50)}]
   \draw[panel] (0,0) rectangle (10.35,7.90);
-  \node[font=\bfseries\Large] at (5.175,7.50) {Vanilla transformer};
+  \node[font=\bfseries\large] at (5.175,7.50) {Vanilla transformer};
   \node[descbox,text width=9.75cm] at (5.18,6.78)
     {Single pass only. Stages are embedding, backbone blocks, and head.};
 
@@ -99,9 +52,9 @@
     \draw[flow] (\P-b2.north) -- (\P-b3.south);
     \draw[flow] (\P-b3.north) -- (\P-h.south);
   }
-  \node[font=\itshape\scriptsize] at (4.95,0.55) {$t-1$};
-  \node[font=\itshape\scriptsize] at (6.35,0.55) {$t$};
-  \node[font=\itshape\scriptsize] at (7.75,0.55) {$t+1$};
+  \node[font=\itshape\footnotesize] at (4.95,0.55) {$t{-}1$};
+  \node[font=\itshape\footnotesize] at (6.35,0.55) {$t$};
+  \node[font=\itshape\footnotesize] at (7.75,0.55) {$t{+}1$};
 \end{scope}
 
 % ============================================================
@@ -109,16 +62,16 @@
 % ============================================================
 \begin{scope}[shift={(13.00,7.50)}]
   \draw[panel] (0,0) rectangle (10.35,7.90);
-  \node[font=\bfseries\Large] at (5.175,7.50) {Depth-recurrent / looped LM};
+  \node[font=\bfseries\large] at (5.175,7.50) {Depth-recurrent / looped LM};
   \node[descbox,text width=9.75cm] at (5.18,6.78)
-    {Depth state is emitted from recurrent core in pass $i-1$ and read before recurrent core in pass $i$.};
+    {Depth state is emitted from recurrent core in \mbox{pass $i{-}1$} and read before recurrent core in pass $i$.};
 
   \node[rlabel] at (1.35,5.10) {coda};
   \node[rlabel] at (1.35,3.65) {recurrent\\core};
   \node[rlabel] at (1.35,1.40) {prelude};
 
-  \node[font=\bfseries\scriptsize,text=black!60] at (3.45,5.88) {pass $i-1$};
-  \node[font=\bfseries\scriptsize] at (6.75,5.88) {pass $i$};
+  \node[font=\bfseries\footnotesize,text=black!60] at (3.45,5.88) {\mbox{pass $i{-}1$}};
+  \node[font=\bfseries\footnotesize] at (6.75,5.88) {pass $i$};
 
   \foreach \P/\X in {d1/2.55,d2/3.45,d3/4.35}{
     \node[ghost] (\P-p) at (\X,1.40) {};
@@ -130,9 +83,9 @@
   \node[depthcell] at (d1-c) {};
   \node[depthcell] at (d2-c) {};
   \node[depthcell] at (d3-c) {};
-  \node[font=\itshape\scriptsize,text=black!48] at (2.55,0.55) {$t-1$};
-  \node[font=\itshape\scriptsize,text=black!48] at (3.45,0.55) {$t$};
-  \node[font=\itshape\scriptsize,text=black!48] at (4.35,0.55) {$t+1$};
+  \node[font=\itshape\footnotesize,text=black!48] at (2.55,0.55) {$t{-}1$};
+  \node[font=\itshape\footnotesize,text=black!48] at (3.45,0.55) {$t$};
+  \node[font=\itshape\footnotesize,text=black!48] at (4.35,0.55) {$t{+}1$};
 
   \draw[divider] (5.10,0.42) -- (5.10,5.63);
 
@@ -149,9 +102,9 @@
   \draw[dread] (d1-c.north east) .. controls +(0.34,0.34) and +(-0.42,0.16) .. (dinjA.north west);
   \draw[dread] (d2-c.north east) .. controls +(0.34,0.30) and +(-0.42,0.14) .. (dinjB.north west);
   \draw[dread] (d3-c.north east) .. controls +(0.34,0.26) and +(-0.42,0.12) .. (dinjC.north west);
-  \node[font=\itshape\scriptsize] at (5.85,0.55) {$t-1$};
-  \node[font=\itshape\scriptsize] at (6.75,0.55) {$t$};
-  \node[font=\itshape\scriptsize] at (7.65,0.55) {$t+1$};
+  \node[font=\itshape\footnotesize] at (5.85,0.55) {$t{-}1$};
+  \node[font=\itshape\footnotesize] at (6.75,0.55) {$t$};
+  \node[font=\itshape\footnotesize] at (7.65,0.55) {$t{+}1$};
 \end{scope}
 
 % ============================================================
@@ -159,16 +112,16 @@
 % ============================================================
 \begin{scope}[shift={(2.35,-0.70)}]
   \draw[panel] (0,0) rectangle (10.35,7.90);
-  \node[font=\bfseries\Large] at (5.175,7.50) {Temporally recurrent};
+  \node[font=\bfseries\large] at (5.175,7.50) {Temporally recurrent};
   \node[descbox,text width=9.75cm] at (5.18,6.78)
-    {Temporal state is emitted from the last core layer in pass $i-1$ and read before core in pass $i$.};
+    {Temporal state is emitted from the last core layer in \mbox{pass $i{-}1$} and read before core in pass $i$.};
 
   \node[rlabel] at (1.35,5.10) {coda};
   \node[rlabel] at (1.35,3.70) {core};
   \node[rlabel] at (1.35,1.40) {prelude};
 
-  \node[font=\bfseries\scriptsize,text=black!60] at (3.45,5.88) {pass $i-1$};
-  \node[font=\bfseries\scriptsize] at (6.75,5.88) {pass $i$};
+  \node[font=\bfseries\footnotesize,text=black!60] at (3.45,5.88) {\mbox{pass $i{-}1$}};
+  \node[font=\bfseries\footnotesize] at (6.75,5.88) {pass $i$};
 
   \foreach \P/\X in {t1/2.55,t2/3.45,t3/4.35}{
     \node[ghost] (\P-p) at (\X,1.40) {};
@@ -179,9 +132,9 @@
   }
   \node[tempcell] at (t1-c) {};
   \node[tempcell] at (t2-c) {};
-  \node[font=\itshape\scriptsize,text=black!48] at (2.55,0.55) {$t-1$};
-  \node[font=\itshape\scriptsize,text=black!48] at (3.45,0.55) {$t$};
-  \node[font=\itshape\scriptsize,text=black!48] at (4.35,0.55) {$t+1$};
+  \node[font=\itshape\footnotesize,text=black!48] at (2.55,0.55) {$t{-}1$};
+  \node[font=\itshape\footnotesize,text=black!48] at (3.45,0.55) {$t$};
+  \node[font=\itshape\footnotesize,text=black!48] at (4.35,0.55) {$t{+}1$};
 
   \draw[divider] (5.10,0.55) -- (5.10,5.63);
 
@@ -196,9 +149,9 @@
   \node[injectT] (tinjC) at (7.65,2.325) {T};
   \draw[tread] (t1-c.north east) .. controls +(0.40,0.36) and +(-0.48,0.12) .. (tinjB.north west);
   \draw[tread] (t2-c.north east) .. controls +(0.40,0.30) and +(-0.48,0.10) .. (tinjC.north west);
-  \node[font=\itshape\scriptsize] at (5.85,0.55) {$t-1$};
-  \node[font=\itshape\scriptsize] at (6.75,0.55) {$t$};
-  \node[font=\itshape\scriptsize] at (7.65,0.55) {$t+1$};
+  \node[font=\itshape\footnotesize] at (5.85,0.55) {$t{-}1$};
+  \node[font=\itshape\footnotesize] at (6.75,0.55) {$t$};
+  \node[font=\itshape\footnotesize] at (7.65,0.55) {$t{+}1$};
 \end{scope}
 
 % ============================================================
@@ -206,9 +159,9 @@
 % ============================================================
 \begin{scope}[shift={(13.00,-0.70)}]
   \draw[panel] (0,0) rectangle (10.35,7.90);
-  \node[font=\bfseries\Large] at (5.175,7.50) {Depth + temporal hybrid};
+  \node[font=\bfseries\large] at (5.175,7.50) {Depth + temporal hybrid};
   \node[descbox,text width=9.75cm] at (5.18,6.78)
-    {T-source emits temporal state and recurrent core emits depth state in pass $i-1$; pass $i$ reads them before T-buffer and recurrent core.};
+    {T-source emits temporal state and recurrent core emits depth state in \mbox{pass $i{-}1$}; pass $i$ reads them before T-buffer and recurrent core.};
 
   \node[rlabel] at (1.35,5.10) {coda};
   \node[rlabel] at (1.35,4.15) {T-source\\(optional)};
@@ -216,8 +169,8 @@
   \node[rlabel] at (1.35,2.15) {T-buffer\\(optional)};
   \node[rlabel] at (1.35,1.10) {prelude};
 
-  \node[font=\bfseries\scriptsize,text=black!60] at (3.45,5.88) {pass $i-1$};
-  \node[font=\bfseries\scriptsize] at (6.75,5.88) {pass $i$};
+  \node[font=\bfseries\footnotesize,text=black!60] at (3.45,5.88) {\mbox{pass $i{-}1$}};
+  \node[font=\bfseries\footnotesize] at (6.75,5.88) {pass $i$};
 
   \foreach \P/\X in {h1/2.55,h2/3.45,h3/4.35}{
     \node[ghost] (\P-p) at (\X,1.10) {};
@@ -235,9 +188,9 @@
   \node[depthcell] at (h3-c) {};
   \node[tempcell] at (h1-s) {};
   \node[tempcell] at (h2-s) {};
-  \node[font=\itshape\scriptsize,text=black!48] at (2.55,0.55) {$t-1$};
-  \node[font=\itshape\scriptsize,text=black!48] at (3.45,0.55) {$t$};
-  \node[font=\itshape\scriptsize,text=black!48] at (4.35,0.55) {$t+1$};
+  \node[font=\itshape\footnotesize,text=black!48] at (2.55,0.55) {$t{-}1$};
+  \node[font=\itshape\footnotesize,text=black!48] at (3.45,0.55) {$t$};
+  \node[font=\itshape\footnotesize,text=black!48] at (4.35,0.55) {$t{+}1$};
 
   \draw[divider] (5.10,0.30) -- (5.10,5.63);
 
@@ -274,9 +227,9 @@
   \draw[dread] (h2-c.north east) .. controls +(0.36,0.30) and +(-0.32,0.16) .. (hinjD2.north west);
   \draw[dread] (h3-c.north east) .. controls +(0.36,0.26) and +(-0.32,0.14) .. (hinjD3.north west);
 
-  \node[font=\itshape\scriptsize] at (5.85,0.55) {$t-1$};
-  \node[font=\itshape\scriptsize] at (6.75,0.55) {$t$};
-  \node[font=\itshape\scriptsize] at (7.65,0.55) {$t+1$};
+  \node[font=\itshape\footnotesize] at (5.85,0.55) {$t{-}1$};
+  \node[font=\itshape\footnotesize] at (6.75,0.55) {$t$};
+  \node[font=\itshape\footnotesize] at (7.65,0.55) {$t{+}1$};
 \end{scope}
 
 % ------------------------------------------------------------
@@ -288,27 +241,27 @@
   % centered first legend row
   \begin{scope}[xshift=2.75cm]
     \node[ghost] at (0.65,0.74) {};
-    \node[anchor=west,font=\scriptsize] at (1.10,0.74) {pass $i-1$ block};
+    \node[anchor=west,font=\footnotesize] at (1.10,0.74) {\mbox{pass $i{-}1$} block};
     \node[active] at (4.15,0.74) {};
-    \node[anchor=west,font=\scriptsize] at (4.65,0.74) {pass $i$ block};
+    \node[anchor=west,font=\footnotesize] at (4.65,0.74) {pass $i$ block};
     \node[depthcell] at (7.95,0.74) {};
-    \node[anchor=west,font=\scriptsize] at (8.45,0.74) {depth-state emission};
+    \node[anchor=west,font=\footnotesize] at (8.45,0.74) {writes depth state};
     \node[tempcell] at (12.15,0.74) {};
-    \node[anchor=west,font=\scriptsize] at (12.65,0.74) {temporal-state emission};
+    \node[anchor=west,font=\footnotesize] at (12.65,0.74) {writes temporal state};
   \end{scope}
 
   % centered second legend row
   \begin{scope}[xshift=4.45cm]
     \draw[flow] (0.45,0.28) -- (1.25,0.28);
-    \node[anchor=west,font=\scriptsize] at (1.40,0.28) {within-pass flow};
+    \node[anchor=west,font=\footnotesize] at (1.40,0.28) {within-pass flow};
 
     \node[injectD] (legD) at (5.80,0.28) {D};
     \draw[dread] (4.75,0.28) -- (legD.west);
-    \node[anchor=west,font=\scriptsize] at (6.18,0.28) {depth read};
+    \node[anchor=west,font=\footnotesize] at (6.18,0.28) {depth-state read};
 
     \node[injectT] (legT) at (9.95,0.28) {T};
     \draw[tread] (8.90,0.28) -- (legT.west);
-    \node[anchor=west,font=\scriptsize] at (10.33,0.28) {temporal read};
+    \node[anchor=west,font=\footnotesize] at (10.33,0.28) {temporal-state read};
   \end{scope}
 \end{scope}
 

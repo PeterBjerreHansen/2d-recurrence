@@ -1,0 +1,223 @@
+\documentclass[tikz,border=7pt]{standalone}
+\usepackage{amsmath}
+\usetikzlibrary{arrows.meta,calc,positioning,decorations.pathreplacing}
+\def\figcellw{0.90cm}\def\figcellh{0.32cm}
+\input{../figure_style}
+
+\begin{document}
+\begin{tikzpicture}[x=1cm,y=1cm]
+
+\node[font=\bfseries\LARGE] at (11.9,17.30) {Inference-time information flows};
+\node[header, minimum width=10.35cm, minimum height=0.85cm, font=\bfseries\large] at (7.525,15.945) {Depth recurrence OFF};
+\node[header, minimum width=10.35cm, minimum height=0.85cm, font=\bfseries\large] at (18.175,15.945) {Depth recurrence ON};
+\node[sideheader, minimum width=8.05cm, minimum height=0.85cm, rotate=90, font=\bfseries\large] at (1.805,11.38) {Temporal recurrence OFF};
+\node[sideheader, minimum width=8.05cm, minimum height=0.85cm, rotate=90, font=\bfseries\large] at (1.805,2.98) {Temporal recurrence ON};
+
+% ---------------- Vanilla transformer
+\begin{scope}[shift={(2.35,7.35)}]
+  \draw[panel] (0,0) rectangle (10.35,8.05);
+  \node[font=\bfseries\large] at (5.175,7.62) {Vanilla transformer};
+  \node[descbox, text width=9.6cm] at (5.175,6.92) {Each token runs L1--L8 once; no state is carried between tokens.};
+  \draw[decorate,decoration={brace,amplitude=4pt}] (2.3,0.64) -- (2.3,5.21) node[brace label] {L1--L8\\blocks};
+  \node[font=\bfseries\footnotesize, text=black!60] at (3.35,5.62) {token $t{-}1$};
+  \node[font=\bfseries\footnotesize] at (6.55,5.62) {token $t$};
+  \node[ghost] (tlk0r1) at (3.350,0.800) {};
+  \node[ghost] (tlk0r2) at (3.350,1.550) {};
+  \node[ghost] (tlk0r3) at (3.350,2.300) {};
+  \node[ghost] (tlk0r4) at (3.350,2.850) {};
+  \node[ghost] (tlk0r5) at (3.350,3.400) {};
+  \node[ghost] (tlk0r6) at (3.350,3.950) {};
+  \node[ghost] (tlk0r7) at (3.350,4.500) {};
+  \node[ghost] (tlk0r8) at (3.350,5.050) {};
+  \draw[ghostflow] (tlk0r1.north) -- (tlk0r2.south);
+  \draw[ghostflow] (tlk0r2.north) -- (tlk0r3.south);
+  \draw[ghostflow] (tlk0r3.north) -- (tlk0r4.south);
+  \draw[ghostflow] (tlk0r4.north) -- (tlk0r5.south);
+  \draw[ghostflow] (tlk0r5.north) -- (tlk0r6.south);
+  \draw[ghostflow] (tlk0r6.north) -- (tlk0r7.south);
+  \draw[ghostflow] (tlk0r7.north) -- (tlk0r8.south);
+  \node[active] (tlk1r1) at (6.550,0.800) {};
+  \node[active] (tlk1r2) at (6.550,1.550) {};
+  \node[active] (tlk1r3) at (6.550,2.300) {};
+  \node[active] (tlk1r4) at (6.550,2.850) {};
+  \node[active] (tlk1r5) at (6.550,3.400) {};
+  \node[active] (tlk1r6) at (6.550,3.950) {};
+  \node[active] (tlk1r7) at (6.550,4.500) {};
+  \node[active] (tlk1r8) at (6.550,5.050) {};
+  \draw[flow] (tlk1r1.north) -- (tlk1r2.south);
+  \draw[flow] (tlk1r2.north) -- (tlk1r3.south);
+  \draw[flow] (tlk1r3.north) -- (tlk1r4.south);
+  \draw[flow] (tlk1r4.north) -- (tlk1r5.south);
+  \draw[flow] (tlk1r5.north) -- (tlk1r6.south);
+  \draw[flow] (tlk1r6.north) -- (tlk1r7.south);
+  \draw[flow] (tlk1r7.north) -- (tlk1r8.south);
+\end{scope}
+
+% ---------------- Depth-recurrent / looped LM
+\begin{scope}[shift={(13.0,7.35)}]
+  \draw[panel] (0,0) rectangle (10.35,8.05);
+  \node[font=\bfseries\large] at (5.175,7.62) {Depth-recurrent / looped LM};
+  \node[descbox, text width=9.6cm] at (5.175,6.92) {The core (L3--L6) runs $J$ times per token; its output re-enters before L3. Depth state is discarded at the next token.};
+  \node[anchor=east, font=\footnotesize] at (2.42,0.8) {L1 prelude};
+  \node[anchor=east, font=\footnotesize] at (2.42,1.55) {L2 T-buffer};
+  \node[anchor=east, font=\footnotesize] at (2.42,4.5) {L7 T-source};
+  \node[anchor=east, font=\footnotesize] at (2.42,5.05) {L8 coda};
+  \draw[decorate,decoration={brace,amplitude=4pt}] (2.3,2.1399999999999997) -- (2.3,4.11) node[brace label] {L3--L6\\core};
+  \node[font=\bfseries\footnotesize, text=black!60] at (3.35,5.62) {token $t{-}1$};
+  \node[font=\bfseries\footnotesize] at (6.55,5.62) {token $t$};
+  \node[ghost] (trk0r1) at (3.350,0.800) {};
+  \node[ghost] (trk0r2) at (3.350,1.550) {};
+  \node[ghost] (trk0r3) at (3.350,2.300) {};
+  \node[ghost] (trk0r4) at (3.350,2.850) {};
+  \node[ghost] (trk0r5) at (3.350,3.400) {};
+  \node[ghostdepth] (trk0r6) at (3.350,3.950) {};
+  \node[ghost] (trk0r7) at (3.350,4.500) {};
+  \node[ghost] (trk0r8) at (3.350,5.050) {};
+  \draw[ghostflow] (trk0r1.north) -- (trk0r2.south);
+  \draw[ghostflow] (trk0r2.north) -- (trk0r3.south);
+  \draw[ghostflow] (trk0r3.north) -- (trk0r4.south);
+  \draw[ghostflow] (trk0r4.north) -- (trk0r5.south);
+  \draw[ghostflow] (trk0r5.north) -- (trk0r6.south);
+  \draw[ghostflow] (trk0r6.north) -- (trk0r7.south);
+  \draw[ghostflow] (trk0r7.north) -- (trk0r8.south);
+  \node[active] (trk1r1) at (6.550,0.800) {};
+  \node[active] (trk1r2) at (6.550,1.550) {};
+  \node[active] (trk1r3) at (6.550,2.300) {};
+  \node[active] (trk1r4) at (6.550,2.850) {};
+  \node[active] (trk1r5) at (6.550,3.400) {};
+  \node[depthmark] (trk1r6) at (6.550,3.950) {};
+  \node[active] (trk1r7) at (6.550,4.500) {};
+  \node[active] (trk1r8) at (6.550,5.050) {};
+  \draw[flow] (trk1r1.north) -- (trk1r2.south);
+  \draw[flow] (trk1r2.north) -- (trk1r3.south);
+  \draw[flow] (trk1r3.north) -- (trk1r4.south);
+  \draw[flow] (trk1r4.north) -- (trk1r5.south);
+  \draw[flow] (trk1r5.north) -- (trk1r6.south);
+  \draw[flow] (trk1r6.north) -- (trk1r7.south);
+  \draw[flow] (trk1r7.north) -- (trk1r8.south);
+  \draw[dread, rounded corners=4pt] (trk1r6.east) -- ++(0.45,0) |- (6.740,1.925);
+  \node[font=\footnotesize, text=depthdraw, anchor=west] at (7.500,2.938) {repeat $J$ times};
+  \node[injectD] at (6.550,1.925) {D};
+\end{scope}
+
+% ---------------- Temporally recurrent
+\begin{scope}[shift={(2.35,-1.05)}]
+  \draw[panel] (0,0) rectangle (10.35,8.05);
+  \node[font=\bfseries\large] at (5.175,7.62) {Temporally recurrent};
+  \node[descbox, text width=9.6cm] at (5.175,6.92) {Token $t{-}1$'s T-source output (L7) is read by token $t$ after L1, so the chain runs through every earlier token.};
+  \node[anchor=east, font=\footnotesize] at (2.42,0.8) {L1 prelude};
+  \node[anchor=east, font=\footnotesize] at (2.42,1.55) {L2 T-buffer};
+  \node[anchor=east, font=\footnotesize] at (2.42,4.5) {L7 T-source};
+  \node[anchor=east, font=\footnotesize] at (2.42,5.05) {L8 coda};
+  \draw[decorate,decoration={brace,amplitude=4pt}] (2.3,2.1399999999999997) -- (2.3,4.11) node[brace label] {L3--L6\\core};
+  \node[font=\bfseries\footnotesize, text=black!60] at (3.35,5.62) {token $t{-}1$};
+  \node[font=\bfseries\footnotesize] at (6.55,5.62) {token $t$};
+  \node[ghost] (blk0r1) at (3.350,0.800) {};
+  \node[ghost] (blk0r2) at (3.350,1.550) {};
+  \node[ghost] (blk0r3) at (3.350,2.300) {};
+  \node[ghost] (blk0r4) at (3.350,2.850) {};
+  \node[ghost] (blk0r5) at (3.350,3.400) {};
+  \node[ghost] (blk0r6) at (3.350,3.950) {};
+  \node[ghosttemp] (blk0r7) at (3.350,4.500) {};
+  \node[ghost] (blk0r8) at (3.350,5.050) {};
+  \draw[ghostflow] (blk0r1.north) -- (blk0r2.south);
+  \draw[ghostflow] (blk0r2.north) -- (blk0r3.south);
+  \draw[ghostflow] (blk0r3.north) -- (blk0r4.south);
+  \draw[ghostflow] (blk0r4.north) -- (blk0r5.south);
+  \draw[ghostflow] (blk0r5.north) -- (blk0r6.south);
+  \draw[ghostflow] (blk0r6.north) -- (blk0r7.south);
+  \draw[ghostflow] (blk0r7.north) -- (blk0r8.south);
+  \node[active] (blk1r1) at (6.550,0.800) {};
+  \node[active] (blk1r2) at (6.550,1.550) {};
+  \node[active] (blk1r3) at (6.550,2.300) {};
+  \node[active] (blk1r4) at (6.550,2.850) {};
+  \node[active] (blk1r5) at (6.550,3.400) {};
+  \node[active] (blk1r6) at (6.550,3.950) {};
+  \node[tempmark] (blk1r7) at (6.550,4.500) {};
+  \node[active] (blk1r8) at (6.550,5.050) {};
+  \draw[flow] (blk1r1.north) -- (blk1r2.south);
+  \draw[flow] (blk1r2.north) -- (blk1r3.south);
+  \draw[flow] (blk1r3.north) -- (blk1r4.south);
+  \draw[flow] (blk1r4.north) -- (blk1r5.south);
+  \draw[flow] (blk1r5.north) -- (blk1r6.south);
+  \draw[flow] (blk1r6.north) -- (blk1r7.south);
+  \draw[flow] (blk1r7.north) -- (blk1r8.south);
+  \draw[tread] (blk0r7.east) .. controls +(1.4,-0.2) and +(-1.2,1.2) .. (6.420,1.305);
+  \node[injectT] at (6.550,1.175) {T};
+  \draw[tread] (blk1r7.east) .. controls +(0.7,0) and +(-0.5,0) .. (8.100,5.400) node[anchor=west, font=\footnotesize, text=tempdraw] {to token $t{+}1$};
+\end{scope}
+
+% ---------------- Depth + temporal hybrid
+\begin{scope}[shift={(13.0,-1.05)}]
+  \draw[panel] (0,0) rectangle (10.35,8.05);
+  \node[font=\bfseries\large] at (5.175,7.62) {Depth + temporal hybrid};
+  \node[descbox, text width=9.6cm] at (5.175,6.92) {Temporal state crosses tokens; depth state loops only within the current token.};
+  \node[anchor=east, font=\footnotesize] at (2.42,0.8) {L1 prelude};
+  \node[anchor=east, font=\footnotesize] at (2.42,1.55) {L2 T-buffer};
+  \node[anchor=east, font=\footnotesize] at (2.42,4.5) {L7 T-source};
+  \node[anchor=east, font=\footnotesize] at (2.42,5.05) {L8 coda};
+  \draw[decorate,decoration={brace,amplitude=4pt}] (2.3,2.1399999999999997) -- (2.3,4.11) node[brace label] {L3--L6\\core};
+  \node[font=\bfseries\footnotesize, text=black!60] at (3.35,5.62) {token $t{-}1$};
+  \node[font=\bfseries\footnotesize] at (6.55,5.62) {token $t$};
+  \node[ghost] (brk0r1) at (3.350,0.800) {};
+  \node[ghost] (brk0r2) at (3.350,1.550) {};
+  \node[ghost] (brk0r3) at (3.350,2.300) {};
+  \node[ghost] (brk0r4) at (3.350,2.850) {};
+  \node[ghost] (brk0r5) at (3.350,3.400) {};
+  \node[ghostdepth] (brk0r6) at (3.350,3.950) {};
+  \node[ghosttemp] (brk0r7) at (3.350,4.500) {};
+  \node[ghost] (brk0r8) at (3.350,5.050) {};
+  \draw[ghostflow] (brk0r1.north) -- (brk0r2.south);
+  \draw[ghostflow] (brk0r2.north) -- (brk0r3.south);
+  \draw[ghostflow] (brk0r3.north) -- (brk0r4.south);
+  \draw[ghostflow] (brk0r4.north) -- (brk0r5.south);
+  \draw[ghostflow] (brk0r5.north) -- (brk0r6.south);
+  \draw[ghostflow] (brk0r6.north) -- (brk0r7.south);
+  \draw[ghostflow] (brk0r7.north) -- (brk0r8.south);
+  \node[active] (brk1r1) at (6.550,0.800) {};
+  \node[active] (brk1r2) at (6.550,1.550) {};
+  \node[active] (brk1r3) at (6.550,2.300) {};
+  \node[active] (brk1r4) at (6.550,2.850) {};
+  \node[active] (brk1r5) at (6.550,3.400) {};
+  \node[depthmark] (brk1r6) at (6.550,3.950) {};
+  \node[tempmark] (brk1r7) at (6.550,4.500) {};
+  \node[active] (brk1r8) at (6.550,5.050) {};
+  \draw[flow] (brk1r1.north) -- (brk1r2.south);
+  \draw[flow] (brk1r2.north) -- (brk1r3.south);
+  \draw[flow] (brk1r3.north) -- (brk1r4.south);
+  \draw[flow] (brk1r4.north) -- (brk1r5.south);
+  \draw[flow] (brk1r5.north) -- (brk1r6.south);
+  \draw[flow] (brk1r6.north) -- (brk1r7.south);
+  \draw[flow] (brk1r7.north) -- (brk1r8.south);
+  \draw[dread, rounded corners=4pt] (brk1r6.east) -- ++(0.45,0) |- (6.740,1.925);
+  \node[font=\footnotesize, text=depthdraw, anchor=west] at (7.500,2.938) {repeat $J$ times};
+  \node[injectD] at (6.550,1.925) {D};
+  \draw[tread] (brk0r7.east) .. controls +(1.4,-0.2) and +(-1.2,1.2) .. (6.420,1.305);
+  \node[injectT] at (6.550,1.175) {T};
+  \draw[tread] (brk1r7.east) .. controls +(0.7,0) and +(-0.5,0) .. (8.100,5.400) node[anchor=west, font=\footnotesize, text=tempdraw] {to token $t{+}1$};
+\end{scope}
+
+% ---------------- Legend
+\begin{scope}[shift={(2.35,-2.85)}]
+  \draw[panel] (0,0) rectangle (21.00,1.45);
+  \node[ghost] at (0.95,1.03) {};
+  \node[legendtext] at (1.45,1.03) {token $t{-}1$ layer};
+  \node[active] at (5.90,1.03) {};
+  \node[legendtext] at (6.40,1.03) {token $t$ layer};
+  \node[depthmark] at (10.85,1.03) {};
+  \node[legendtext] at (11.35,1.03) {writes depth state};
+  \node[tempmark] at (15.80,1.03) {};
+  \node[legendtext] at (16.30,1.03) {writes temporal state};
+  \draw[flow] (0.60,0.48) -- (1.35,0.48);
+  \node[legendtext] at (1.45,0.48) {within-token flow};
+  \draw[dread] (5.55,0.48) -- (6.10,0.48);
+  \node[injectD] at (6.30,0.48) {D};
+  \node[legendtext] at (6.55,0.48) {depth read (loop)};
+  \draw[tread] (10.50,0.48) -- (11.05,0.48);
+  \node[injectT] at (11.25,0.48) {T};
+  \node[legendtext] at (11.50,0.48) {temporal read};
+  \draw[tread] (15.45,0.48) -- (16.20,0.48);
+  \node[legendtext] at (16.30,0.48) {state passed to next token};
+\end{scope}
+\end{tikzpicture}
+\end{document}
