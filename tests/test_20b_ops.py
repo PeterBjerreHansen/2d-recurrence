@@ -141,30 +141,33 @@ def test_pods_stop_before_the_cap_is_reached():
 
 def test_acquire_blockers_cover_slots_cap_and_balance():
     config = _config(spend_cap_usd=80, max_pods=4, min_balance_hours=24)
-    assert policy.acquire_blocker(0, 0, 100, 4, config) == 'all Pod slots are in use'
-    assert 'spend cap' in policy.acquire_blocker(30, 1.0, 100, 3, config)
-    assert 'balance' in policy.acquire_blocker(0, 1.0, 5.10, 0, config)
-    assert policy.acquire_blocker(0, 0.34, 100, 1, config) is None
+    assert policy.acquire_blocker('depth', 0, 0, 100, 4, config) == 'all Pod slots are in use'
+    assert 'spend cap' in policy.acquire_blocker('depth', 30, 1.0, 100, 3, config, committed_cost=40)
+    assert 'balance' in policy.acquire_blocker('depth', 0, 1.0, 5.10, 0, config)
+    assert policy.acquire_blocker('depth', 0, 0.34, 100, 1, config, committed_cost=17) is None
 
 
-def test_pending_arms_wait_until_balance_covers_the_projected_campaign():
-    config = _config()
-    four_arm_hours = [config['projected_hours_per_arm']] * len(study.ARM_ORDER)
-    projected = policy.projected_campaign_cost(four_arm_hours, config)
-    assert projected == pytest.approx(75.28, abs=0.02)
-    assert 'campaign budget' in policy.acquire_blocker(
-        0, 0, 44.26, 0, config, remaining_arm_hours=four_arm_hours)
-    assert policy.acquire_blocker(
-        0, 0, 80, 0, config, remaining_arm_hours=four_arm_hours) is None
+def test_arm_cloud_types_price_each_arm_at_its_own_rate():
+    config = _config(arm_cloud_types={'hybrid': 'SECURE'})
+    assert policy.arm_cloud('hybrid', config) == 'SECURE'
+    assert policy.arm_cloud('depth', config) == 'COMMUNITY'
+    disk = policy.disk_rate(config)
+    assert policy.arm_cost('hybrid', 48, config) == pytest.approx(48 * (0.74 + disk))
+    assert policy.arm_cost('transformer', policy.arm_hours('transformer', config), config) == pytest.approx(24 * (0.34 + disk))
+    # Hybrid on Secure fits an $83 balance on its own; not-yet-started arms do not block it.
+    assert policy.acquire_blocker('hybrid', 0, 0, 83.39, 0, config) is None
+    # With hybrid, temporal and depth committed, the transformer waits for a top-up.
+    committed = policy.arm_cost('hybrid', 48, config) + 2 * policy.arm_cost('depth', 48, config)
+    assert 'top up' in policy.acquire_blocker('transformer', 0, 0, 83.39, 3, config, committed_cost=committed)
 
 
-def test_remaining_campaign_hours_reduce_with_pod_elapsed_time():
+def test_committed_cost_counts_only_running_arms_minus_elapsed_time():
     state = cli.new_state()
     started = datetime(2026, 9, 25, tzinfo=timezone.utc)
     state['arms']['hybrid'].update(phase='running', pod_id='pod-1')
     state['pods'].append(dict(pod_id='pod-1', created_utc=(started - timedelta(hours=20)).isoformat()))
-    remaining = cli.remaining_arm_hours(state, _config(projected_hours_per_arm=48), started)
-    assert sorted(remaining) == [28, 48, 48, 48]
+    config = _config(arm_cloud_types={'hybrid': 'SECURE'})
+    assert cli.committed_cost(state, config, started) == pytest.approx(policy.arm_cost('hybrid', 28, config))
 
 
 # Configuration ---------------------------------------------------------------
@@ -299,7 +302,7 @@ def test_a_failed_acquisition_stops_further_attempts_this_tick(monkeypatch):
     created = []
     monkeypatch.setattr(cli, 'save_state', lambda state: None)
     monkeypatch.setattr(cli, 'log_event', lambda **event: None)
-    monkeypatch.setattr(cli.pods, 'create_pod', lambda config, name: created.append(name) or f'pod{len(created)}')
+    monkeypatch.setattr(cli.pods, 'create_pod', lambda config, name, cloud: created.append(name) or f'pod{len(created)}')
     monkeypatch.setattr(cli.pods, 'wait_for_host', lambda pod_id: dict(costPerHr=0.34, machine=dict(podHostId=f'{pod_id}-64411a5a')))
     monkeypatch.setattr(cli.pods, 'delete_pod', lambda pod_id: (True, 'deleted'))
     state = cli.new_state()

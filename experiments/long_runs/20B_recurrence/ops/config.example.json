@@ -19,6 +19,14 @@
   "projected_hours_per_arm": 48,
   "projected_budget_margin_fraction": 0.1,
   "planning_rate_usd_per_hr": 0.34,
+  "arm_cloud_types": {},
+  "cloud_rates_usd_per_hr": {
+    "COMMUNITY": 0.34,
+    "SECURE": 0.74
+  },
+  "arm_projected_hours": {
+    "transformer": 24
+  },
   "storage_usd_per_gb_month": 0.2,
   "stop_margin_hours": 1.5,
   "min_balance_hours": 24,

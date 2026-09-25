@@ -15,9 +15,7 @@ def pod_hours(pod, at):
 
 def ledger_spend(pods, config, at):
     """GPU plus disk spend estimated from the local Pod ledger."""
-    disk_gb = config['volume_gb'] + config['container_disk_gb']
-    disk_rate = disk_gb * config['storage_usd_per_gb_month'] / HOURS_PER_MONTH
-    return sum(pod_hours(pod, at) * ((pod.get('cost_per_hr') or config['planning_rate_usd_per_hr']) + disk_rate)
+    return sum(pod_hours(pod, at) * ((pod.get('cost_per_hr') or config['planning_rate_usd_per_hr']) + disk_rate(config))
                for pod in pods)
 
 
@@ -30,30 +28,49 @@ def must_stop_all(spend, burn_per_hr, config):
     return spend + burn_per_hr * config['stop_margin_hours'] >= config['spend_cap_usd']
 
 
-def projected_campaign_cost(remaining_arm_hours, config):
-    """Estimate the remaining GPU and disk cost, plus a configured margin."""
+def disk_rate(config):
     disk_gb = config['volume_gb'] + config['container_disk_gb']
-    disk_rate = disk_gb * config['storage_usd_per_gb_month'] / HOURS_PER_MONTH
-    base = sum(remaining_arm_hours) * (config['planning_rate_usd_per_hr'] + disk_rate)
-    return base * (1 + config['projected_budget_margin_fraction'])
+    return disk_gb * config['storage_usd_per_gb_month'] / HOURS_PER_MONTH
 
 
-def acquire_blocker(spend, burn_per_hr, balance, pods_in_use, config, *, remaining_arm_hours=None):
-    """Reason not to start another arm, or None."""
-    rate = config['planning_rate_usd_per_hr']
+def arm_cloud(name, config):
+    """Cloud type for one arm; ``arm_cloud_types`` overrides the default."""
+    return config['arm_cloud_types'].get(name, config['cloud_type'])
+
+
+def arm_rate(name, config):
+    return config['cloud_rates_usd_per_hr'][arm_cloud(name, config)]
+
+
+def arm_hours(name, config):
+    return config['arm_projected_hours'].get(name, config['projected_hours_per_arm'])
+
+
+def arm_cost(name, hours, config):
+    """GPU plus disk cost of ``hours`` of this arm at its cloud's rate."""
+    return hours * (arm_rate(name, config) + disk_rate(config))
+
+
+def acquire_blocker(name, spend, burn_per_hr, balance, pods_in_use, config, *, committed_cost=0.0):
+    """Reason not to start this arm now, or None.
+
+    ``committed_cost`` is the projected remaining cost of arms already running.
+    The spend cap must fit spend so far plus committed and this arm's cost; the
+    balance must cover the same with margin (Runpod stops Pods at zero balance).
+    Arms that are not yet started do not block this one; they wait their turn.
+    """
     if pods_in_use >= config['max_pods']:
         return 'all Pod slots are in use'
-    projected = (pods_in_use + 1) * config['projected_hours_per_arm'] * rate
+    candidate = arm_cost(name, arm_hours(name, config), config)
+    projected = committed_cost + candidate
     if spend + projected > config['spend_cap_usd']:
-        return f'starting this arm could exceed the spend cap (${spend:.2f} spent, ${projected:.2f} projected)'
-    reserve = (burn_per_hr + rate) * config['min_balance_hours']
-    remaining_arm_hours = (remaining_arm_hours if remaining_arm_hours is not None
-                           else [config['projected_hours_per_arm']])
-    campaign = projected_campaign_cost(remaining_arm_hours, config)
-    needed = max(reserve, campaign)
+        return (f'starting this arm could exceed the spend cap (${spend:.2f} spent, '
+                f'${projected:.2f} projected for running arms plus this one)')
+    reserve = (burn_per_hr + arm_rate(name, config)) * config['min_balance_hours']
+    needed = max(reserve, projected * (1 + config['projected_budget_margin_fraction']))
     if balance is not None and balance < needed:
-        return (f'account balance ${balance:.2f} is below the projected remaining campaign budget '
-                f'${needed:.2f} (including storage and margin)')
+        return (f'account balance ${balance:.2f} is below ${needed:.2f} needed for running arms '
+                f'plus this one (including storage and margin); top up to start it')
     return None
 
 

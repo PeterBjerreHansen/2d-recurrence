@@ -47,6 +47,9 @@ DEFAULT_CONFIG = dict(
     projected_hours_per_arm=48,
     projected_budget_margin_fraction=0.10,
     planning_rate_usd_per_hr=0.34,
+    arm_cloud_types={},  # e.g. {'hybrid': 'SECURE'}; others use cloud_type
+    cloud_rates_usd_per_hr={'COMMUNITY': 0.34, 'SECURE': 0.74},
+    arm_projected_hours={'transformer': 24},
     storage_usd_per_gb_month=0.20,
     stop_margin_hours=1.5,
     min_balance_hours=24,
@@ -159,18 +162,16 @@ def end_pod(state, pod_id):
             record['ended_utc'] = now().isoformat()
 
 
-def remaining_arm_hours(state, config, at):
-    """Conservative remaining runtime estimate for pending and running arms."""
+def committed_cost(state, config, at):
+    """Projected remaining GPU and disk cost of the arms that are running."""
     by_pod = {record['pod_id']: record for record in state['pods']}
-    hours = []
-    for arm in state['arms'].values():
-        if arm['phase'] == 'pending':
-            hours.append(config['projected_hours_per_arm'])
-        elif arm['phase'] == 'running':
+    total = 0.0
+    for name, arm in state['arms'].items():
+        if arm['phase'] == 'running':
             record = by_pod.get(arm.get('pod_id'))
             elapsed = policy.pod_hours(record, at) if record else 0.0
-            hours.append(max(0.0, config['projected_hours_per_arm'] - elapsed))
-    return hours
+            total += policy.arm_cost(name, max(0.0, policy.arm_hours(name, config) - elapsed), config)
+    return total
 
 
 # --------------------------------------------------------------------------
@@ -217,16 +218,18 @@ def acquire(name, state, config, context):
     rest of this tick stops acquiring, because Community stock is usually the
     same few machines.
     """
-    if context.get('stop_acquiring'):
-        return None, context['stop_acquiring']
+    cloud = policy.arm_cloud(name, config)
+    stopped = context.setdefault('stop_acquiring', {})  # per cloud type
+    if stopped.get(cloud):
+        return None, stopped[cloud]
     faulted = state.setdefault('faulted_machines', {})
     for attempt in range(config['acquire_attempts_per_tick']):
-        pod_id = pods.create_pod(config, f'20b-{name}')
+        pod_id = pods.create_pod(config, f'20b-{name}', cloud)
         if pod_id is None:
-            log_event(arm=name, event='no_capacity', attempt=attempt)
-            context['stop_acquiring'] = 'no Community 4090 with a CUDA 13 driver available'
-            return None, context['stop_acquiring']
-        record = dict(pod_id=pod_id, arm=name, cost_per_hr=None, created_utc=now().isoformat())
+            log_event(arm=name, event='no_capacity', cloud=cloud, attempt=attempt)
+            stopped[cloud] = f'no {cloud.title()} 4090 with a CUDA 13 driver available'
+            return None, stopped[cloud]
+        record = dict(pod_id=pod_id, arm=name, cloud=cloud, cost_per_hr=None, created_utc=now().isoformat())
         state['pods'].append(record)
         save_state(state)
         info = pods.wait_for_host(pod_id)
@@ -235,8 +238,8 @@ def acquire(name, state, config, context):
         machine = policy.machine_id(host)
         if machine and policy.recently_faulted(faulted, machine, now(), config['faulted_machine_hours']):
             _discard(name, state, pod_id, host, 'known_faulted_pod', f'machine {machine} failed recently')
-            context['stop_acquiring'] = f'only known-faulted machines offered (e.g. {machine})'
-            return None, context['stop_acquiring']
+            stopped[cloud] = f'only known-faulted {cloud.title()} machines offered (e.g. {machine})'
+            return None, stopped[cloud]
         candidate = pods.Pod(pod_id, host, config['ssh_key']) if host else None
         usable, health_reason = (candidate.check_usable(
             config['min_cuda_version'],
@@ -249,8 +252,8 @@ def acquire(name, state, config, context):
         if machine:
             faulted[machine] = now().isoformat()
         _discard(name, state, pod_id, host, 'faulted_pod', health_reason)
-        context['stop_acquiring'] = f'offered machine {machine} failed its health check ({health_reason})'
-        return None, context['stop_acquiring']
+        stopped[cloud] = f'offered {cloud.title()} machine {machine} failed its health check ({health_reason})'
+        return None, stopped[cloud]
     return None, 'no healthy Pod this tick'
 
 
@@ -346,9 +349,9 @@ def tick(dry_run=False, force=False):
                 except Exception as error:
                     observation['error'] = str(error)[:300]
         blocker = ('spend cap reached; Pods stopped' if stopping else
-                   policy.acquire_blocker(spend, account['burn_per_hr'], account['balance'],
+                   policy.acquire_blocker(name, spend, account['burn_per_hr'], account['balance'],
                                           len(policy.open_pods(state['pods'])), config,
-                                          remaining_arm_hours=remaining_arm_hours(state, config, now())))
+                                          committed_cost=committed_cost(state, config, now())))
         action, reason = policy.decide(arm, observation, config, blocker=blocker, at=now())
         summary[name] = dict(phase=arm['phase'], action=action, reason=reason,
                              step=(observation or {}).get('last_step'))

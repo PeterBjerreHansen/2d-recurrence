@@ -20,7 +20,7 @@ This directory is excluded from the frozen source hash (`SOURCE_EXCLUDED_DIRS` i
   - the local Pod ledger: GPU price plus a disk estimate, for every Pod the tool created;
   - Runpod's billed pod spend since the campaign started, which also counts Pods created by hand.
 - **Stop before the cap:** if spend plus `stop_margin_hours` at the current account burn rate would reach `spend_cap_usd`, every open Pod is stopped (volumes kept) and each stop is confirmed. Any Pod that fails to stop is named in the alert.
-- **Balance:** alert when the balance covers less than `min_balance_hours` at the current account burn rate. A pending arm also waits until the balance covers the estimated remaining campaign cost, including storage and `projected_budget_margin_fraction`. Runpod stops Pods when the balance reaches zero.
+- **Balance:** alert when the balance covers less than `min_balance_hours` at the current account burn rate. A pending arm starts only if the spend cap fits spend so far plus the projected remaining cost of running arms plus this arm, and the balance covers that total with `projected_budget_margin_fraction`. Arms not yet started don't block it. Each arm is priced at its own cloud's rate: `arm_cloud_types` (for example `{"hybrid": "SECURE"}`) overrides `cloud_type` per arm, `cloud_rates_usd_per_hr` gives the rates, and `arm_projected_hours` overrides `projected_hours_per_arm` (the transformer is budgeted at 24 h). Runpod stops Pods when the balance reaches zero.
 
 **Per arm:**
 

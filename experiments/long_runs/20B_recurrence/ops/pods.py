@@ -95,9 +95,9 @@ def billed_since(start_utc):
     return sum(row.get('amount', 0.0) for row in rows)
 
 
-def create_pod(config, name):
+def create_pod(config, name, cloud_type):
     code, output = runpodctl(
-        'pod', 'create', '--name', name, '--cloud-type', config['cloud_type'],
+        'pod', 'create', '--name', name, '--cloud-type', cloud_type,
         '--gpu-id', config['gpu_id'], '--image', config['image'],
         '--container-disk-in-gb', str(config['container_disk_gb']),
         '--volume-in-gb', str(config['volume_gb']), '--ports', '22/tcp',
