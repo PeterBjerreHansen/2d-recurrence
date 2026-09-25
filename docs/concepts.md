@@ -7,6 +7,8 @@ The figures are a 2×2 grid. Columns switch depth recurrence off and on; rows sw
 - **Layer-wise:** every transformer layer drawn, with its role.
 - **Functional:** layers grouped into blocks by role.
 
+In the training figures, each position shows two consecutive passes side by side: pass *i−1* in grey and pass *i* in blue. A depth read is a short arrow within a position; a temporal read is a long arrow to the next position. Layers a pass doesn't run are dashed.
+
 ![Training-time information flow, layer-wise view](figures/training_time_layer_wise.png)
 
 ![Inference-time information flow, layer-wise view](figures/inference_time_layer_wise.png)
@@ -32,7 +34,7 @@ z = W_h · norm(h_prev) + W_a · norm(anchor)        # both start at 0.5 · I
 The **anchor** is the fixed early representation of the current token. Mixing it back in on every pass keeps the loop grounded in the input.
 
 - **Training:** unroll the passes over the whole sequence and backpropagate through all of them.
-- **Inference:** loop the core `d` times inside each token. Depth state starts fresh at every token.
+- **Inference:** loop the core `J` times inside each token. Depth state starts fresh at every token.
 
 This is the idea behind [Huginn](https://arxiv.org/abs/2502.05171) and [Ouro](https://arxiv.org/abs/2510.25741): more computation per token without more core parameters.
 
@@ -57,7 +59,7 @@ Position 0 has no predecessor, so it bypasses the mixer. A zero-valued memory an
 
 At inference, the state is written once per token and read by the next one. The chain now runs through *every* earlier token, while training only chained a few. The two executions are therefore different, and their difference is something to measure (see §7).
 
-In this repository, the temporal-only model keeps the full hybrid layout, including a dedicated T-source layer. The bottom-left panel shows the generic idea, with the memory taken from the top of the core.
+In this repository, the temporal-only model keeps the full layout: its memory comes from the T-source (L7), as in the hybrid.
 
 ## 4. Steps 2 and 3 train the same way
 
@@ -132,7 +134,7 @@ The model never receives the counts, pass index or state ages as inputs. So one 
 | --- | --- | --- |
 | How it runs | all positions in parallel, a fixed write schedule | token by token with KV caches |
 | Temporal state | chained `U` positions back | chained through every earlier token |
-| Depth state | per pass, over the whole sequence | per token, `d` core iterations |
+| Depth state | per pass, over the whole sequence | per token, `J` core iterations |
 | Used for | the evaluation grid; training-graph generation | live NLL; live generation |
 
 For depth-only models the two executions agree exactly when each depth keeps its own KV cache. For temporal and hybrid models they differ, and the difference is a result, not a bug. The [inference contract](INFERENCE_CONTRACT.md) gives the details.

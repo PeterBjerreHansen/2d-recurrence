@@ -8,16 +8,16 @@ This repository tests that idea on a small character-level chess language model:
 
 ## The idea in four pictures
 
-Read the figure as a 2×2 grid. The columns switch **depth recurrence** off and on. The rows switch **temporal recurrence** off and on. Each recurrent panel shows two consecutive training passes over the same three positions.
+Read the figure as a 2×2 grid. The columns switch **depth recurrence** off and on. The rows switch **temporal recurrence** off and on. The model has eight layers, L1–L8. In the recurrent panels, each position shows two consecutive training passes side by side: pass *i−1* in grey, pass *i* in blue. Layers a pass doesn't run are dashed, and the prelude is one shared box because it runs once.
 
 - **Top left, vanilla transformer.** One pass, bottom to top. Position *t* sees earlier positions only through attention.
-- **Top right, looped (depth-recurrent) model.** A shared *recurrent core* runs several times. On pass *i*, the core output from pass *i−1* at the **same position** is mixed in before the core (orange **D**). This is the [Huginn](https://arxiv.org/abs/2502.05171)-style looped transformer: more computation per token, no new core parameters.
-- **Bottom left, temporally recurrent model.** A late-layer state from pass *i−1* at the **previous position** *t−1* is mixed in early on pass *i* (purple **T**). A high-level state flows forward in time, as in feedback transformers.
-- **Bottom right, hybrid.** Both reads at once. Depth state comes from the top of the recurrent core, and temporal state from a separate *T-source* layer above it. Temporal state is injected below a *T-buffer* layer, depth state above it.
+- **Top right, looped (depth-recurrent) model.** A shared *recurrent core* runs several times. On pass *i*, the core output (L6) from pass *i−1* at the **same position** is mixed in before the core (short orange arrows, **D**). This is the [Huginn](https://arxiv.org/abs/2502.05171)-style looped transformer: more computation per token, no new core parameters.
+- **Bottom left, temporally recurrent model.** The T-source output (L7) from pass *i−1* at the **previous position** *t−1* is mixed in right after the prelude on pass *i* (long purple arrows, **T**). A high-level state flows forward in time, as in feedback transformers.
+- **Bottom right, hybrid.** Both reads at once. Depth state comes from the top of the recurrent core (L6), and temporal state from the *T-source* layer above it (L7). Temporal state is injected below the *T-buffer* layer (L2), depth state above it.
 
 The two recurrent models differ in only two ways: **where** the state is read, and whether it is **shifted by one position**. Both are trained by unrolling passes over the whole sequence in parallel, so one training loop serves both.
 
-In this repository, the temporal-only and depth-only models are restrictions of the hybrid. They keep the same eight-layer layout, including the T-source layer. The bottom-left panel shows the generic feedback idea.
+In this repository, the temporal-only and depth-only models are restrictions of the hybrid. They keep the same eight-layer layout, including the T-source layer.
 
 ## One sampler trains both
 
@@ -41,7 +41,7 @@ So `(0,0)` is an ordinary transformer, `(U,0)` trains the temporal axis, `(0,U)`
 
 Parallel multi-pass training is only a way to *train* recurrence. When generating, the model runs token by token:
 
-- **Depth** loops the recurrent core `d` times *within* the current token. The depth state is discarded at the next token.
+- **Depth** loops the recurrent core `J` times *within* the current token. The depth state is discarded at the next token.
 - **Temporal** state is written once per token by the T-source and read by the *next* token, across the whole sequence.
 
 During training, `U` passes chain the temporal state only `U` positions back. At inference the chain runs through every earlier token. The repository implements both executions and reports them separately. It does not assume they agree.

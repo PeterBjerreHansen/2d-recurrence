@@ -2,6 +2,7 @@
 # Rebuild every figure PDF and its 2000-px PNG. Usage: ./build.sh [name.tex ...]
 set -euo pipefail
 cd "$(dirname "$0")"
+python3 make_figures.py
 sources=("$@")
 [ ${#sources[@]} -eq 0 ] && sources=(*.tex)
 for source in "${sources[@]}"; do
