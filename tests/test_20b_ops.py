@@ -341,3 +341,8 @@ def test_candidate_health_rejects_a_power_capped_gpu(monkeypatch):
     monkeypatch.setattr(pods.Pod, 'download_probe', lambda self, url, size: pytest.fail('capped GPU must be rejected first'))
     usable, reason = candidate.check_usable('13.0')
     assert not usable and '150 W of 450 W' in reason
+
+
+def test_bootstrap_extracts_without_preserving_the_packing_owner():
+    import inspect
+    assert 'tar --no-same-owner -xzf' in inspect.getsource(pods.bootstrap)

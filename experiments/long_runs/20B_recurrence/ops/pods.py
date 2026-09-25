@@ -357,7 +357,8 @@ def bootstrap(pod, name, bundle, digest, log_path):
     bundle_name = send_bundle(pod, bundle, digest, log_path)
     pod.start_background('bootstrap', f'''set -euo pipefail
 mkdir -p {REMOTE_REPO}
-tar -xzf {REMOTE_STAGE}/{bundle_name} -C {REMOTE_REPO}
+# Some volumes (Secure Cloud) refuse chown to the packing machine's uid.
+tar --no-same-owner -xzf {REMOTE_STAGE}/{bundle_name} -C {REMOTE_REPO}
 rm -f {REMOTE_STAGE}/{bundle_name}
 pip install -q uv
 cd {REMOTE_REPO}
