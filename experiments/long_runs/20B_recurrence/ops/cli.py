@@ -373,9 +373,13 @@ def notify(title, message, sound=None):
     if sound:
         script += f' sound name {quote(sound)}'
     try:
-        subprocess.run(['osascript', '-e', script], capture_output=True, timeout=20)
+        completed = subprocess.run(['osascript', '-e', script], capture_output=True, text=True, timeout=20)
+        if completed.returncode != 0:
+            log_event(event='notify_failed', reason=completed.stderr[-200:])
+        return completed.returncode, completed.stderr.strip()
     except Exception as error:
         log_event(event='notify_failed', reason=str(error)[:200])
+        return None, str(error)[:200]
 
 
 def send_notifications(report, state, config):
@@ -550,7 +554,12 @@ def main():
         for alert in report['alerts']:
             print(f'ALERT {alert}')
     elif args.command == 'notify-test':
-        notify('20B campaign', 'Test notification: alerts from the campaign tick will look like this.', 'Glass')
+        code, error = notify('20B campaign', 'Test notification: alerts from the campaign tick will look like this.', 'Glass')
+        if code == 0:
+            print('Notification posted. It appears under "Script Editor" in System Settings > Notifications; '
+                  'if no banner showed, allow notifications there and check Focus.')
+        else:
+            print(f'Notification failed (exit {code}): {error}')
     elif args.command == 'check-bundle':
         code, tail = check_bundle(load_config())
         print(tail)
