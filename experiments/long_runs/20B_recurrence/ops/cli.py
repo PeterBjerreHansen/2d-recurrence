@@ -58,6 +58,7 @@ DEFAULT_CONFIG = dict(
     unreachable_minutes=60,
     fast_tick_minutes=10,
     faulted_machine_hours=12,
+    min_power_fraction=0.9,
     slow_tick_minutes=60,
     disk_alert_fraction=0.9,
     allow_release=False,
@@ -240,7 +241,8 @@ def acquire(name, state, config, context):
         usable, health_reason = (candidate.check_usable(
             config['min_cuda_version'],
             minimum_download_mb_per_second=config['minimum_download_mb_per_second'],
-            download_probe_bytes=config['download_probe_bytes']) if candidate else (False, 'Pod host is unavailable'))
+            download_probe_bytes=config['download_probe_bytes'],
+            min_power_fraction=config['min_power_fraction']) if candidate else (False, 'Pod host is unavailable'))
         if host and usable:
             log_event(arm=name, event='pod_acquired', pod=pod_id, host=host)
             return (pod_id, host), 'acquired'

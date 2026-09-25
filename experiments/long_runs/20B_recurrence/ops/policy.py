@@ -112,6 +112,10 @@ def decide(arm, observation, config, *, blocker=None, at=None):
         return 'alert', 'the Pod\'s protocol.json differs from the frozen protocol'
     if not integrity['ok']:
         return 'alert', 'integrity check failed: ' + '; '.join(integrity['problems'])
+    if ('power_limit_w' in observation and
+            observation['power_limit_w'] < config['min_power_fraction'] * observation['power_default_w']):
+        return 'alert', (f"GPU power capped at {observation['power_limit_w']:.0f} W of "
+                         f"{observation['power_default_w']:.0f} W; training is running several times slower")
     if observation['disk_used_fraction'] >= config['disk_alert_fraction']:
         return 'alert', f"volume is {observation['disk_used_fraction']:.0%} full"
     if observation['done']:

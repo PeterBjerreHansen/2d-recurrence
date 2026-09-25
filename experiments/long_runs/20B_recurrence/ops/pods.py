@@ -160,6 +160,21 @@ def download_meets_minimum(result, expected_bytes, minimum_mb_per_second):
             result.get('mb_per_second', 0) >= minimum_mb_per_second)
 
 
+POWER_QUERY = ('nvidia-smi --query-gpu=power.limit,power.default_limit '
+               '--format=csv,noheader,nounits')
+
+
+def parse_power(text):
+    """Parse the POWER_QUERY output into watts: (enforced limit, default limit)."""
+    limit, default = (float(part) for part in text.strip().splitlines()[-1].split(','))
+    return limit, default
+
+
+def power_supports(limit, default, min_fraction):
+    """Community hosts may cap GPU power (150-193 W of 450 W seen), making updates ~3x slower."""
+    return limit >= min_fraction * default
+
+
 def parse_croc_code(text):
     match = re.search(r'code is: (\S+)', text)
     return match.group(1) if match else None
@@ -226,12 +241,15 @@ PY'''
         return self.run_json(script, timeout=180)
 
     def check_usable(self, min_cuda_version, *, minimum_download_mb_per_second=20.0,
-                     download_probe_bytes=50_000_000):
-        """Require CUDA support and adequate access to the locked Torch CDN."""
+                     download_probe_bytes=50_000_000, min_power_fraction=0.9):
+        """Require CUDA support, an uncapped GPU and adequate access to the locked Torch CDN."""
         try:
             check = self.gpu_check()
             if not driver_supports(check, min_cuda_version):
                 return False, f'cuInit={check["cuinit"]}, driver CUDA={check["driver_cuda"]}'
+            limit, default = parse_power(self.run(POWER_QUERY, timeout=120))
+            if not power_supports(limit, default, min_power_fraction):
+                return False, f'GPU power capped at {limit:.0f} W of {default:.0f} W'
             result = self.download_probe(locked_torch_wheel_url(), download_probe_bytes)
             if not download_meets_minimum(result, download_probe_bytes,
                                           minimum_download_mb_per_second):
@@ -308,6 +326,7 @@ print(json.dumps(dict(gpu_ok=ctypes.CDLL("libcuda.so.1").cuInit(0) == 0, job_ali
                       done=os.path.exists("{REMOTE_OPS}/{name}.done"), last_step=step,
                       disk_used_fraction=round(usage.used / usage.total, 3), log_tail=tail)))
 PY''', timeout=180)
+    status['power_limit_w'], status['power_default_w'] = parse_power(pod.run(POWER_QUERY, timeout=120))
     status['integrity'] = pod.run_json(f'cd {REMOTE_REPO} && uv run python -m {RUN_MODULE} integrity {name} 2>/dev/null',
                                        timeout=600)
     return status

@@ -30,6 +30,7 @@
   "unreachable_minutes": 60,
   "fast_tick_minutes": 10,
   "faulted_machine_hours": 12,
+  "min_power_fraction": 0.9,
   "slow_tick_minutes": 60,
   "disk_alert_fraction": 0.9,
   "allow_release": false,

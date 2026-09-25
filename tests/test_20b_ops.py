@@ -261,6 +261,7 @@ def test_candidate_health_rejects_a_slow_locked_torch_download(monkeypatch):
     candidate = pods.Pod('pod', 'host', '~/.runpod/ssh/key')
     monkeypatch.setattr(pods, 'locked_torch_wheel_url', lambda: 'https://example.invalid/torch.whl')
     monkeypatch.setattr(pods.Pod, 'gpu_check', lambda self: dict(cuinit=0, driver_cuda=13000))
+    monkeypatch.setattr(pods.Pod, 'run', lambda self, script, timeout=900: '450.00, 450.00')
     monkeypatch.setattr(pods.Pod, 'download_probe', lambda self, url, size:
                         dict(status=206, transferred_bytes=size, mb_per_second=1.0))
     usable, reason = candidate.check_usable('13.0', minimum_download_mb_per_second=20.0,
@@ -317,3 +318,23 @@ def test_bundle_test_exclusions_name_real_tests():
         assert Path(path).is_file(), option
         if '::' in option:
             assert f"def {option.split('::')[1]}(" in Path(path).read_text(), option
+
+
+def test_power_capped_gpus_are_rejected_and_alert_mid_run():
+    assert pods.parse_power('150.00, 450.00\n') == (150.0, 450.0)
+    assert not pods.power_supports(150.0, 450.0, 0.9)   # seen 2026-09-25: ~3x slower updates
+    assert not pods.power_supports(193.0, 450.0, 0.9)
+    assert pods.power_supports(450.0, 450.0, 0.9)
+    capped = _observation(power_limit_w=193.0, power_default_w=450.0)
+    assert _decide(_arm(last_step=1_000), capped) == 'alert'
+    assert _decide(_arm(last_step=1_000), _observation(power_limit_w=450.0, power_default_w=450.0,
+                                                        last_step=2_000)) == 'healthy'
+
+
+def test_candidate_health_rejects_a_power_capped_gpu(monkeypatch):
+    candidate = pods.Pod('pod', 'host', '~/.runpod/ssh/key')
+    monkeypatch.setattr(pods.Pod, 'gpu_check', lambda self: dict(cuinit=0, driver_cuda=13000))
+    monkeypatch.setattr(pods.Pod, 'run', lambda self, script, timeout=900: '150.00, 450.00')
+    monkeypatch.setattr(pods.Pod, 'download_probe', lambda self, url, size: pytest.fail('capped GPU must be rejected first'))
+    usable, reason = candidate.check_usable('13.0')
+    assert not usable and '150 W of 450 W' in reason
