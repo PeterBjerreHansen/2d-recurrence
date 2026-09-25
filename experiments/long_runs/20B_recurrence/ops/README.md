@@ -65,9 +65,9 @@ The machine running the ticks needs `runpodctl` with an API key, the Runpod SSH 
 
 ## Hourly agent instructions
 
-> Once an hour, from the repository root, run:
+> Once an hour, from the repository root, run (the project's own Python, not `uv run`: sandboxed schedulers may be denied access to uv's cache):
 >
-> `uv run python -m experiments.long_runs.20B_recurrence.ops.cli tick`
+> `.venv/bin/python -m experiments.long_runs.20B_recurrence.ops.cli tick`
 >
 > - If the output has no `ALERT` lines, stay silent.
 > - If it has `ALERT` lines, send them to the user verbatim, with `spend_usd`, `spend_cap_usd` and `balance_usd` from the JSON.
