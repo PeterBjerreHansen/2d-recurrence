@@ -234,11 +234,25 @@ class _FailedSender:
         return 'transformer_20B.zip file already exists!\nexit=1'
 
 
-def test_collect_clears_a_stale_send_and_fails_fast(tmp_path):
+def test_collect_clears_a_stale_send_and_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # collect refuses to overwrite real local results
     pod = _FailedSender()
     with pytest.raises(RuntimeError, match='exited without a transfer code'):
         pods.collect(pod, 'transformer', tmp_path, verify=None)
     assert 'rm -f transformer_20B.zip' in pod.scripts[0]
+
+
+class _TruncatedManifest(_FailedSender):
+    def run(self, script, timeout=900):
+        if 'send-results.log' in script:
+            return 'Code is: 1-a-b-c\nexit='
+        return 'abc  transformer_20B/results/ckpt.pt\n'
+
+
+def test_collect_refuses_an_incomplete_manifest(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(RuntimeError, match='manifest lacks metrics.jsonl'):
+        pods.collect(_TruncatedManifest(), 'transformer', tmp_path, verify=None)
 
 
 def test_first_start_is_fresh_and_restarts_resume():

@@ -397,6 +397,11 @@ def start_job(pod, name, resume):
     pod.start_background(f'job-{name}', job_script(name, resume))
 
 
+# Files the transfer manifest must list; the integrity check covers the checkpoints.
+COLLECT_REQUIRED = ('ckpt.pt', 'metrics.jsonl', 'events.jsonl', 'run_history.jsonl',
+                    'plan.json', 'environment.jsonl', 'run.json')
+
+
 def collect(pod, name, incoming, verify):
     """Copy the arm's results home, check transfer hashes, then ``verify`` them.
 
@@ -430,6 +435,11 @@ runpodctl send {directory}
     if not code:
         raise RuntimeError('The Pod did not produce a transfer code')
     manifest = pod.run(f'cat {REMOTE_OPS}/{name}.sha256')
+    listed = {line.split(maxsplit=1)[1] for line in manifest.splitlines() if line.strip()}
+    missing = [path for path in COLLECT_REQUIRED if f'{directory}/results/{path}' not in listed]
+    if missing:
+        # An empty or truncated manifest would otherwise let unlisted files go unchecked.
+        raise RuntimeError(f'Transfer manifest lacks {", ".join(missing)}; not collecting')
     staging = Path(incoming) / name
     if staging.exists():
         shutil.rmtree(staging)
