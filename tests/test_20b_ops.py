@@ -219,7 +219,26 @@ def test_remote_output_is_read_between_markers_not_from_terminal_echo():
 
 def test_croc_code_parsing():
     assert pods.parse_croc_code("sending 'x' (1 kB)\ncode is: data-65c21d0ee399df46-6\n") == 'data-65c21d0ee399df46-6'
+    assert pods.parse_croc_code("Code is: 0423-guitar-choice-century-17\n") == '0423-guitar-choice-century-17'
     assert pods.parse_croc_code('hashing...') is None
+
+
+class _FailedSender:
+    def __init__(self):
+        self.scripts = []
+
+    def start_background(self, name, script):
+        self.scripts.append(script)
+
+    def run(self, script, timeout=900):
+        return 'transformer_20B.zip file already exists!\nexit=1'
+
+
+def test_collect_clears_a_stale_send_and_fails_fast(tmp_path):
+    pod = _FailedSender()
+    with pytest.raises(RuntimeError, match='exited without a transfer code'):
+        pods.collect(pod, 'transformer', tmp_path, verify=None)
+    assert 'rm -f transformer_20B.zip' in pod.scripts[0]
 
 
 def test_first_start_is_fresh_and_restarts_resume():

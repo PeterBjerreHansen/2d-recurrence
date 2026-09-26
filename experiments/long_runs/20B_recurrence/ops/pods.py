@@ -182,7 +182,8 @@ def power_supports(limit, default, min_fraction):
 
 
 def parse_croc_code(text):
-    match = re.search(r'code is: (\S+)', text)
+    # runpodctl versions differ in case ("code is:" / "Code is:").
+    match = re.search(r'code is: (\S+)', text, re.IGNORECASE)
     return match.group(1) if match else None
 
 
@@ -409,15 +410,22 @@ def collect(pod, name, incoming, verify):
         raise RuntimeError(f'{destination} already exists locally; not overwriting')
     pod.start_background('send-results', f'''set -euo pipefail
 cd {REMOTE_REPO}/{STUDY_DIR}
+# A sender from an interrupted collection, and the zip it leaves, block a new send.
+pkill -f 'runpodctl send' || true
+rm -f {directory}.zip
 cp {REMOTE_OPS}/job-{name}.log {directory}/results/ops_job.log
 find {directory} -type f -exec sha256sum {{}} + > {REMOTE_OPS}/{name}.sha256
 runpodctl send {directory}
 ''')
     code = None
     for _ in range(90):
-        code = parse_croc_code(pod.run(f'cat {REMOTE_OPS}/send-results.log 2>/dev/null'))
+        log = pod.run(f'cat {REMOTE_OPS}/send-results.log 2>/dev/null; echo; '
+                      f'echo "exit=$(cat {REMOTE_OPS}/send-results.exit 2>/dev/null)"')
+        code = parse_croc_code(log)
         if code:
             break
+        if not log.rstrip().endswith('exit='):
+            raise RuntimeError('The Pod sender exited without a transfer code: ' + log[-300:])
         time.sleep(20)
     if not code:
         raise RuntimeError('The Pod did not produce a transfer code')
