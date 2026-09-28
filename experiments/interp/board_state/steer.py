@@ -11,7 +11,8 @@
            the modified board although the PGN text is unchanged.
 
 Both compare the probe direction with a random direction of the same norm at
-each site. Examples come from held-out rows. Writes ``results/steer/<test>-<arm>.json``.
+each site. Examples come from held-out rows. Writes ``results/steer/<test>-<arm>.json``
+(``--tag`` adds a suffix for supporting runs).
 
 Examples:
     python -m experiments.interp.board_state.steer turn --arm transformer
@@ -227,6 +228,7 @@ def main():
     parser.add_argument('--examples', type=int, default=200)
     parser.add_argument('--batch', type=int, default=100)
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--tag', default='', help='suffix for the output file, for supporting runs')
     parser.add_argument('--device', default=device())
     args = parser.parse_args()
     runner, checkpoint = load_arm(args.arm, args.device)
@@ -237,7 +239,8 @@ def main():
     results['seconds'] = time.monotonic() - started
     out = RESULTS / 'steer'
     out.mkdir(parents=True, exist_ok=True)
-    (out / f'{args.test}-{args.arm}.json').write_text(json.dumps(results, indent=2) + '\n')
+    suffix = f'-{args.tag}' if args.tag else ''
+    (out / f'{args.test}-{args.arm}{suffix}.json').write_text(json.dumps(results, indent=2) + '\n')
 
 
 if __name__ == '__main__':

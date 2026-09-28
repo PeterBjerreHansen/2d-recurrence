@@ -32,8 +32,6 @@ Karvonen's probe code (`chess_llm_interpretability`) truncates each probe game t
 
 The per-square majority baseline is 0.667. At `.` characters White is always to move, so the mine/theirs encoding coincides with white/black there.
 
-*Exploratory, not reproduced by the committed scripts:* on a separate 3,000-row capture, a dot-only probe at our transformer's L7 recalled White's pieces at 0.93–0.97 and Black's at 0.80–0.85, and an MLP probe reached 0.961 against 0.940 for the linear probe.
-
 ## Layer curves
 
 Board accuracy in Karvonen's setting, and on changed squares (class differs from the starting position) over whole rows:

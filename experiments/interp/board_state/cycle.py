@@ -152,7 +152,6 @@ def analyse(name, rows, meta, train_rows, device_name):
     for code, role_name in enumerate(ROLES):
         mask = valid & (role == code)
         train, test = mask & is_train, mask & ~is_train
-        y = current[mask].astype(np.int64)
         latest = current[test] != previous[test]
         earlier = (current[test] != initial) & ~latest
         never = (current[test] == initial) & ~latest

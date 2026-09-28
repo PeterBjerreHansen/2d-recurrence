@@ -15,6 +15,7 @@ Run modules from the repository root. Each experiment owns an ignored `results/`
 | [20B recurrence-axis study](long_runs/20B_recurrence/README.md) | Completed four-arm run; results, live-execution diagnosis and post-hoc alignment in the [report](long_runs/20B_recurrence/REPORT.md) |
 | [Evaluation battery](evaluation_battery/README.md) | Post-training battery for the 20B arms: full-confirmation training-graph NLL, live NLL, legal-move probability, stratified paired comparisons, same-host cost; dry-run on the 5B arms |
 | [Live temporal feedback](ablations/live_warm_start/PLAN.md) | Post-hoc live alignment ([`align.py`](ablations/live_warm_start/align.py), used in the [20B report](long_runs/20B_recurrence/REPORT.md)) and the open follow-ups |
+| [Board-state probing](interp/board_state/README.md) | Linear board and side-to-move probes at every site of the 20B arms and Karvonen's model, with memory-swap, mixer and steering checks; see the [report](interp/board_state/REPORT.md) |
 | [Smoke checks](smoke/README.md) | Small reproducible pipeline checks and historical validation notes |
 
 ## Serious profile

@@ -9,8 +9,8 @@ Three probes per site:
                its first 365 characters (his probe games are cut to 365 characters)
 ``turn``       side to move on the two space kinds (the same input token), class-balanced
 
-Karvonen's 8-layer model reaches 0.980 with ``board_karvonen`` at L6 (0.991 in
-his paper with about ten times more probe games); a random-init model 0.754.
+Karvonen's 8-layer model reaches 0.981 with ``board_karvonen`` at L6 (0.991 in
+his paper with about ten times more probe games); a random-init model 0.760.
 
 Board accuracy is reported over all squares (Karvonen's metric) and over
 *changed* squares, whose class differs from the starting position in the same

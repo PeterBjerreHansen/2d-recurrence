@@ -27,11 +27,6 @@ class Probe:
     def predict(self, x, batch=8192):
         return torch.cat([self.logits(x[i:i + batch]).argmax(-1).cpu() for i in range(0, len(x), batch)])
 
-    def direction(self, head, source, target):
-        """Residual direction that raises ``target`` over ``source`` for one head."""
-        w = self.weight.view(-1, self.heads, self.classes)[:, head]
-        return w[:, target] - w[:, source]
-
     def state(self):
         return {key: getattr(self, key) if key in ('heads', 'classes') else getattr(self, key).cpu()
                 for key in ('mean', 'weight', 'bias', 'heads', 'classes')}

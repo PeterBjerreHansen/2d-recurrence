@@ -24,8 +24,6 @@ import numpy as np
 
 KINDS = ('dot', 'space_white', 'space_black')
 EMPTY = 0
-CLASS_NAMES = ('empty',) + tuple(f'{side}_{piece}' for side in ('A', 'B')
-                                 for piece in ('pawn', 'knight', 'bishop', 'rook', 'queen', 'king'))
 _MOVE_NUMBER = re.compile(r'\d+\.')
 
 
@@ -50,10 +48,6 @@ def encode(board, relative):
     """[64] int8 square classes, absolute (white first) or relative (side to move first)."""
     first = board.turn if relative else chess.WHITE
     return np.array([piece_class(board.piece_at(square), first) for square in chess.SQUARES], dtype=np.int8)
-
-
-def class_of(board, square, relative):
-    return piece_class(board.piece_at(square), board.turn if relative else chess.WHITE)
 
 
 def probe_points(text, limit=None):

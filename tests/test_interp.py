@@ -170,3 +170,30 @@ def test_greedy_moves_match_unbatched_decoding():
     sequences = [torch.randint(1, 32, (n,)).tolist() for n in (3, 6, 4)]
     batched = greedy_moves(runner, sequences, itos, 'cpu', max_chars=5)
     assert batched == [greedy_moves(runner, [s], itos, 'cpu', max_chars=5)[0] for s in sequences]
+
+
+def test_move_cycle_roles_and_latest_move_squares():
+    from experiments.interp.board_state.cycle import ROLES, label_row
+    text = ';1.e4 e5 2.Nf3+ Nc6 10.O-O'
+    role, current, previous, valid = label_row(text, len(text))
+    roles = {i: ROLES[r] for i, r in enumerate(role) if valid[i]}
+    assert [roles[i] for i in range(1, 9)] == [
+        'digit', 'dot', 'first_white', 'last_white', 'space_black', 'first_black', 'last_black', 'space_number']
+    assert roles[text.index('+')] == 'check_white'
+    # The move is applied at its last character, not before.
+    e4_first, e4_last = text.index('e4'), text.index('e4') + 1
+    changed = lambda i: {chess.square_name(s) for s in np.flatnonzero(current[i] != previous[i])}
+    assert changed(e4_last) == {'e2', 'e4'}
+    assert not (current[e4_first] != encode(chess.Board(), False)).any()
+    # Black's first character still has White's e4 as the latest move.
+    assert changed(text.index('e5')) == {'e2', 'e4'}
+    # The incomplete final move (no delimiter after it) is not labelled.
+    assert not valid[text.index('O-O'):].any()
+
+
+def test_update_pairs_each_decision_with_the_previous_one():
+    from experiments.interp.board_state.update import paired_points
+    labels = dict(kind=np.array([0, 2, 0, 1, 2]), row=np.zeros(5, int), game=np.zeros(5, int),
+                  ply=np.array([0, 1, 2, 2, 3]))
+    current, previous = paired_points(labels)
+    assert sorted(zip(current.tolist(), previous.tolist())) == [(1, 0), (2, 1), (4, 2)]
