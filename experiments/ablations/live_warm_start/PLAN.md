@@ -17,11 +17,11 @@ The original plan's 5,000-update fine-tune arms (T-warm, T-plain, hybrid control
 
 ## Open questions
 
-1. **Can alignment be built into training instead of repaired afterwards?**
+1. **Can alignment be built into training instead of repaired afterwards?** *Tested once for temporal; yes, see the report's [Alignment during the decay](../../long_runs/20B_recurrence/REPORT.md#alignment-during-the-decay). Whether to use it in a new run is still open.*
    - **Run:** resume temporal from the retained pre-decay checkpoint (step 175,954, optimiser state included) and redo the 19,550-update decay with about 25% warm-start batches. Each warm-start batch settles the memory without gradients, stopping at a tolerance with a cap of about 64 passes, then trains 1–3 passes from it.
    - **Controls:** the original final checkpoint and the post-hoc aligned one.
    - **Data:** matched; no extra characters.
-   - **Cost:** about $4–5 per arm on a Secure RTX 4090. Repeat for the hybrid if the answer is useful.
+   - **Cost:** about $7 on a Secure RTX 4090, including evaluation (measured). Repeat for the hybrid if useful.
 2. **Does a gap-free, broad update support prevent the failure?**
    - **Run:** use the [1B update-schedule ablation](../1B_update_schedule/README.md) to compare:
      - support {0, 1, 3} with the current narrowing curriculum;
