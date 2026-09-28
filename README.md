@@ -52,7 +52,7 @@ During training, `U` passes chain the temporal state only `U` positions back. At
 | --- | --- | --- |
 | 1B characters | Hybrid checkpoint vs. transformer | The `(3,3)` hybrid path beat the transformer by about 0.003–0.004 NLL. Temporal-only and depth-only execution of the same checkpoint each helped. |
 | 5B characters | Separately trained temporal, depth and hybrid models | Depth trailed by about 0.002 NLL. Temporal led the hybrid early on; the gap shrank to about 0.0006 by the end. |
-| 20B characters | Four arms, curriculum toward four passes | Prepared, not yet launched. See the [20B study](experiments/long_runs/20B_recurrence/README.md). |
+| 20B characters | Four separately trained arms, curriculum toward four passes | Training graph: hybrid `(3,3)` and temporal tie (0.2136), depth trails by 0.0024, all beat the transformer by 0.012–0.014. Live: the hybrid with four core iterations is the best deployable model (0.2137); as trained, temporal fails live (0.48) until a 3M-character mixer fine-tune fixes it (0.2176). See the [20B report](experiments/long_runs/20B_recurrence/REPORT.md). |
 
 These are single-seed results. Protocols and caveats are in the [experiment index](experiments/README.md).
 
