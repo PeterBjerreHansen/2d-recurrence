@@ -146,7 +146,7 @@ Counting transformer-block applications for layout A:
 - **Training pass count `B`:** `3 + 5B + U_T`. The prelude and coda run once; the buffer and core run every pass; the T-source runs once per temporal write plus once for the prediction.
 - **Live inference with `J` core iterations per token:** `4 + 4J`.
 
-Measured in the 5B-character study, with the same distribution of pass counts, a hybrid update took about 1.00 s, a temporal-only update 1.03 s, and a depth-only update 0.90 s. Each arm ran on its own RTX 3090 pod. Adding the second axis to a model that already loops costs little. Most of the cost is the passes themselves.
+Measured in the 5B-character study, with the same distribution of pass counts, a hybrid update took about 1.00 s, a temporal-only update 1.03 s, and a depth-only update 0.90 s. Adding the second axis to a model that already loops costs little. Most of the cost is the passes themselves.
 
 Measured live latency per token, same host (Apple MPS, batch 1):
 

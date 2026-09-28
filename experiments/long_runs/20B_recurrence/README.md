@@ -12,17 +12,7 @@ The study trains four separate arms of the same 8-layer, width-512 model on 20,0
 
 ## What ran
 
-Each arm ran on its own Secure RTX 4090 on Runpod, from one frozen transfer bundle. The [`ops`](ops/README.md) tool acquired, started, monitored, collected and released the pods on an hourly tick.
-
-- **Restarts:** none; no arm needed a resume.
-- **Integrity:** every arm passed the frozen-protocol check after collection.
-- **Training time:** 23–54 hours per arm, depending on the host.
-- **Spend:** $134.73 in total.
-- **Details:** in the report's appendix.
-
-Post-training work lives elsewhere:
-- **Evaluation:** the [evaluation battery](../../evaluation_battery/README.md).
-- **Live alignment of temporal:** [`live_warm_start`](../../ablations/live_warm_start/PLAN.md).
+Each arm ran on its own Secure RTX 4090 on Runpod, from one frozen transfer bundle, managed by the [`ops`](ops/README.md) tool. Post-training evaluation is in the [evaluation battery](../../evaluation_battery/README.md); the live alignment of temporal is in [`live_warm_start`](../../ablations/live_warm_start/PLAN.md).
 
 ## Commands
 

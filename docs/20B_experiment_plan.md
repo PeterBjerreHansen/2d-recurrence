@@ -1,6 +1,6 @@
 # 20B recurrence-axis study: experiment plan
 
-> **Completed.** This is the pre-registered plan, kept as the reference the results are judged against. Results are in the [20B report](../experiments/long_runs/20B_recurrence/REPORT.md). In short, the hybrid tied temporal-only and beat depth-only, and neither gap grew with scale. The run used Secure RTX 4090s rather than the Community cards planned below.
+> **Completed.** This is the pre-registered plan, kept as the reference the results are judged against. Results are in the [20B report](../experiments/long_runs/20B_recurrence/REPORT.md). In short, the hybrid tied temporal-only and beat depth-only, and neither gap grew with scale.
 
 The 20B study is a **four-arm discovery run** of the default layout A: ordinary transformer, temporal-only, depth-only and hybrid. Each arm trains on 20B characters with a curriculum toward four-pass execution and a warmup–stable–decay (WSD) learning rate. Architecture and optimizer are held fixed at the serious profile. The question is whether the combined two-axis path gains an advantage over either axis alone as training scale grows.
 
@@ -139,7 +139,6 @@ Short probes on RTX 4090s fixed the remaining launch choices:
 - **Temporal gate:** initialised at `.10`. `.25` led by only about 0.001 in a 250M preflight.
 - **Resume:** exact under deterministic kernels, over 1,000 updates.
 
-The run itself used Secure, not Community, RTX 4090s; the [report](../experiments/long_runs/20B_recurrence/REPORT.md#appendix-operations-and-cost) records the costs and operations.
 
 ## Out of scope: 8-pass training
 

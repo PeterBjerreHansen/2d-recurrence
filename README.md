@@ -33,9 +33,7 @@ Every pass reads whatever state exists; a state that isn't rewritten is simply h
 
 So `(0,0)` is an ordinary transformer, `(U,0)` trains the temporal axis, `(0,U)` trains the depth axis, and mixed pairs train the two together. A single checkpoint can be evaluated anywhere on the `(U_T, U_D)` surface.
 
-**How cheap is it?** With the same distribution of pass counts, a hybrid training update took about as long as a temporal-only update (1.00 s vs. 1.03 s) and about 11% longer than a depth-only update (0.90 s). These are from the 5B study, one arm per RTX 3090. Most of the cost is the extra passes themselves, which both single-axis models already pay.
-
-At inference, one core iteration per token applies as many transformer blocks as the plain transformer and adds about 12–13% latency for the mixers; four iterations cost about 2.5×.
+**How cheap is it?** With the same distribution of pass counts, a hybrid training update took about as long as a temporal-only update (1.00 s vs. 1.03 s) and about 11% longer than a depth-only update (0.90 s). Most of the cost is the passes themselves, which both single-axis models already pay. At inference, one core iteration per token costs about 12–13% more than the plain transformer; four iterations cost about 2.5×.
 
 ## At inference, the two axes separate again
 
@@ -48,9 +46,9 @@ Parallel multi-pass training is only a way to *train* recurrence. When generatin
 
 During training, `U` passes chain the temporal state only `U` positions back. At inference the chain runs through every earlier token. The two executions need not agree, so the repository measures both. At 20B, the hybrid and depth models ran live at their training-graph quality. The temporal-only model did not until it was also trained on the memory that live execution produces; see the [20B report](experiments/long_runs/20B_recurrence/REPORT.md#why-temporal-fails-live).
 
-## What has been found so far
+## Results
 
-**20B characters: four separately trained models** (transformer, temporal-only, depth-only, hybrid). Details are in the [20B report](experiments/long_runs/20B_recurrence/REPORT.md).
+Four separately trained models, each on 20B characters: transformer, temporal-only, depth-only and hybrid. Details are in the [20B report](experiments/long_runs/20B_recurrence/REPORT.md).
 
 ![Four-pass NLL and live NLL against training characters](experiments/long_runs/20B_recurrence/report_figures/nll_trajectories.png)
 
@@ -59,25 +57,13 @@ During training, `U` passes chain the temporal state only `U` positions back. At
 - **The gains are in choosing the move, and they grow over the game.** The hybrid's advantage over the transformer rises from 0.001 NLL in the first ten plies to 0.028 later in the game.
 - **Deployed token by token,** the hybrid with four core iterations is the best model (0.2137 NLL), slightly ahead of depth-only at the same cost. With 3× less data, it also edges out Karvonen's released 8-layer model on the same rows.
 
-**Earlier evidence:**
-- **1B:** one hybrid checkpoint beat the transformer by 0.003–0.004 NLL.
-- **5B:** separately trained arms; depth trailed and temporal led the hybrid slightly.
+These are single-seed results.
 
-All results are single-seed. Protocols and caveats are in the [experiment index](experiments/README.md).
+## Open questions
 
-## Status and open work
-
-- **Done:**
-  - the recurrence contract, the three recurrence modes and their layout;
-  - live execution with KV caches;
-  - the 1B, 5B and 20B studies;
-  - an evaluation battery with legal-move and per-character breakdowns.
-- **Open:**
-  - multiple training seeds;
-  - update supports without gaps, and training on the settled memory that live execution uses ([follow-ups](experiments/ablations/live_warm_start/PLAN.md));
-  - more than four training passes;
-  - adaptive per-token depth;
-  - playing-strength evaluation.
+- **Seeds:** do the results hold across training seeds?
+- **Update support:** does training on every update count up to the maximum, with no gaps, prevent the live mismatch without a fix? See the [follow-ups](experiments/ablations/live_warm_start/PLAN.md).
+- **More passes:** do models trained beyond four passes keep gaining?
 
 ## Quick start
 

@@ -54,9 +54,8 @@ Five block counts follow physical block order: prelude, buffer, core, source, co
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Default A | 1 | 1 | 4 | 1 | 1 |
 | B, coincident | 1 | 0 | 6 | 0 | 1 |
-| Original experiments | 2 | 0 | 4 | 1 | 1 |
 
-Changing counts moves the injection and source boundaries within one ordered stack. An empty buffer means adjacent injection sites, and an empty source means both states come from the core output. These are not new module types or duplicated weights. Historical configs pin their layout explicitly. A was chosen after a near-tied [A/B comparison](../experiments/ablations/architecture_sites/REPORT.md). B was slightly better at late predictive NLL, but below the predeclared selection margin.
+Changing counts moves the injection and source boundaries within one ordered stack. An empty buffer means adjacent injection sites, and an empty source means both states come from the core output. A is the default, after a near-tied [A/B comparison](../experiments/ablations/architecture_sites/REPORT.md).
 
 ## Checkpoints and resume
 
@@ -128,16 +127,9 @@ experiments/
   long_runs/                       # 1B_baseline, 5B_axis, 20B_recurrence
   evaluation_battery/              # post-training comparisons of the 20B arms
   benchmarks/                      # runtime, throughput, resume and same-host cost probes
-  smoke/                           # small pipeline checks and historical validations
-  relocations.json                 # old paths in immutable provenance -> current locations
+  smoke/                           # small pipeline checks
 docs/                              # concepts, contracts, usage, 20B plan, figures
 tests/
 ```
 
-Each experiment owns its `results/` directory; there is no global results directory. Code, configs, protocols and concise reports are tracked. Checkpoints, logs, plots and raw reports stay local and ignored. Paths embedded in historical checkpoints and receipts are left unchanged; [relocations.json](../experiments/relocations.json) records where they moved.
-
-Reusable metrics live in `evaluation/`. Experiment-specific analysis lives with its experiment. For example, this rebuilds the completed A/B summary on CPU from the preserved protocol and checkpoints:
-
-```sh
-uv run python -m experiments.ablations.architecture_sites.run summarize
-```
+Each experiment owns its `results/` directory. Code, configs, protocols and reports are tracked; checkpoints, logs and raw results stay local and ignored.
