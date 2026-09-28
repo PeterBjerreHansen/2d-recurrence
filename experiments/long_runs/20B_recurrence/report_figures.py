@@ -17,7 +17,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 ROOT = Path('experiments/long_runs/20B_recurrence')
-OUTPUT = ROOT / 'report_figures' / 'nll_trajectories.png'
+OUTPUT = ROOT / 'report_figures' / 'nll_trajectories_20B.png'
 # Live NLL of temporal 20B after the 200-update mixer fine-tune (align.py), same selection panel.
 ALIGNED = Path('experiments/ablations/live_warm_start/results/check_temporal_aligned_J1.json')
 CHARACTERS_PER_UPDATE = 100 * 1023

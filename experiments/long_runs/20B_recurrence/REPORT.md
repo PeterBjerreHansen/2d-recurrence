@@ -16,7 +16,7 @@ Four arms of the same 8-layer, width-512 character-level chess model, each train
 - **The gains are in move choice and grow over the game.** The hybrid's advantage over the transformer rises from 0.001 NLL in the first ten plies to 0.028 at plies 60–79.
 - **Single seed.** The intervals cover which rows were evaluated, not training-seed variation.
 
-![Four-pass training-graph NLL and live NLL against training characters](report_figures/nll_trajectories.png)
+![Four-pass training-graph NLL and live NLL against training characters](report_figures/nll_trajectories_20B.png)
 
 *Selection panel (128 rows), at every retained checkpoint. The dashed arrow shows temporal after the 200-update fine-tune described below. The confirmation results below use separate, larger row sets.*
 

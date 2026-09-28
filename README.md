@@ -69,7 +69,7 @@ During training, `U` passes chain the temporal state only `U` positions back. At
 
 Four separately trained models, each on 20B characters: transformer, temporal-only, depth-only and hybrid. Details are in the [20B report](experiments/long_runs/20B_recurrence/REPORT.md).
 
-![Four-pass NLL and live NLL against training characters](experiments/long_runs/20B_recurrence/report_figures/nll_trajectories.png)
+![Four-pass NLL and live NLL against training characters](experiments/long_runs/20B_recurrence/report_figures/nll_trajectories_20B.png)
 
 - **All three recurrent models beat the transformer** by 0.012–0.014 NLL at four passes, with the same data.
 - **The hybrid ties temporal-only and beats depth-only.** Hybrid and temporal both reach 0.2136 on held-out rows; depth trails by 0.0024. The gaps did not grow with scale, from 4B to 20B.
