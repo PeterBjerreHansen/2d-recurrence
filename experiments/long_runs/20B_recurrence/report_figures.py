@@ -9,6 +9,7 @@ matplotlib is not a project dependency, hence ``--with``.
 """
 
 import csv
+import json
 from pathlib import Path
 
 import matplotlib
@@ -17,6 +18,8 @@ import matplotlib.pyplot as plt
 
 ROOT = Path('experiments/long_runs/20B_recurrence')
 OUTPUT = ROOT / 'report_figures' / 'nll_trajectories.png'
+# Live NLL of temporal 20B after the 200-update mixer fine-tune (align.py), same selection panel.
+ALIGNED = Path('experiments/ablations/live_warm_start/results/check_temporal_aligned_J1.json')
 CHARACTERS_PER_UPDATE = 100 * 1023
 # Reference palette, categorical slots 1-4 (light mode), fixed per arm.
 COLORS = {'hybrid': '#2a78d6', 'temporal': '#eb6834', 'depth': '#1baf7a', 'transformer': '#eda100'}
@@ -85,8 +88,21 @@ def main():
         right_ends.append((arm, x[-1], y[-1]))
     label_ends(left, left_ends, 0.0045)
     label_ends(right, right_ends, 0.011)
-    right.set_title('Live, token by token (as trained)', color=INK, fontsize=10, loc='left')
-    right.set_xlim(left.get_xlim()[0], 22.5)
+    # After training, a 200-update fine-tune of the temporal mixer fixes live execution.
+    final_x, final_y = next((x, y) for arm, x, y in right_ends if arm == 'temporal')
+    fixed_x, fixed_y = final_x + 4.6, json.loads(ALIGNED.read_text())['nll']  # beside the axis, not a character count
+    right.annotate('', (fixed_x, fixed_y), xytext=(final_x, final_y),
+                   arrowprops=dict(arrowstyle='-|>', linestyle='--', color=COLORS['temporal'], linewidth=1.5,
+                                   shrinkA=4, shrinkB=4))
+    right.plot([fixed_x], [fixed_y], marker='o', markersize=5, markerfacecolor='white',
+               markeredgecolor=COLORS['temporal'], markeredgewidth=1.5)
+    right.annotate(f'{fixed_y:.4f}', (fixed_x, fixed_y), xytext=(fixed_x + 0.4, fixed_y), textcoords='data',
+                   va='center', fontsize=8, color=INK)
+    right.text(final_x + 2.9, (final_y + fixed_y) / 2 + 0.05, 'after a 200-update\nfine-tune of the\nmemory reader',
+               fontsize=8, color=MUTED, ha='left', va='center')
+    right.set_title('Live, token by token', color=INK, fontsize=10, loc='left')
+    right.set_xlim(left.get_xlim()[0], 27.5)
+    right.set_xticks([5, 10, 15, 20])
     left.set_xlim(left.get_xlim()[0], 22.5)
     handles, labels = left.get_legend_handles_labels()
     fig.legend(handles, labels, loc='lower center', ncol=4, frameon=False, fontsize=9, labelcolor=INK)

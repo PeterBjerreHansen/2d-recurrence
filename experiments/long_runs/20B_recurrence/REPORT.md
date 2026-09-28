@@ -18,7 +18,7 @@ Four arms of the same 8-layer, width-512 character-level chess model, each train
 
 ![Four-pass training-graph NLL and live NLL against training characters](report_figures/nll_trajectories.png)
 
-*Selection panel (128 rows), at every retained checkpoint. The confirmation results below use separate, larger row sets.*
+*Selection panel (128 rows), at every retained checkpoint. The dashed arrow shows temporal after the 200-update fine-tune described below. The confirmation results below use separate, larger row sets.*
 
 ## Setup
 
