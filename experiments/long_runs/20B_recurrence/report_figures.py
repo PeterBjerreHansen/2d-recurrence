@@ -84,25 +84,23 @@ def main():
         else:
             points = series(arm, lambda r, d=depth: r['execution'] == 'live' and r['depth_steps'] == d)
         x, y = zip(*points)
-        right.plot(x, y, color=COLORS[arm], linewidth=2, marker='o', markersize=4)
+        right.plot(x, y, color=COLORS[arm], linewidth=2, marker='o', markersize=4, zorder=2)
         right_ends.append((arm, x[-1], y[-1]))
     label_ends(left, left_ends, 0.0045)
-    label_ends(right, right_ends, 0.011)
-    # After training, a 200-update fine-tune of the temporal mixer fixes live execution.
+    # After training, a 200-update fine-tune of the temporal mixer (3.3M characters) fixes live execution.
     final_x, final_y = next((x, y) for arm, x, y in right_ends if arm == 'temporal')
-    fixed_x, fixed_y = final_x + 4.6, json.loads(ALIGNED.read_text())['nll']  # beside the axis, not a character count
-    right.annotate('', (fixed_x, fixed_y), xytext=(final_x, final_y),
+    fixed_y = json.loads(ALIGNED.read_text())['nll']
+    right.annotate('', (final_x, fixed_y), xytext=(final_x, final_y),
                    arrowprops=dict(arrowstyle='-|>', linestyle='--', color=COLORS['temporal'], linewidth=1.5,
-                                   shrinkA=4, shrinkB=4))
-    right.plot([fixed_x], [fixed_y], marker='o', markersize=5, markerfacecolor='white',
-               markeredgecolor=COLORS['temporal'], markeredgewidth=1.5)
-    right.annotate(f'{fixed_y:.4f}', (fixed_x, fixed_y), xytext=(fixed_x + 0.4, fixed_y), textcoords='data',
-                   va='center', fontsize=8, color=INK)
-    right.text(final_x + 2.9, (final_y + fixed_y) / 2 + 0.05, 'after a 200-update\nfine-tune of the\nmemory reader',
+                                   shrinkA=4, shrinkB=4), zorder=1)
+    right.plot([final_x], [fixed_y], marker='o', markersize=5, markerfacecolor='white',
+               markeredgecolor=COLORS['temporal'], markeredgewidth=1.5, zorder=3)
+    right.text(final_x + 0.5, (final_y + fixed_y) / 2 + 0.04, 'after a 200-update\nfine-tune of the\nmemory reader',
                fontsize=8, color=MUTED, ha='left', va='center')
+    label_ends(right, [end for end in right_ends if end[0] != 'temporal'] +
+               [('temporal', final_x, final_y), ('temporal_fixed', final_x, fixed_y)], 0.011)
     right.set_title('Live, token by token', color=INK, fontsize=10, loc='left')
-    right.set_xlim(left.get_xlim()[0], 27.5)
-    right.set_xticks([5, 10, 15, 20])
+    right.set_xlim(left.get_xlim()[0], 22.5)
     left.set_xlim(left.get_xlim()[0], 22.5)
     handles, labels = left.get_legend_handles_labels()
     fig.legend(handles, labels, loc='lower center', ncol=4, frameon=False, fontsize=9, labelcolor=INK)
