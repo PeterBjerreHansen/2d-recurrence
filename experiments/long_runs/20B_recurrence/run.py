@@ -597,6 +597,8 @@ def _evaluation_path(name, checkpoint, split):
 
 def _validate_checkpoint(checkpoint, name, step=None):
     """Reject a misplaced arm or changed training protocol before using its weights."""
+    if checkpoint.get('evaluation_only') or 'alignment' in checkpoint:
+        raise ValueError('Post-hoc aligned checkpoint; it is not an original study checkpoint')
     protocol = recorded_protocol()
     expected = protocol['configurations'][name]
     actual = dict(checkpoint['config'])
