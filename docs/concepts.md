@@ -146,7 +146,15 @@ Counting transformer-block applications for layout A:
 - **Training pass count `B`:** `3 + 5B + U_T`. The prelude and coda run once; the buffer and core run every pass; the T-source runs once per temporal write plus once for the prediction.
 - **Live inference with `J` core iterations per token:** `4 + 4J`.
 
-Measured with the same distribution of pass counts, a hybrid update took about 1.00 s, a temporal-only update 1.03 s, and a depth-only update 0.90 s. Adding depth to a temporal model cost nothing measurable, and adding temporal to a depth model about 11%. The cost is in the passes, which either single-axis model already pays.
+Averaged over the 20B curriculum, estimated training compute per update relative to the transformer (forward matrix multiplications, including the mixers and attention):
+
+| Model | vs transformer |
+| --- | --- |
+| Depth-only | 2.45× |
+| Temporal-only | 2.80× |
+| Hybrid | 2.81× |
+
+Adding depth to a temporal model costs 0.2%; adding temporal to a depth model costs about 15%. The cost is in the passes, which either single-axis model already pays. Measured update times agree.
 
 Measured live latency per token, same host (Apple MPS, batch 1):
 

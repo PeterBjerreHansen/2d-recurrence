@@ -31,7 +31,7 @@ Four arms of the same 8-layer, width-512 character-level chess model, each train
 | Arms | temporal `(U, 0)`, depth `(0, U)`, hybrid (80% diagonal), transformer |
 | Hardware | one Secure RTX 4090 per arm on Runpod |
 
-**What is matched:** data, data order, optimiser, and the distribution of executed passes. **What is not:** compute and parameters. Averaged over the curriculum, a recurrent training step applies about 19–22 transformer blocks per token against the transformer's 8, so the recurrent arms use roughly 2.4–2.7 times its training compute. At inference, one core iteration per token applies 8 transformer blocks, the same number as the transformer, and four iterations apply 20. The mixers add work on top of those blocks. Measured same-host live latency (Apple MPS, batch 1, same architecture):
+**What is matched:** data, data order, optimiser, and the distribution of executed passes. **What is not:** compute and parameters. Averaged over the curriculum, the estimated training compute per update ([`training_flops.py`](training_flops.py)) is 2.45× the transformer's for depth, 2.80× for temporal and 2.81× for the hybrid. That is forward matrix multiplications, including the mixers and attention. At inference, one core iteration per token applies 8 transformer blocks, the same number as the transformer, and four iterations apply 20. The mixers add work on top of those blocks. Measured same-host live latency (Apple MPS, batch 1, same architecture):
 
 | | ms per token | vs transformer |
 | --- | --- | --- |
