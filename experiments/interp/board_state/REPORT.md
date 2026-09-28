@@ -15,7 +15,7 @@ Linear probes for the board and the side to move at every residual-stream site o
   - Edits where the memory delivers the board have no effect, because earlier characters still carry the true board.
 - **Single training seed, one probe split.** Differences of about 0.005 in probe accuracy should not be over-read.
 
-![Board probe accuracy against transformer blocks applied](results/figures/probe_curves.png)
+![Board probe accuracy against transformer blocks applied](report_figures/probe_curves.png)
 
 *Held-out probe accuracy at every site. Looped arms show every core iteration, so the x-axis is compute. `Tmix` is drawn at the same x as L1. Figure: `figures.py`.*
 

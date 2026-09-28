@@ -1,6 +1,6 @@
 """Probe accuracy by site for every arm, against blocks applied so far.
 
-Writes ``results/figures/probe_curves.png``: one panel per board probe, one
+Writes ``report_figures/probe_curves.png`` (tracked, used by the report): one panel per board probe, one
 line per arm, the random-init model as a grey reference. Looped arms show every
 core iteration, so the x-axis is compute (blocks applied), not physical layer.
 The temporal mixer output (``Tmix``) is drawn at the same x as ``L1``; depth
@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from .common import RESULTS
+from .common import HERE, RESULTS
 
 # Reference categorical palette, fixed order; each arm also has its own marker.
 STYLE = {
@@ -72,7 +72,7 @@ def main():
     axes[0].set_ylabel('Held-out probe accuracy', fontsize=9, color='#5f5e5a')
     axes[0].legend(fontsize=8, frameon=False, loc='lower right')
     fig.tight_layout()
-    out = RESULTS / 'figures'
+    out = HERE / 'report_figures'
     out.mkdir(parents=True, exist_ok=True)
     fig.savefig(out / 'probe_curves.png', dpi=150, facecolor=fig.get_facecolor())
     print(f'wrote {out / "probe_curves.png"}')
