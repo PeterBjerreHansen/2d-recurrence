@@ -1,7 +1,9 @@
 """The board and the temporal gates across the move cycle, at every character.
 
 Every input character gets a role in the cycle (``ROLES``) and the board after
-the latest move whose final character has been read. A move counts as made at
+the latest move whose final character has been read. Characters of a move are
+split by the side moving: the board is represented relative to the side to move
+(Karvonen's mine/theirs), so one absolute-encoding probe cannot read both. A move counts as made at
 its last SAN character, before any ``+``/``#``: that is where the model must
 know the new position to predict a check marker.
 
@@ -34,17 +36,17 @@ from interp.boards import encode
 from interp.probes import fit
 from .common import CONTEXT, RESULTS, TRAIN_ROWS, decode, device, load_arm, load_rows
 
-ROLES = ('space_number', 'digit', 'dot', 'first', 'body', 'last', 'check', 'space_black')
+_MOVE_ROLES = {'first': "first character of {}'s move", 'body': "inside {}'s move",
+               'last': "last character of {}'s move (move applied)", 'check': "+ or # after {}'s move"}
 ROLE_NAMES = {
     'space_number': "space after Black's move (next: move number)",
     'digit': 'move-number digit',
     'dot': 'dot (next: White chooses)',
-    'first': "a move's first character",
-    'body': 'inside a move',
-    'last': "a move's last character (move applied)",
-    'check': '+ or #',
+    **{f'{role}_white': text.format('White') for role, text in _MOVE_ROLES.items()},
     'space_black': "space after White's move (next: Black chooses)",
+    **{f'{role}_black': text.format('Black') for role, text in _MOVE_ROLES.items()},
 }
+ROLES = tuple(ROLE_NAMES)
 # Roles differ tenfold in size, so every probe gets at least MIN_STEPS optimizer steps.
 BATCH, MIN_STEPS, MIN_EPOCHS = 512, 4000, 8
 _MOVE_NUMBER = re.compile(r'\d+\.')
@@ -83,19 +85,20 @@ def label_row(text, limit):
                 mark(token_start + offset - 1, ROLES.index('dot'))
             san = token[offset:]
             core = san.rstrip('+#')
+            side = 'white' if board.turn == chess.WHITE else 'black'
             if not core or token_start + len(token) >= len(text):
                 break  # incomplete final move
             for j, _ in enumerate(core[:-1]):
-                mark(token_start + offset + j, ROLES.index('first' if j == 0 else 'body'))
+                mark(token_start + offset + j, ROLES.index(f'{"first" if j == 0 else "body"}_{side}'))
             try:
                 board.push_san(san)
             except ValueError:
                 break
             before, now = now, encode(board, False)
             last = token_start + offset + len(core) - 1
-            mark(last, ROLES.index('last'))
+            mark(last, ROLES.index(f'last_{side}'))
             for j in range(len(core), len(san)):
-                mark(token_start + offset + j, ROLES.index('check'))
+                mark(token_start + offset + j, ROLES.index(f'check_{side}'))
     return role, current, previous, valid
 
 

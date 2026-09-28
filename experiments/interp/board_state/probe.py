@@ -39,8 +39,9 @@ INITIAL = encode(chess.Board(), False)
 _SWAP = np.array([0] + list(range(7, 13)) + list(range(1, 7)), dtype=np.int8)
 DOT, SPACE_WHITE, SPACE_BLACK = (KINDS.index(kind) for kind in KINDS)
 PROBES = ('board', 'board_karvonen', 'turn')
-# The Karvonen subset is about a sixth of the board points, so it takes more, smaller steps.
-TRAINING = dict(board=dict(epochs=12, batch=1024, lr=3e-3), board_karvonen=dict(epochs=30, batch=256, lr=3e-3),
+# About 5,000-6,000 optimizer steps per board probe: at 1,650 steps the board probe was still
+# 0.02 short of convergence. The Karvonen subset is about a sixth of the board points.
+TRAINING = dict(board=dict(epochs=36, batch=1024, lr=3e-3), board_karvonen=dict(epochs=60, batch=256, lr=3e-3),
                 turn=dict(epochs=12, batch=1024, lr=3e-3))
 KARVONEN_CHARACTERS = 365
 

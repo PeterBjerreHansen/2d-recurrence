@@ -6,6 +6,9 @@ At the two pre-move kinds (``dot``, ``space_black``) with a complete next move:
 ``lens``           logit lens: the model's own final norm and unembedding applied to the
                    site, scored on the move's first character (top-1 accuracy)
 
+Probes are fit separately for White's (``dot``) and Black's (``space_black``)
+decisions, since the model may represent moves relative to the mover.
+
 The played move is a human's, so the ceiling is how often the model predicts it
 (about 0.6 top-1 for the move). What matters is where each readout rises
 relative to where the board probe plateaus. Uses the activations from
@@ -26,13 +29,14 @@ from interp.boards import KINDS
 from interp.probes import fit
 from .common import ARMS, RESULTS, device, load_arm, load_rows
 
-TRAINING = dict(epochs=12, batch=1024, lr=3e-3)
+# Per-colour subsets are about half the points; 36 epochs gives roughly 2,500 steps per probe.
+TRAINING = dict(epochs=36, batch=1024, lr=3e-3)
 
 
 def move_labels(labels, meta):
     """Points with a parseable next move: indices, from-square, to-square, first-character id."""
     pre_move = np.isin(labels['kind'], [KINDS.index('dot'), KINDS.index('space_black')]) & (labels['next_san'] != '')
-    points, origin, target, first = [], [], [], []
+    points, origin, target, first, kinds = [], [], [], [], []
     for point in np.flatnonzero(pre_move):
         san = str(labels['next_san'][point])
         try:
@@ -43,7 +47,8 @@ def move_labels(labels, meta):
         origin.append(move.from_square)
         target.append(move.to_square)
         first.append(meta['stoi'][san[0]])
-    return np.array(points), np.array(origin), np.array(target), np.array(first)
+        kinds.append(labels['kind'][point])
+    return np.array(points), np.array(origin), np.array(target), np.array(first), np.array(kinds)
 
 
 @torch.no_grad()
@@ -59,16 +64,22 @@ def lens_accuracy(model, x, first, device_name, batch=8192):
 def analyse(name, labels, meta, device_name):
     runner, _ = load_arm(name, device_name)
     run = json.loads((RESULTS / 'activations' / name / 'run.json').read_text())
-    points, origin, target, first = move_labels(labels, meta)
+    points, origin, target, first, kinds = move_labels(labels, meta)
     train = labels['train'][points]
     result = dict(arm=name, points=len(points), sites=[])
     for site in run['sites']:
         x = np.load(RESULTS / 'activations' / name / f'{site["name"]}.npy', mmap_mode='r')[points]
         entry = dict(site)
         for key, y in (('from', origin), ('to', target)):
-            probe = fit(np.asarray(x[train], dtype=np.float32), y[train, None], 64, device=device_name, **TRAINING)
-            predicted = probe.predict(torch.from_numpy(np.asarray(x[~train], dtype=np.float32)))[:, 0].numpy()
-            entry[f'{key}_accuracy'] = float((predicted == y[~train]).mean())
+            correct = []
+            for kind in ('dot', 'space_black'):
+                rows = kinds == KINDS.index(kind)
+                probe = fit(np.asarray(x[rows & train], dtype=np.float32), y[rows & train, None], 64,
+                            device=device_name, **TRAINING)
+                predicted = probe.predict(torch.from_numpy(np.asarray(x[rows & ~train], dtype=np.float32)))
+                correct.append(predicted[:, 0].numpy() == y[rows & ~train])
+                entry[f'{key}_accuracy_{kind}'] = float(correct[-1].mean())
+            entry[f'{key}_accuracy'] = float(np.concatenate(correct).mean())
         entry['lens_first_char_accuracy'] = lens_accuracy(runner.model, x[~train], first[~train], device_name)
         result['sites'].append(entry)
         print(f'{name} {site["name"]:>7}: from {entry["from_accuracy"]:.3f}, to {entry["to_accuracy"]:.3f}, '

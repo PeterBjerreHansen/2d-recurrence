@@ -7,7 +7,9 @@ and one for the board *before* it. Both are scored only on the squares that
 move changed, where the two boards disagree.
 
 A site that holds a stale board reads "before" better than "after"; the layer
-where "after" overtakes "before" is where the move is applied. Uses the
+where "after" overtakes "before" is where the move is applied. Probes are fit
+separately for each kind: the board is represented relative to the side to
+move, so one absolute-encoding probe cannot read both colours. Uses the
 activations from ``capture.py``; writes ``results/update/<arm>.json``.
 
 Example:
@@ -24,7 +26,8 @@ from interp.boards import KINDS
 from interp.probes import fit
 from .common import ARMS, RESULTS, device
 
-TRAINING = dict(epochs=12, batch=1024, lr=3e-3)
+# Per-colour subsets are about half the points; 36 epochs gives roughly 2,500 steps per probe.
+TRAINING = dict(epochs=36, batch=1024, lr=3e-3)
 
 
 def paired_points(labels):
@@ -48,19 +51,25 @@ def analyse(name, labels, device_name):
     before = labels['board_abs'][previous].astype(np.int64)
     changed = after != before
     train = labels['train'][current]
+    kinds = labels['kind'][current]
     result = dict(arm=name, points=len(current), sites=[])
     for site in run['sites']:
         x = np.load(RESULTS / 'activations' / name / f'{site["name"]}.npy', mmap_mode='r')[current]
-        x_train = np.asarray(x[train], dtype=np.float32)
-        x_test = torch.from_numpy(np.asarray(x[~train], dtype=np.float32))
         entry = dict(site)
-        for key, y in (('after', after), ('before', before)):
-            probe = fit(x_train, y[train], 13, device=device_name, **TRAINING)
-            predicted = probe.predict(x_test).numpy()
-            entry[f'{key}_changed_accuracy'] = float((predicted == y[~train])[changed[~train]].mean())
+        for kind in ('dot', 'space_black'):
+            rows = kinds == KINDS.index(kind)
+            x_train = np.asarray(x[rows & train], dtype=np.float32)
+            x_test = torch.from_numpy(np.asarray(x[rows & ~train], dtype=np.float32))
+            for key, y in (('after', after), ('before', before)):
+                probe = fit(x_train, y[rows & train], 13, device=device_name, **TRAINING)
+                predicted = probe.predict(x_test).numpy()
+                entry[f'{kind}_{key}_changed_accuracy'] = float(
+                    (predicted == y[rows & ~train])[changed[rows & ~train]].mean())
         result['sites'].append(entry)
-        print(f'{name} {site["name"]:>7}: changed squares read as after {entry["after_changed_accuracy"]:.3f}, '
-              f'as before {entry["before_changed_accuracy"]:.3f}', flush=True)
+        print(f'{name} {site["name"]:>7}: changed squares after / before: '
+              + ', '.join(f'{kind} {entry[f"{kind}_after_changed_accuracy"]:.3f} / '
+                          f'{entry[f"{kind}_before_changed_accuracy"]:.3f}' for kind in ('dot', 'space_black')),
+              flush=True)
     out = RESULTS / 'update'
     out.mkdir(parents=True, exist_ok=True)
     (out / f'{name}.json').write_text(json.dumps(result, indent=2) + '\n')
