@@ -57,7 +57,7 @@ a = α ⊙ W_m · norm(r) + β ⊙ W_p · norm(p)          # α starts at 0.1, �
 
 Position 0 has no predecessor, so it bypasses the mixer. A zero-valued memory anywhere else is still a valid input.
 
-At inference, the state is written once per token and read by the next one. The chain now runs through *every* earlier token, while training only chained a few. The two executions are therefore different, and their difference is something to measure (see §7).
+At inference, the state is written once per token and read by the next one. The chain now runs through *every* earlier token, while training only chained a few. The two executions are therefore different, and their difference is something to measure (see §7). In the 20B study the live memory settled on a stable value that the temporal-only model had never been trained to read. Training it on that settled memory closed the gap.
 
 In this repository, the temporal-only model keeps the full layout: its memory comes from the T-source (L7), as in the hybrid.
 
@@ -147,6 +147,13 @@ Counting transformer-block applications for layout A:
 - **Live inference with `J` core iterations per token:** `4 + 4J`.
 
 Measured in the 5B-character study, with the same distribution of pass counts, a hybrid update took about 1.00 s, a temporal-only update 1.03 s, and a depth-only update 0.90 s. Each arm ran on its own RTX 3090 pod. Adding the second axis to a model that already loops costs little. Most of the cost is the passes themselves.
+
+Measured live latency per token, same host (Apple MPS, batch 1):
+
+| Model | vs transformer |
+| --- | --- |
+| Temporal or hybrid, `J = 1` | about +12–13% |
+| Depth or hybrid, `J = 4` | about 2.5× |
 
 Always say what a comparison holds equal: data, passes, FLOPs or parameters. They answer different questions.
 

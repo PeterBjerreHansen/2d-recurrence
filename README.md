@@ -33,7 +33,9 @@ Every pass reads whatever state exists; a state that isn't rewritten is simply h
 
 So `(0,0)` is an ordinary transformer, `(U,0)` trains the temporal axis, `(0,U)` trains the depth axis, and mixed pairs train the two together. A single checkpoint can be evaluated anywhere on the `(U_T, U_D)` surface.
 
-**How cheap is it?** In the 5B-character study, with the same distribution of pass counts, a hybrid update took about as long as a temporal-only update (1.00 s vs. 1.03 s) and about 11% longer than a depth-only update (0.90 s). Each arm ran on its own RTX 3090 pod. Most of the cost is the extra passes themselves, which both single-axis models already pay.
+**How cheap is it?** With the same distribution of pass counts, a hybrid training update took about as long as a temporal-only update (1.00 s vs. 1.03 s) and about 11% longer than a depth-only update (0.90 s). These are from the 5B study, one arm per RTX 3090. Most of the cost is the extra passes themselves, which both single-axis models already pay.
+
+At inference, one core iteration per token applies as many transformer blocks as the plain transformer and adds about 12–13% latency for the mixers; four iterations cost about 2.5×.
 
 ## At inference, the two axes separate again
 
@@ -44,17 +46,38 @@ Parallel multi-pass training is only a way to *train* recurrence. When generatin
 - **Depth** loops the recurrent core `J` times *within* the current token. The depth state is discarded at the next token.
 - **Temporal** state is written once per token by the T-source and read by the *next* token, across the whole sequence.
 
-During training, `U` passes chain the temporal state only `U` positions back. At inference the chain runs through every earlier token. The repository implements both executions and reports them separately. It does not assume they agree.
+During training, `U` passes chain the temporal state only `U` positions back. At inference the chain runs through every earlier token. The two executions need not agree, so the repository measures both. At 20B, the hybrid and depth models ran live at their training-graph quality. The temporal-only model did not until it was also trained on the memory that live execution produces; see the [20B report](experiments/long_runs/20B_recurrence/REPORT.md#why-temporal-fails-live).
 
 ## What has been found so far
 
-| Scale | Comparison | Result |
-| --- | --- | --- |
-| 1B characters | Hybrid checkpoint vs. transformer | The `(3,3)` hybrid path beat the transformer by about 0.003–0.004 NLL. Temporal-only and depth-only execution of the same checkpoint each helped. |
-| 5B characters | Separately trained temporal, depth and hybrid models | Depth trailed by about 0.002 NLL. Temporal led the hybrid early on; the gap shrank to about 0.0006 by the end. |
-| 20B characters | Four separately trained arms, curriculum toward four passes | Training graph: hybrid `(3,3)` and temporal tie (0.2136), depth trails by 0.0024, all beat the transformer by 0.012–0.014. Live: the hybrid with four core iterations is the best deployable model (0.2137); as trained, temporal fails live (0.48) until a 3M-character mixer fine-tune fixes it (0.2176). See the [20B report](experiments/long_runs/20B_recurrence/REPORT.md). |
+**20B characters: four separately trained models** (transformer, temporal-only, depth-only, hybrid). Details are in the [20B report](experiments/long_runs/20B_recurrence/REPORT.md).
 
-These are single-seed results. Protocols and caveats are in the [experiment index](experiments/README.md).
+![Four-pass NLL and live NLL against training characters](experiments/long_runs/20B_recurrence/report_figures/nll_trajectories.png)
+
+- **All three recurrent models beat the transformer** by 0.012–0.014 NLL at four passes, with the same data.
+- **The hybrid ties temporal-only and beats depth-only.** Hybrid and temporal both reach 0.2136 on held-out rows; depth trails by 0.0024. The gaps did not grow with scale, from 4B to 20B.
+- **The gains are in choosing the move, and they grow over the game.** The hybrid's advantage over the transformer rises from 0.001 NLL in the first ten plies to 0.028 later in the game.
+- **Deployed token by token,** the hybrid with four core iterations is the best model (0.2137 NLL), slightly ahead of depth-only at the same cost. With 3× less data, it also edges out Karvonen's released 8-layer model on the same rows.
+
+**Earlier evidence:**
+- **1B:** one hybrid checkpoint beat the transformer by 0.003–0.004 NLL.
+- **5B:** separately trained arms; depth trailed and temporal led the hybrid slightly.
+
+All results are single-seed. Protocols and caveats are in the [experiment index](experiments/README.md).
+
+## Status and open work
+
+- **Done:**
+  - the recurrence contract, the three recurrence modes and their layout;
+  - live execution with KV caches;
+  - the 1B, 5B and 20B studies;
+  - an evaluation battery with legal-move and per-character breakdowns.
+- **Open:**
+  - multiple training seeds;
+  - update supports without gaps, and training on the settled memory that live execution uses ([follow-ups](experiments/ablations/live_warm_start/PLAN.md));
+  - more than four training passes;
+  - adaptive per-token depth;
+  - playing-strength evaluation.
 
 ## Quick start
 
@@ -76,8 +99,8 @@ This runs a small local check on Apple MPS. The [usage guide](docs/usage.md) cov
 | Understand token-by-token generation and KV caches | [Inference contract](docs/INFERENCE_CONTRACT.md) |
 | Train, resume, evaluate or generate | [Usage guide](docs/usage.md) |
 | Find experiments, protocols and results | [Experiment index](experiments/README.md) |
-| See what is done and what comes next | [Implementation plan and status](docs/implementation_plan.md) |
-| Read the original research proposal | [Proposal](docs/proposal.md) (historical) |
+| Read the 20B results | [20B report](experiments/long_runs/20B_recurrence/REPORT.md) |
+| Evaluate checkpoints the same way | [Evaluation battery](experiments/evaluation_battery/README.md) |
 
 ## Background
 

@@ -10,7 +10,6 @@ The compute-matched supervision choice is final-only. Final-only had lower NLL t
 
 The unchanged 1B pair then showed a small but consistent benefit from the recurrent execution graph. At the deepest `(3,3)` evaluation cell, recurrent A beat the ordinary transformer baseline by 0.003106 NLL on the selection panel and 0.004185 on the disjoint confirmation panel. This is evidence that the trained recurrent model is useful in this pilot, but it is one training seed per model; the placement standard deviations below are not training-seed uncertainty.
 
-No 64B run was launched.
 
 ![Learning curves](LONG_BASELINE_CURVES.png)
 
