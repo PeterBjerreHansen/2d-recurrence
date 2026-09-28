@@ -194,9 +194,37 @@ class Recurrent2DGPT(GPT):
     def _prediction(self, h, targets=None):
         return self.readout(self.coda(self.temporal_source(h)), targets)
 
+    @torch.no_grad()
+    def settle_temporal_memory(self, idx, max_passes, tolerance):
+        """Iterate temporal-only training-graph passes toward the live (sequential) memory.
+
+        Jacobi iteration: after ``k`` writes, positions below ``k`` hold exactly their
+        live memory. Stops once the mean relative change of one more write falls below
+        ``tolerance``, or after ``max_passes``. Returns the unshifted memory and the
+        number of writes.
+        """
+        if self.temporal_mixer is None:
+            raise ValueError('Settling temporal memory requires temporal recurrence')
+        p = self.embed(idx)
+        blocks = self.transformer.h
+        for index in range(self.config.n_prelude):
+            p = blocks[index](p)
+        memory = None
+        for passes in range(1, max_passes + 1):
+            anchor = p if memory is None else self.temporal_mixer(p, shift_right(memory))
+            for index in range(self.config.n_prelude, self.config.core_stop):
+                anchor = blocks[index](anchor)
+            written = self.temporal_source(anchor)
+            if memory is not None:
+                change = (written - memory).float().norm(dim=-1) / memory.float().norm(dim=-1).clamp_min(1e-6)
+                if float(change.mean()) < tolerance:
+                    return written, passes
+            memory = written
+        return memory, max_passes
+
     def forward(self, idx, targets=None, *, schedule: RecurrenceSchedule,
                 deep_supervision=False, deep_supervision_lambda=0.25,
-                return_components=False):
+                return_components=False, initial_temporal_state=None):
         if not isinstance(schedule, RecurrenceSchedule):
             raise TypeError('An explicit RecurrenceSchedule is required')
         validate_recurrence_counts(self.config.recurrence_mode, schedule.u_t, schedule.u_d)
@@ -214,7 +242,10 @@ class Recurrent2DGPT(GPT):
         for index in range(self.config.n_prelude):
             p = blocks[index](p)
 
-        temporal_state = None
+        if initial_temporal_state is not None and self.temporal_mixer is None:
+            raise ValueError('An initial temporal state requires temporal recurrence')
+        # A warm start reads settled memory on the first pass instead of none; no gradient flows into it.
+        temporal_state = None if initial_temporal_state is None else initial_temporal_state.detach()
         depth_state = None
         intermediate_losses = []
         for b in range(schedule.rounds):

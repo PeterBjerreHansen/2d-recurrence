@@ -84,3 +84,49 @@ def test_study_validation_rejects_aligned_checkpoints():
     runner = import_module('experiments.long_runs.20B_recurrence.run')
     with pytest.raises(ValueError, match='aligned'):
         runner._validate_checkpoint({'evaluation_only': True, 'alignment': {}}, 'temporal')
+
+
+def test_model_settles_temporal_memory_to_live_execution():
+    model = _model('temporal')
+    x = torch.randint(0, 32, (1, 12))
+    memory, passes = model.settle_temporal_memory(x, max_passes=12, tolerance=0.0)
+    assert passes == 12
+    torch.testing.assert_close(memory, _live_memory(model, x, 1, 'final_depth'), atol=1e-5, rtol=1e-5)
+    with torch.no_grad():
+        _, early = model.settle_temporal_memory(x, max_passes=40, tolerance=1e9)
+    assert early == 2  # stops at the first comparison when any change is allowed
+
+
+def test_warm_started_forward_reads_the_given_memory():
+    model = _model('temporal')
+    x = torch.randint(0, 32, (2, 10))
+    y = torch.randint(0, 32, (2, 10))
+    schedule = import_module('recurrence.schedule').RecurrenceSchedule((), ())
+    with torch.no_grad():
+        memory, _ = model.settle_temporal_memory(x, max_passes=10, tolerance=0.0)
+        _, loss = model(x, y, schedule=schedule, initial_temporal_state=memory)
+        expected = align.final_losses(model, align.prelude(model, x), memory, y).mean()
+    assert float(loss) == pytest.approx(float(expected), abs=1e-6)
+
+
+def test_training_resumes_with_warm_start_batches(prepared_data, tmp_path):
+    from train import train
+    base = import_module('tests.test_recurrence_modes').mode_training_config(
+        'temporal', tmp_path / 'run', dataset=str(prepared_data), gradient_accumulation_steps=2,
+        max_iters=4, eval_interval=2, log_interval=1)
+    train({**base, 'max_iters': 2})
+    final = train({**base, 'init_from': 'resume', 'warm_start_fraction': 0.5, 'warm_start_max_passes': 4})
+    assert torch.load(final, weights_only=False)['iter_num'] == 4
+    import json
+    records = [json.loads(line) for line in (tmp_path / 'run' / 'metrics.jsonl').read_text().splitlines()]
+    warm = [[s.get('warm_passes') for s in r['schedules']] for r in records if r['event'] == 'train']
+    assert all(passes is None for passes in warm[0])           # before the resume: no warm start
+    assert all(p[0] is not None and 1 <= p[0] <= 4 and p[1] is None for p in warm[-2:])
+
+
+def test_warm_start_is_refused_outside_the_temporal_mode(tmp_path):
+    from train import train
+    config = import_module('tests.test_recurrence_modes').mode_training_config(
+        'hybrid', tmp_path / 'run', warm_start_fraction=0.25)
+    with pytest.raises(ValueError, match='temporal mode'):
+        train(config)

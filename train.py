@@ -45,6 +45,9 @@ DEFAULTS = dict(
     checkpoint_interval=0,
     eval_panel_path='', deep_supervision=False, deep_supervision_lambda=0.25,
     training_budget_seconds=0.0,
+    # Warm start (temporal mode): this fraction of each update's microbatches first settles the
+    # temporal memory with gradient-free passes, then trains its sampled schedule from it.
+    warm_start_fraction=0.0, warm_start_max_passes=64, warm_start_tolerance=0.01,
 )
 
 
@@ -134,6 +137,15 @@ def train(config):
         sample_schedule(config['eval_u_t'], config['eval_u_d'], random.Random(0))
     else:
         sampler = None
+    fraction = config['warm_start_fraction']
+    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not 0 <= fraction <= 1:
+        raise ValueError('warm_start_fraction must be between zero and one')
+    if fraction and not (recurrent and config['recurrence_mode'] == 'temporal'):
+        raise ValueError('Warm-start batches are implemented for the temporal mode only')
+    if type(config['warm_start_max_passes']) is not int or config['warm_start_max_passes'] < 1:
+        raise ValueError('warm_start_max_passes must be a positive integer')
+    if not config['warm_start_tolerance'] >= 0:
+        raise ValueError('warm_start_tolerance must be nonnegative')
     if config['init_from'] not in ['scratch', 'resume']:
         raise ValueError('init_from must be scratch or resume')
     for key in ['batch_size', 'gradient_accumulation_steps', 'eval_interval', 'eval_iters', 'log_interval', 'num_threads']:
@@ -233,7 +245,9 @@ def train(config):
             raise ValueError('Exact resume requires the same world size')
         if checkpoint.get('eval_panel_sha256') != (panel['sha256'] if panel else None):
             raise ValueError('Resume evaluation panel differs from checkpoint')
-        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'checkpoint_interval', 'eval_panel_path'}
+        mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'checkpoint_interval', 'eval_panel_path',
+                   # A warm start changes how batches are processed, not the model or optimizer state.
+                   'warm_start_fraction', 'warm_start_max_passes', 'warm_start_tolerance'}
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:
@@ -378,6 +392,7 @@ def train(config):
         intermediate_weight = 0.0
         schedules = []
         probabilities = update_probabilities_at_step(config, step) if recurrent else None
+        warm_microbatches = round(config['warm_start_fraction'] * accumulation)
         for micro_step in range(accumulation):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1
@@ -386,7 +401,14 @@ def train(config):
             if recurrent:
                 schedule = next_schedule(probabilities)
                 kwargs['schedule'] = schedule
-                schedules.append(dict(u_t=schedule.u_t, u_d=schedule.u_d, rounds=schedule.rounds))
+                record = dict(u_t=schedule.u_t, u_d=schedule.u_d, rounds=schedule.rounds)
+                if micro_step < warm_microbatches:
+                    # Deterministic choice: the same microbatches, data and schedules as without warm start.
+                    with context():
+                        memory, record['warm_passes'] = raw_model.settle_temporal_memory(
+                            x, config['warm_start_max_passes'], config['warm_start_tolerance'])
+                    kwargs['initial_temporal_state'] = memory
+                schedules.append(record)
             with context():
                 if recurrent:
                     _, loss, components = model(
