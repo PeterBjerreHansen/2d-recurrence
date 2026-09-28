@@ -12,8 +12,8 @@ Linear probes for the board and the side to move at every residual-stream site o
 - **Recurrence gives an earlier board, not a much better one.** Best board, Karvonen setting: temporal 0.961, transformer 0.958, hybrid 0.953, depth 0.948, Karvonen's 3×-longer-trained transformer 0.981. On changed squares over whole rows temporal leads our transformer by 0.026.
 - **Looped cores add little after their first or second pass.** Depth needs its second iteration for the board and the move; the hybrid has both after its first. Its iterations restart mostly from L2: the previous iteration enters at half the weight of the fresh start (depth model: 0.8).
 - **The probes are causal where the model reads them.**
-  - Pushing the side-to-move direction at L2–L3 flips the model between predicting a move number and a move in 96–100% of held-out cases in the transformer and depth arms.
-  - Deleting a piece from the probed board in the late layers makes the new move legal on the modified board 64–72% of the time across our arms, against 10–19% for random directions.
+  - Pushing the side-to-move direction at L2–L3 flips the model between predicting a move number and a move in 95–100% of held-out cases in the transformer and depth arms.
+  - Deleting a piece from the probed board in the late layers makes the new move legal on the modified board 64–69% of the time across our arms, against 6–17% for random directions.
 - **One training seed per arm, one probe split.** Probe differences of about 0.005 should not be read as real.
 
 ![Board probe accuracy against transformer blocks applied](report_figures/probe_curves.png)
@@ -150,46 +150,45 @@ Contributions entering the mixer, over all positions of 40 rows:
 
 ## Causal checks
 
-The steering runs use the first round of probes (12 training epochs, about 0.02 below convergence). The results test those probes' directions.
-
-**Side to move** (`steer.py turn`, 200 held-out spaces, 100 for the hybrid, ×2 the probe-margin scale). Each cell is the fraction whose predicted next-character type (digit or letter) flips:
+**Side to move** (`steer.py turn`, ×2 the probe-margin scale; 200 held-out spaces, 100 for the hybrid). Each cell is the fraction whose predicted next-character type (digit or letter) flips:
 
 | Arm | Best sites | Late sites | Random direction |
 | --- | --- | --- | --- |
-| Transformer | L2 0.99, L3 1.00 | L6–L8 ≤ 0.03 | ≤ 0.08 |
-| Temporal | L3 0.79, L2 0.51 | `Tmix` 0.00, L7–L8 0.00 | 0.00 |
-| Depth | L3@1 0.99, L4@1 0.99, L2 0.96 | L6@4 0.50, L7 0.51 | ≤ 0.05 |
-| Hybrid | L2 0.59 | L6@4 0.54, L7 0.51; L3@1 and L6@1 0.00 | ≤ 0.05 |
+| Transformer | L2 0.99, L3 1.00 | L6 0.03, L7 0.00, L8 0.00 | ≤ 0.06 |
+| Temporal | L3 0.84, L2 0.51 | `Tmix` 0.00, L7 0.01, L8 0.00 | 0.00 |
+| Depth | L3@1 1.00, L4@1 0.99, L2 0.96 | L6@4 0.50, L7 0.50 | ≤ 0.06 |
+| Hybrid | L2 0.56 | L6@4 0.52, L7 0.57; L3@1 and L6@1 0.00 | ≤ 0.04 |
 
 - **Edits at `Tmix` have no effect,** although the probe reads side to move perfectly there. The model recomputes it from the text at L2–L3.
 - **A flip rate near 0.50 means only one direction flips.**
-- **In the hybrid, first-iteration edits have no effect even at ×16** (40 positions). The edits reach the output: random pushes there change the logits. Each iteration restarts mostly from the unedited L2, which already holds the correct side to move, and takes the previous iteration at half weight. The depth model weights it at 0.8, and there the same edits work.
+- **In the hybrid, first-iteration edits have no effect even at ×16** (40 positions). The edits do reach the output: random pushes there change the logits. Each iteration restarts mostly from the unedited L2, which already holds the correct side to move, and takes the previous iteration at half weight (see *The mixer*). The depth model weights it at 0.8, and there the same edits work.
 
 **Piece removal** (`steer.py board`, Karvonen's intervention; 150 held-out positions, 100 for the hybrid). Every position's original greedy move uses the deleted piece, so the unedited rate is 0.
 
 | Arm | Edit | Legal on modified board | Legal on original | Random direction |
 | --- | --- | --- | --- | --- |
-| Transformer | L6, ×4 | 0.600 | 0.947 | 0.147 |
-| Transformer | L4–L7, ×2 | 0.653 | 0.907 | 0.187 |
-| Transformer | L4–L7, ×4 | 0.760 | 0.653 | 0.280 |
-| Karvonen | L6, ×2 | 0.507 | 0.967 | 0.113 |
-| Karvonen | L4–L7, ×2 | 0.780 | 0.813 | 0.193 |
-| Temporal | L6, ×4 | 0.567 | 0.947 | 0.107 |
-| Temporal | L4–L7, ×2 | **0.720** | 0.827 | 0.113 |
-| Temporal | `Tmix` + L2, ×4 | 0.233 | 0.953 | 0.060 |
-| Depth | L6@4, ×4 | 0.540 | 0.993 | 0.147 |
+| Transformer | L6, ×4 | 0.620 | 0.953 | 0.100 |
+| Transformer | L4–L7, ×2 | 0.640 | 0.900 | 0.167 |
+| Transformer | L4–L7, ×4 | 0.833 | 0.720 | 0.227 |
+| Transformer | L3, ×4 | 0.040 | 1.000 | 0.020 |
+| Transformer | L8, ×4 | 0.033 | 1.000 | 0.107 |
+| Karvonen | L6, ×4 | 0.727 | 0.940 | 0.167 |
+| Karvonen | L4–L7, ×2 | 0.767 | 0.853 | 0.153 |
+| Temporal | L6, ×4 | 0.573 | 0.940 | 0.127 |
+| Temporal | L4–L7, ×2 | 0.693 | 0.833 | 0.093 |
+| Temporal | `Tmix` + L2, ×4 | 0.127 | 0.980 | 0.027 |
+| Depth | L6@4, ×4 | 0.493 | 0.980 | 0.127 |
 | Depth | L6@1, ×4 | 0.000 | 1.000 | 0.000 |
-| Depth | L5 at all four iterations, ×4 | 0.640 | 0.907 | 0.147 |
-| Depth | L4@4–L6@4 + L7, ×2 | 0.667 | 0.907 | 0.120 |
-| Hybrid | `Tmix` + L2, ×4 | 0.020 | 1.000 | 0.000 |
-| Hybrid | L5 at all four iterations, ×4 | 0.570 | 0.910 | 0.080 |
-| Hybrid | L4@4–L6@4 + L7, ×2 | 0.640 | 0.850 | 0.100 |
+| Depth | L5 at all four iterations, ×4 | 0.613 | 0.907 | 0.113 |
+| Depth | L4@4–L6@4 + L7, ×2 | 0.673 | 0.940 | 0.127 |
+| Hybrid | `Tmix` + L2, ×4 | 0.010 | 1.000 | 0.000 |
+| Hybrid | L5 at all four iterations, ×4 | 0.530 | 0.860 | 0.100 |
+| Hybrid | L4@4–L6@4 + L7, ×2 | 0.670 | 0.810 | 0.060 |
 
-- **Comparison with Karvonen:** he reports 0.904 for his model with edits at L4–L7, from five moves sampled at temperature 1 rather than one greedy move.
-- **Edits at L2–L4 or at L8 alone have no effect in either transformer.**
-- **Large edits cost legality on the original board,** as Karvonen also reports.
+- **Every arm's board direction is causal in its late layers.** The best four-site window at ×2 gives 0.64–0.69 on our arms, against 0.06–0.17 for random directions, and 0.77 on Karvonen's model. He reports 0.904 with edits at L4–L7, from five moves sampled at temperature 1 rather than one greedy move.
+- **Early and last-layer edits do nothing:** L3 and L8 in the transformer, `Tmix` + L2 in the temporal-memory arms, and first-iteration edits in the depth model, which later iterations overwrite. For `Tmix` + L2 this matches the one-character memory swap: the edit starts at the probed character, and every earlier character still carries the true board.
+- **Large edits cost legality on the original board,** a side effect Karvonen also reports.
 - **Edits start at the probed character and continue through the move being written,** and they flow into the memory. They show that the late board directions affect the move; they don't separate use at the decision character from use by later characters.
-- **Edits where the memory delivers the board do almost nothing** (`Tmix` + L2). This matches the one-character memory swap: every earlier character still carries the true board.
 
 ## Limitations
 
@@ -197,5 +196,5 @@ The steering runs use the first round of probes (12 training epochs, about 0.02 
 - **One seed per arm.** The temporal-over-transformer peak difference in Karvonen's setting (0.003) is noise-level; the changed-square difference (0.026) is larger but still single-seed.
 - **The temporal arm is the live-aligned export,** not the as-trained model, whose fixed point is broken (see the 20B report).
 - **Move readouts use the human move actually played,** not the model's own choice.
-- **Steering:** it uses the first-round probes, greedy decoding and one edit rule, with scales set per example from the probe margin, following Karvonen's dynamic scale.
+- **Steering** uses greedy decoding and one edit rule, with scales set per example from the probe margin, following Karvonen's dynamic scale.
 - **The board is represented relative to the side to move.** Every absolute-encoding analysis fits one probe per side to move; pooling them understates accuracy.
