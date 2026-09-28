@@ -33,7 +33,20 @@ Every pass reads whatever state exists; a state that isn't rewritten is simply h
 
 So `(0,0)` is an ordinary transformer, `(U,0)` trains the temporal axis, `(0,U)` trains the depth axis, and mixed pairs train the two together. A single checkpoint can be evaluated anywhere on the `(U_T, U_D)` surface.
 
-**How cheap is it?** With the same distribution of pass counts, a hybrid training update took about as long as a temporal-only update (1.00 s vs. 1.03 s) and about 11% longer than a depth-only update (0.90 s). Most of the cost is the passes themselves, which both single-axis models already pay. At inference, one core iteration per token costs about 12–13% more than the plain transformer; four iterations cost about 2.5×.
+**How cheap is it?** If you already train one of the two mechanisms this way, adding the other is close to free. With the same distribution of pass counts:
+
+| Training update | Time |
+| --- | --- |
+| Temporal-only | 1.03 s |
+| **Hybrid** | **1.00 s** |
+| Depth-only | 0.90 s |
+
+- **Adding depth to a temporal model cost nothing measurable** (1.00 s against 1.03 s, within measurement noise).
+- **Adding temporal to a depth model cost about 11%,** mainly the extra T-source writes.
+
+The expensive part is the extra passes, and each single-axis model already pays for those. Whether the second connection also improves the model is a separate question; the results below address it.
+
+At inference, one core iteration per token costs about 12–13% more than the plain transformer; four iterations cost about 2.5×.
 
 ## At inference, the two axes separate again
 
