@@ -40,6 +40,8 @@ ARMS = {
     'karvonen': Arm(Path('/'.join(KARVONEN)), 1),
     # Temporal model whose decay phase trained the whole network with 25% of batches
     # reading settled memory (experiments/ablations/live_warm_start).
+    # The as-trained temporal model: its mixer only ever saw memories of 1-3 updates.
+    'temporal_trained': Arm(RUNS / 'temporal_20B/results/ckpt-step195504.pt', 1),
     'temporal_decay': Arm(Path('experiments/ablations/live_warm_start/results/aligned_decay_temporal/ckpt-step195504.pt'), 1),
 }
 

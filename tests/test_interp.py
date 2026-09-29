@@ -246,3 +246,15 @@ def test_blocked_attention_and_attention_to_previous():
         for head in range(2):
             s = q[pos, head * 8:(head + 1) * 8] @ k[:pos + 1, head * 8:(head + 1) * 8].T / 8 ** 0.5
             torch.testing.assert_close(got[head, qi], s.softmax(-1)[pos - 1], atol=1e-5, rtol=1e-5)
+
+
+def test_constant_gates_patch_is_temporary():
+    from experiments.interp.board_state.gates import constant_gates
+    model = _recurrent('temporal')
+    runner = SiteRunner(model)
+    x = torch.randint(0, 32, (2, 12))
+    base = runner.run(x, passes=12).logits
+    # The untrained gates are exactly 0.1 and 0.9; other constants must change the output.
+    with constant_gates(model.temporal_mixer, torch.full((16,), 0.5), torch.full((16,), 0.5)):
+        assert not torch.allclose(runner.run(x, passes=12).logits, base)
+    torch.testing.assert_close(runner.run(x, passes=12).logits, base)
