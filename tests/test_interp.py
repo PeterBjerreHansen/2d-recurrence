@@ -258,3 +258,31 @@ def test_constant_gates_patch_is_temporary():
     with constant_gates(model.temporal_mixer, torch.full((16,), 0.5), torch.full((16,), 0.5)):
         assert not torch.allclose(runner.run(x, passes=12).logits, base)
     torch.testing.assert_close(runner.run(x, passes=12).logits, base)
+
+
+def test_forcing_search_on_known_positions():
+    from experiments.interp.board_state.forcing import classify, verify
+    # Back-rank mate in one: Rd8#.
+    mate1 = classify(chess.Board('6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1'))
+    assert mate1['class'] == 'mate1' and mate1['mates1'] == ['Rd8#']
+    # Forced mate in two by check: Re8+ Rxe8 Rxe8#, and nothing mates at once.
+    mate2 = classify(chess.Board('r5k1/5ppp/8/8/8/8/4RPPP/4R1K1 w - - 0 1'))
+    assert mate2['class'] == 'mate2' and not mate2['mates1']
+    assert mate2['lines'] == [dict(first='Re8+', replies={'Rxe8': ['Rxe8#']})]
+    assert mate2['check_replies']['Re8+'] == 1
+    # A check that leads nowhere: the king simply steps away.
+    control = classify(chess.Board('6k1/8/8/8/8/8/8/R5K1 w - - 0 1'))
+    assert control['class'] == 'control' and control['checks'] == ['Ra8+']
+    for record in (mate1, mate2, control):
+        verify(record)
+    # A wrong label must be caught.
+    broken = dict(mate2, lines=[dict(first='Re8+', replies={'Rxe8': ['Rxe8#'], 'Kh8': ['Rxa8#']})])
+    with pytest.raises(AssertionError):
+        verify(broken)
+
+
+def test_no_quiet_mates_counted_as_forcing():
+    from experiments.interp.board_state.forcing import forcing_mates_in_two
+    # Every returned first move must give check.
+    board = chess.Board('r5k1/5ppp/8/8/8/8/4RPPP/4R1K1 w - - 0 1')
+    assert all(board.gives_check(first) for first, _ in forcing_mates_in_two(board))

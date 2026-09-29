@@ -90,13 +90,15 @@ class SiteRunner:
         return sites
 
     @torch.no_grad()
-    def run(self, idx, *, capture=(), index=None, edits=None, passes=None, valid=None):
+    def run(self, idx, *, capture=(), index=None, edits=None, passes=None, valid=None,
+            capture_dtype=torch.float16):
         """Run ``idx`` [batch, time]; capture ``capture`` sites at ``index`` = (rows, positions).
 
         ``edits`` maps a site name to a function of the full [batch, time, width]
         state. ``passes`` fixes the number of temporal writes instead of
         settling to ``tolerance``. ``valid`` [batch, time] restricts the
-        convergence check to real (unpadded) positions.
+        convergence check to real (unpadded) positions. Captures are stored on
+        the CPU as ``capture_dtype`` (float16 by default, to save memory).
         """
         unknown = (set(capture) | set(edits or {})) - set(self.site_names)
         if unknown:
@@ -111,7 +113,7 @@ class SiteRunner:
             if edit is not None:
                 h = edit(h)
             if final and name in capture:
-                captures[name] = h[index].to(torch.float16).cpu()
+                captures[name] = h[index].to(capture_dtype).cpu()
             return h
 
         model = self.model
