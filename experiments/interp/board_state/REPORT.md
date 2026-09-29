@@ -8,6 +8,7 @@ What the four 20B arms represent about the board and the side to move, at which 
 - **Board tracking depends on the character.** Every model assembles the full board at the two characters where a move is chosen: the `.` before White's move and the space before Black's. The memory models also assemble it one character earlier, at the last digit of the move number. At other characters the board stays partial even in late layers. The two spaces are the same input token, yet only the one followed by a decision gets the full board.
 - **The temporal memory delivers the board early, but what it holds depends on the character that wrote it.** The memory is sharpest on the latest move right after that move is written (0.95). Before a decision, the last digit of the move number builds the full board and hands it to the `.`: the memory arriving there reads 0.86 / 0.86 (hybrid 0.86 / 0.90). In the arms without memory, that digit holds 0.53–0.57 / 0.69–0.72.
 - **The temporal mixer passes older changes poorly at every character,** losing 0.09–0.17 in the temporal model and up to 0.22 in the hybrid. It passes the latest move well only while the move is fresh. At decision characters the layers after the mixer rebuild the board: temporal completes it by L5, the transformer and the hybrid by L7.
+- **The mixer's input-dependent gates are indispensable.** With the gates fixed at their averages the memory never settles and the model breaks. They re-express the memory for the current character, and they don't track how settled the memory is.
 - **The loss happens in the mixer's memory term itself,** not through interference from the current character.
   - Much of it is a nonlinear re-encoding that an MLP probe reads back, but not all.
   - Training the whole network partly on settled memory (the aligned-decay model) doesn't change it.
@@ -199,6 +200,41 @@ A larger memory term carries hardly more board, and prediction gets much worse. 
 - **Unreliable training memory is not supported,** within the limits of the aligned-decay run.
 - **What remains:** the learned gate and projection, or the task not needing more. Separating these needs a model trained with a different mixer or with settled memory throughout.
 
+### What the gating does
+
+`gates.py`, three tests on the aligned temporal model; the aligned-decay model gives the same picture.
+
+**The input-dependent gates are indispensable.** With each gate fixed at its per-dimension mean over 50 rows:
+
+- The memory never settles: after 64 passes it still changes by 72% per pass (aligned-decay: 98%), against 0.1% normally.
+- NLL rises from 0.221 to 3.74 (aligned-decay: 0.217 to 4.79), worse than uniform over the 32 characters (3.47).
+- This shows the gates are needed, but not whether for selection or for keeping the recurrence stable.
+
+**The gate conditions the memory on the current character.** Probes on the memory and on the memory term alone, at roles where the character varies. Board columns are latest move / older changes; character is the current character's identity:
+
+| Role | Memory: board | Memory: character | Memory term: board | Memory term: character |
+| --- | --- | --- | --- | --- |
+| Earlier move-number digit | 0.73 / 0.67 | 1.00 | 0.53 / 0.58 | 1.00 |
+| First character of White's move | 0.86 / 0.90 | 0.67 | 0.66 / 0.77 | 0.96 |
+| Inside White's move | 0.79 / 0.82 | 0.82 | 0.57 / 0.66 | 0.96 |
+| Last character of White's move | 0.81 / 0.77 | 0.94 | 0.82 / 0.62 | 0.99 |
+
+- **The memory term carries the current character better than the memory does** (0.96–0.99 against 0.66–0.94). The gates bring it in from the current character.
+- **So the memory term is the memory re-expressed for this character,** with less of the board linearly readable.
+- A character-dependent code would explain why an MLP recovers more than a linear probe. It doesn't explain the `.`, where the character is always the same and the loss is as large.
+- Whether the gate also strips the previous character's stale prediction can't be read from this, because the gate injects the true character.
+
+**The gates don't track memory quality.** Mean memory gates for memories after 1, 2 and 3 updates, as in training, and for the settled memory:
+
+| Model, role | 1 update | 2 updates | 3 updates | Settled |
+| --- | --- | --- | --- | --- |
+| As-trained temporal, `.` | 0.098 | 0.116 | 0.109 | 0.113 |
+| As-trained temporal, first character of White's move | 0.176 | 0.176 | 0.189 | 0.187 |
+| Aligned temporal, `.` | 0.114 | 0.136 | 0.133 | 0.134 |
+| Aligned temporal, first character of White's move | 0.192 | 0.190 | 0.193 | 0.192 |
+
+Across all tested roles and models the means move by at most 0.022, with no consistent direction. That includes the as-trained model, whose mixer only ever saw memories of 1–3 updates. The gate is not a reliability detector, at least on average; per-dimension patterns remain untested.
+
 ## 4. Layer profiles at decision characters
 
 ![Board probe accuracy against transformer blocks applied](report_figures/probe_curves.png)
@@ -347,6 +383,7 @@ Each condition is paired with a random direction of the same norm.
 - **Other characters:** the memory swap and steering were run only at decision characters. We don't know whether the partial boards at other characters are used.
 - **How the temporal model rebuilds older changes at a decision:** not from the previous character (section 3). Whether it reads them from earlier move endings, where each move's change is sharp, is untested.
 - **What the mixer's blur makes room for:** whether the mixer output holds alternative moves as well as the one chosen.
+- **Whether the board is fully present per character:** probes fit separately for each current character would show whether the memory term keeps the board in a character-dependent code.
 
 ## Limitations
 

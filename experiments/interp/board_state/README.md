@@ -46,6 +46,7 @@ The site executor is `interp/sites.py`. `tests/test_interp.py` checks that it re
 | `mixer.py` | How much of the board survives the temporal mixer; the size of each mixer input's term; the depth mixer's previous-iteration versus fresh-start terms | `mixer/<arm>.json` |
 | `mixer_terms.py` | Is the board lost in the mixer, or only hard to read? Probes on the memory term and current-character term separately, linear and MLP | `mixer_terms/<arm>.json` |
 | `memory_scale.py` | What if the mixer passed more memory? NLL and board readouts with the memory term scaled | `memory_scale/<arm>.json` |
+| `gates.py` | What the mixer's gating selects: gates fixed at their means; board and current character in the memory term; gates for memories of 1–3 updates versus settled | `gates/<test>-<arm>.json` |
 | `attention.py` | Does a character get the board by attending to the previous one? Attention weights, and the board with that attention blocked | `attention/<arm>.json` |
 | `update.py` | Where the latest move is applied: probes for the board before and after it | `update/<arm>.json` |
 | `decision.py` | Where the move choice becomes readable: from- and to-square probes, and the logit lens | `decision/<arm>.json` |
@@ -75,6 +76,7 @@ uv run python -m experiments.interp.board_state.mixer
 uv run python -m experiments.interp.board_state.mixer_terms
 uv run python -m experiments.interp.board_state.memory_scale
 uv run python -m experiments.interp.board_state.attention
+uv run python -m experiments.interp.board_state.gates constant --arms temporal temporal_decay
 uv run python -m experiments.interp.board_state.update
 uv run python -m experiments.interp.board_state.decision
 uv run python -m experiments.interp.board_state.swap --arm temporal --pairs 200
