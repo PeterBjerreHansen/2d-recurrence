@@ -159,11 +159,11 @@ def test_live_evaluation_is_paired_with_the_training_graph(move_data, tmp_path, 
     assert evaluation[f'live_J2_val_{key}'] == pytest.approx(evaluation[f'val_{key}'])
 
 
-def test_move_training_resumes_exactly(move_data, tmp_path):
+def test_move_training_resumes_exactly_with_any_number_of_loader_workers(move_data, tmp_path):
     config = _config(move_data, tmp_path / 'full', 'legal', random_game_fraction=0.5, **_recurrent('temporal'))
     full = train(config)
     part = {**config, 'out_dir': str(tmp_path / 'part')}
-    train({**part, 'max_iters': 2})
+    train({**part, 'max_iters': 2, 'loader_workers': 2})
     resumed = train({**part, 'init_from': 'resume'})
     a, b = (torch.load(path, weights_only=False) for path in (full, resumed))
     for key in a['model']:
@@ -219,6 +219,7 @@ def test_continuing_copies_the_trunk_and_reinitialises_the_readout(move_data, en
     (dict(continue_from='elsewhere.pt'), 'continue_from'),
     (dict(data_format='characters'), 'data_format=moves'),
     (dict(live_eval_depths=[1]), 'transformer runs live exactly'),
+    (dict(loader_workers=-1), 'loader_workers'),
 ])
 def test_invalid_move_configurations_are_refused(move_data, tmp_path, overrides, message):
     with pytest.raises(ValueError, match=message):

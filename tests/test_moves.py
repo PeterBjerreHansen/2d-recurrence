@@ -13,7 +13,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from moves.data import MoveData
+from moves.data import MoveData, batch_seed, training_batches
 from moves.games import MAX_PLIES, parse_row, random_game, san_plies, to_san
 from moves.objectives import LegalTargets, ValueTargets
 from moves.prepare import prepare, split_of
@@ -162,6 +162,35 @@ def test_batches_pack_whole_games_with_correct_next_ply_targets(move_data, objec
     assert total == batch.counts['supervised_positions'] == batch.counts['human_plies']
     assert batch.counts['random_plies'] == 0 and batch.counts['row_tokens'] == 6 * 40
     assert int((human.targets >= 0).sum()) == total
+
+
+def _same_batch(a, b):
+    assert torch.equal(a.x, b.x) and a.counts == b.counts
+    for name in ('positions', 'owner', 'moves'):
+        assert torch.equal(getattr(a.targets, name), getattr(b.targets, name))
+
+
+def test_training_batches_depend_only_on_seed_rank_and_index(move_data):
+    data = MoveData(move_data, context_length=40)
+    settings = dict(objective='legal', random_fraction=0.5, seed=7, rank=0)
+    sequential = training_batches(data, 3, start=0, **settings)
+    first = [next(sequential) for _ in range(5)]
+    # Starting later, with worker processes, gives the same batches at the same indices.
+    parallel = training_batches(data, 3, start=2, workers=2, **settings)
+    for index in range(2, 5):
+        _same_batch(first[index], next(parallel))
+    other_rank = next(training_batches(data, 3, start=0, **{**settings, 'rank': 1}))
+    assert not torch.equal(other_rank.x, first[0].x)
+    assert batch_seed(7, 0, 3) == batch_seed(7, 0, 3) != batch_seed(7, 0, 4)
+
+
+def test_datasets_pickle_by_reference_not_by_content(move_data):
+    import pickle
+    data = MoveData(move_data, context_length=40)
+    blob = pickle.dumps(data)
+    assert len(blob) < 2000
+    copy = pickle.loads(blob)
+    assert np.array_equal(copy.game('dev', 0), data.game('dev', 0))
 
 
 @pytest.mark.parametrize('random_fraction', [0.0, 1.0])

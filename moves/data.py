@@ -18,10 +18,16 @@ the space left in the row.
 
 For evaluation, ``one_game_per_row`` places a single game at the start of each
 row, so no game reads another game's state.
+
+Training batches (``training_batches``) are a pure function of the seed, the
+rank and the batch index, so worker processes can build them ahead of time,
+exact resume needs only the step count, and the number of workers cannot change
+what is trained on.
 """
 
 from dataclasses import dataclass
 import hashlib
+import itertools
 import json
 from pathlib import Path
 import random
@@ -75,10 +81,17 @@ class MoveBatch:
     targets: object      # [batch, time] ply ids for 'human', else LegalTargets or ValueTargets
     counts: dict         # human_plies, random_plies, supervised_positions, row_tokens
 
+    def to(self, device):
+        if str(device).startswith('cuda'):
+            return MoveBatch(self.x.pin_memory().to(device, non_blocking=True),
+                             self.targets.pin_memory().to(device, non_blocking=True), self.counts)
+        return MoveBatch(self.x.to(device), self.targets.to(device), self.counts)
+
 
 class MoveData:
     def __init__(self, directory, context_length, verify_hashes=True, value_budget=None):
         directory = Path(directory)
+        self.directory = directory
         self.manifest_hash = file_hash(directory / 'manifest.json')
         self.manifest = json.loads((directory / 'manifest.json').read_text())
         if self.manifest.get('kind') != 'moves':
@@ -115,12 +128,25 @@ class MoveData:
                     legal_moves=np.memmap(files['legal_moves'], dtype=np.uint16, mode='r'),
                     q=np.load(files['labels'], mmap_mode='r')['q'])
 
+    def __getstate__(self):
+        # Worker processes reopen the memory-mapped files instead of copying them.
+        return dict(directory=self.directory, context_length=self.context_length, value_budget=self.value_budget)
+
+    def __setstate__(self, state):
+        self.__init__(state['directory'], state['context_length'], verify_hashes=False,
+                      value_budget=state['value_budget'])
+
     def game(self, split, index):
         offsets = self.offsets[split]
         return self.tokens[split][offsets[index]:offsets[index + 1]]
 
     def batch(self, split, batch_size, device, generator, *, objective, random_fraction=0.0,
               one_game_per_row=False):
+        return self.build(split, batch_size, generator, objective=objective, random_fraction=random_fraction,
+                          one_game_per_row=one_game_per_row).to(device)
+
+    def build(self, split, batch_size, generator, *, objective, random_fraction=0.0, one_game_per_row=False):
+        """A batch on the CPU; ``batch`` also moves it to a device."""
         if objective not in OBJECTIVES:
             raise ValueError(f'objective must be one of {OBJECTIVES}')
         if not 0 <= random_fraction <= 1:
@@ -167,10 +193,7 @@ class MoveData:
             targets = torch.from_numpy(np.where(y < MOVE_COUNT, y, -1))
         else:
             targets = self._sparse_targets(split, objective, placed)
-        if str(device).startswith('cuda'):
-            return MoveBatch(x.pin_memory().to(device, non_blocking=True),
-                             targets.pin_memory().to(device, non_blocking=True), counts)
-        return MoveBatch(x.to(device), targets.to(device), counts)
+        return MoveBatch(x, targets, counts)
 
     def _sparse_targets(self, split, objective, placed):
         positions, owner, moves, values = [], [], [], []
@@ -208,3 +231,31 @@ def write_manifest(directory, manifest):
     (Path(directory) / 'manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     return manifest
 
+
+def batch_seed(seed, rank, index):
+    """Seed of training batch ``index`` on ``rank``, independent of every other batch."""
+    digest = hashlib.sha256(f'{seed}:{rank}:{index}'.encode()).digest()
+    return int.from_bytes(digest[:8], 'little') >> 1
+
+
+class _TrainingBatches(torch.utils.data.Dataset):
+    """Training batch ``index`` of one rank, built on the CPU."""
+
+    def __init__(self, data, batch_size, objective, random_fraction, seed, rank):
+        self.data, self.batch_size, self.objective = data, batch_size, objective
+        self.random_fraction, self.seed, self.rank = random_fraction, seed, rank
+
+    def __getitem__(self, index):
+        generator = torch.Generator().manual_seed(batch_seed(self.seed, self.rank, index))
+        return self.data.build('train', self.batch_size, generator, objective=self.objective,
+                               random_fraction=self.random_fraction)
+
+
+def training_batches(data, batch_size, *, objective, random_fraction, seed, rank, start, workers=0, prefetch=4):
+    """CPU training batches ``start, start + 1, ...`` in order; ``workers`` processes build them ahead."""
+    dataset = _TrainingBatches(data, batch_size, objective, random_fraction, seed, rank)
+    if not workers:
+        return (dataset[index] for index in itertools.count(start))
+    loader = torch.utils.data.DataLoader(dataset, batch_size=None, sampler=itertools.count(start),
+                                         num_workers=workers, prefetch_factor=prefetch)
+    return iter(loader)

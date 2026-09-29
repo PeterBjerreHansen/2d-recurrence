@@ -23,7 +23,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from data_loader import ChessData, file_hash
 from inference.live import create_live_state, decode_live_step, validate_live_inference_spec
 from model import GPT, GPTConfig
-from moves.data import OBJECTIVES, MoveData
+from moves.data import OBJECTIVES, MoveData, training_batches
 from moves.vocab import PAD
 from models.recurrent_2d import (Recurrent2DGPT, RecurrentGPTConfig,
                                  validate_recurrence_counts, validate_update_probability_distribution,
@@ -61,6 +61,9 @@ DEFAULTS = dict(
     # Live (cached, token-by-token) evaluation of recurrent move runs on dev games, at these core
     # iteration counts; None means [1] for temporal and [1, 2, 4] for depth and hybrid.
     live_eval_iters=1, live_eval_depths=None,
+    # Processes building move training batches ahead of the training loop (0: build in-process).
+    # Batches depend only on seed, rank and index, so this never changes what is trained on.
+    loader_workers=0,
 )
 
 
@@ -165,8 +168,10 @@ def train(config):
     if config['data_format'] not in ['characters', 'moves']:
         raise ValueError("data_format must be 'characters' or 'moves'")
     if not moves and (config['objective'] != 'next_token' or config['random_game_fraction'] or
-                      config['init_from'] == 'continue' or config['live_eval_depths'] is not None):
-        raise ValueError('Objectives, random games, continued runs and live evaluation need data_format=moves')
+                      config['init_from'] == 'continue' or config['live_eval_depths'] is not None or
+                      config['loader_workers']):
+        raise ValueError('Objectives, random games, continued runs, live evaluation and loader workers '
+                         'need data_format=moves')
     live_depths = []
     if moves and recurrent and config['live_eval_iters']:
         mode = config['recurrence_mode']
@@ -190,6 +195,8 @@ def train(config):
             raise ValueError('Evaluation panels are defined for character data only')
         if type(config['live_eval_iters']) is not int or config['live_eval_iters'] < 0:
             raise ValueError('live_eval_iters must be a nonnegative integer')
+        if type(config['loader_workers']) is not int or config['loader_workers'] < 0:
+            raise ValueError('loader_workers must be a nonnegative integer')
         # A resumed continuation keeps continue_from as provenance; resume checks it matches.
         if (config['init_from'] == 'continue' and not config['continue_from'] or
                 config['init_from'] == 'scratch' and config['continue_from']):
@@ -303,7 +310,7 @@ def train(config):
         mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'checkpoint_interval', 'eval_panel_path',
                    # A warm start changes how batches are processed, not the model or optimizer state.
                    'warm_start_fraction', 'warm_start_max_passes', 'warm_start_tolerance',
-                   'live_eval_iters', 'live_eval_depths'}
+                   'live_eval_iters', 'live_eval_depths', 'loader_workers'}
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:
@@ -511,6 +518,11 @@ def train(config):
             dist.broadcast_object_list(selected, src=0)
         return selected[0]
 
+    if moves and not config['eval_only']:
+        # Batch i of this rank is the same whatever the step it's built at, so resume just skips ahead.
+        train_batches = training_batches(data, config['batch_size'], objective=config['objective'],
+                                         random_fraction=config['random_game_fraction'], seed=config['seed'],
+                                         rank=rank, start=step * accumulation, workers=config['loader_workers'])
     model.train()
     while True:
         exhausted = bool(budget and training_seconds >= budget)
@@ -559,7 +571,7 @@ def train(config):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1
             if moves:
-                batch = move_batch('train', train_rng, config['random_game_fraction'])
+                batch = next(train_batches).to(device)
                 x, y = batch.x, batch.targets
                 for key, value in batch.counts.items():
                     update_counts[key] += value

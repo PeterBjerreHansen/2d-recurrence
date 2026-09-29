@@ -282,6 +282,10 @@ Also check the ChessBench join (coverage and cost) and Chess-World-Model's code,
   - no parse failures;
   - longest game in that 40,000-row sample: 187 plies (119,000 games);
   - legal-move targets are built at about 28,000 positions/s per process. The trainer builds batches in its main process, so the pilot will need parallel batch building to feed a GPU.
+- **2026-09-30 — Training batches are built by worker processes and depend only on (seed, rank, batch index).**
+  - `loader_workers` sets the number of processes; it can change between resumes without changing what is trained on (tested).
+  - Measured with legal targets and 20% random rows: 30,000 supervised positions/s in-process, 114,000 with 4 workers, 230,000 with 8 (about 260,000 row tokens/s). The pilot measures GPU speed and sets the worker count to match.
+  - Reason: generating legal targets on the fly avoids storing about 105 GB of legal-move lists, and deterministic batches keep exact resume independent of the loader.
 
 ## Cost
 
