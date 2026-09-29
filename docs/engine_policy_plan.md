@@ -1,6 +1,6 @@
 # Move-target training: plan
 
-> **Status: proposal; nothing has been run.** This document is the single source of truth for the `engine-policy` branch. Read [Pitfalls](#pitfalls) before implementing anything. Record every decision that changes the design under [Decisions](#decisions), with its reason; don't edit frozen items silently.
+> **Status: steps 1–2 implemented (`moves/`, trainer options, tests); no pilot has run.** This document is the single source of truth for the `engine-policy` branch. Read [Pitfalls](#pitfalls) before implementing anything. Record every decision that changes the design under [Decisions](#decisions), with its reason; don't edit frozen items silently.
 
 ## The question
 
@@ -251,6 +251,37 @@ Also check the ChessBench join (coverage and cost) and Chess-World-Model's code,
 - the exact-set threshold for learning speed.
 
 **Log:** (date — decision — reason)
+
+- **2026-09-30 — Rows and games.**
+  - A human game that doesn't fit starts the next row of the same batch; the one left at the end of a batch is dropped.
+  - A random game is truncated to the space left in its row.
+  - Reason: less padding without splitting games. Measured row fill: 0.85 on human games, 0.88 with 20% random rows.
+- **2026-09-30 — Moves that end the game by rule are labelled without search.**
+  - Mate is 0.999; a draw by rule (stalemate, insufficient material, the 75-move rule, fivefold repetition) is 0.5.
+  - Reason: the engine has nothing to search there, and a mated position has no mate score to read from the mover's side.
+- **2026-09-30 — A move after which the opponent could claim a draw is worth at most 0.5.**
+  - This covers threefold repetition and the 50-move rule.
+  - Reason: the opponent claims when that beats their own prospects. This is what makes the teacher's values depend on history.
+- **2026-09-30 — A new game before every per-move search, not just every position.**
+  - Reason: otherwise the hash from earlier moves' searches gives later moves more work, and labels depend on move order.
+- **2026-09-30 — Label cache.**
+  - Labels of positions up to 16 plies deep are cached by their history key: the FEN plus the positions since the last capture or pawn move.
+  - Reason: openings repeat across games, and the key captures everything that can change a deterministic engine's labels.
+- **2026-09-30 — Score bounds are kept, not rejected.**
+  - Each label records whether the engine reported an exact score or a bound, flipped to the mover's side. The dataset manifest counts bounded labels per budget.
+  - Reason: with a node limit the final score is normally exact; the counts show whether bounds matter before deciding to drop them.
+- **2026-09-30 — Best-move agreement tolerance.**
+  - The chosen move agrees if its $Q$ is within 0.01 of the best (`NEAR_TIE`).
+  - Reason: the plan counts near-ties as agreement; 0.01 is one percentage point of win probability.
+- **2026-09-30 — Evaluation during training.**
+  - Dev and random games are evaluated one game per row, so no game reads another game's state.
+  - Recurrent runs also decode the same dev games live with the cached implementation: temporal at J=1; depth and hybrid at J=1, 2, 4 with `depth_specialized` caches. Results are reported as `live_J{n}_val_*` next to the training-graph `val_*`.
+  - Reason: live execution is primary, and temporal's 20B failure showed only live. Evaluating the same games makes the two paired.
+- **2026-09-30 — First measurements** (MPS laptop, one process):
+  - conversion: about 40,000 rows in 17 s with 8 workers, so about an hour for all 8.3M rows;
+  - no parse failures;
+  - longest game in that 40,000-row sample: 187 plies (119,000 games);
+  - legal-move targets are built at about 28,000 positions/s per process. The trainer builds batches in its main process, so the pilot will need parallel batch building to feed a GPU.
 
 ## Cost
 

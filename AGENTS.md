@@ -12,7 +12,7 @@ This branch retrains the recurrence architectures (transformer, temporal-only, d
 | Status on this branch | Docs |
 | --- | --- |
 | **Current** | the two above |
-| **Applies unchanged:** architecture, recurrence, execution | `CONTEXT.md` (terminology), `docs/concepts.md`, `docs/RECURRENCE_CONTRACT.md`, `docs/INFERENCE_CONTRACT.md` (except its next-character NLL helpers) |
+| **Applies:** architecture, recurrence, execution | `CONTEXT.md` (terminology), `docs/concepts.md`, `docs/RECURRENCE_CONTRACT.md` (move models use its optional untied readout and target objects, under "Readout and objectives"), `docs/INFERENCE_CONTRACT.md` (except its next-character NLL helpers) |
 | **Character-level setup only:** context, not instructions | the README's data and training sections, `docs/usage.md`, `docs/20B_experiment_plan.md`, and the READMEs and reports under `experiments/` |
 
 ## Rules
@@ -27,6 +27,17 @@ This branch retrains the recurrence architectures (transformer, temporal-only, d
    - stage explicit paths, never `git add -A`;
    - never commit data, symlinks, or anything under a `results` path. Tracked `results` symlinks once destroyed the 20B checkpoints;
    - data, `.venv` and checkpoints live only in the main checkout. Other worktrees need symlinks to them, which must stay uncommitted.
+
+## Code
+
+- **`moves/`:**
+  - the vocabulary (`vocab.py`);
+  - game parsing and random games (`games.py`);
+  - the character-to-move conversion (`prepare.py`);
+  - packed batches and targets (`data.py`, `objectives.py`);
+  - engine values and the teacher (`values.py`, `teacher.py`, `annotate.py`).
+- **Trainer:** `train.py` trains on move data with `data_format='moves'` and `objective='human' | 'legal' | 'engine'`. `init_from='continue'` starts the engine stage from an earlier run's trunk.
+- **Tests:** `tests/test_moves.py` and `tests/test_moves_training.py`. The Stockfish tests are skipped unless `stockfish` is on the PATH or `STOCKFISH_PATH` is set.
 
 ## State of data and checkpoints
 

@@ -137,6 +137,9 @@ class GPTConfig:
     n_embd: int = 512
     dropout: float = 0.0
     bias: bool = False
+    # Readout width; None means vocab_size. A different width needs untied weights.
+    output_size: int | None = None
+    tie_weights: bool = True
 
 class GPT(nn.Module):
 
@@ -153,8 +156,12 @@ class GPT(nn.Module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+        output_size = config.vocab_size if config.output_size is None else config.output_size
+        if config.tie_weights and output_size != config.vocab_size:
+            raise ValueError('Tied weights need output_size equal to vocab_size')
+        self.lm_head = nn.Linear(config.n_embd, output_size, bias=False)
+        if config.tie_weights:
+            self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
 
         # init all weights
         self.apply(self._init_weights)
@@ -190,10 +197,16 @@ class GPT(nn.Module):
         return self.transformer.drop(self.transformer.wte(idx) + self.transformer.wpe(positions))
 
     def readout(self, h, targets=None):
+        """Logits and loss. ``targets`` is a tensor of next-token ids (-1: no target) or an
+        object with a ``loss(logits)`` method, such as ``moves.objectives.LegalTargets``."""
         h = self.transformer.ln_f(h)
         logits = self.lm_head(h if targets is not None else h[:, [-1], :])
-        loss = None if targets is None else F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
+        if targets is None:
+            loss = None
+        elif isinstance(targets, torch.Tensor):
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
+        else:
+            loss = targets.loss(logits)
         return logits, loss
 
     def forward(self, idx, targets=None):

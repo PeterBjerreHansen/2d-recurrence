@@ -17,10 +17,14 @@ from contextlib import nullcontext
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from data_loader import ChessData
+from data_loader import ChessData, file_hash
+from inference.live import create_live_state, decode_live_step, validate_live_inference_spec
 from model import GPT, GPTConfig
+from moves.data import OBJECTIVES, MoveData
+from moves.vocab import PAD
 from models.recurrent_2d import (Recurrent2DGPT, RecurrentGPTConfig,
                                  validate_recurrence_counts, validate_update_probability_distribution,
                                  validate_recurrence_mode)
@@ -48,6 +52,15 @@ DEFAULTS = dict(
     # Warm start (temporal mode): this fraction of each update's microbatches first settles the
     # temporal memory with gradient-free passes, then trains its sampled schedule from it.
     warm_start_fraction=0.0, warm_start_max_passes=64, warm_start_tolerance=0.01,
+    # Move tokens (docs/engine_policy_plan.md): data_format='moves' reads a moves.prepare dataset
+    # and trains one objective: 'human' (next ply), 'legal' or 'engine'. Rows come from random
+    # games with probability random_game_fraction. init_from='continue' starts from the weights
+    # of continue_from with a fresh output layer, optimizer and step count.
+    data_format='characters', objective='next_token', random_game_fraction=0.0,
+    value_budget='deep', continue_from='',
+    # Live (cached, token-by-token) evaluation of recurrent move runs on dev games, at these core
+    # iteration counts; None means [1] for temporal and [1, 2, 4] for depth and hybrid.
+    live_eval_iters=1, live_eval_depths=None,
 )
 
 
@@ -146,8 +159,41 @@ def train(config):
         raise ValueError('warm_start_max_passes must be a positive integer')
     if not config['warm_start_tolerance'] >= 0:
         raise ValueError('warm_start_tolerance must be nonnegative')
-    if config['init_from'] not in ['scratch', 'resume']:
-        raise ValueError('init_from must be scratch or resume')
+    if config['init_from'] not in ['scratch', 'resume', 'continue']:
+        raise ValueError('init_from must be scratch, resume or continue')
+    moves = config['data_format'] == 'moves'
+    if config['data_format'] not in ['characters', 'moves']:
+        raise ValueError("data_format must be 'characters' or 'moves'")
+    if not moves and (config['objective'] != 'next_token' or config['random_game_fraction'] or
+                      config['init_from'] == 'continue' or config['live_eval_depths'] is not None):
+        raise ValueError('Objectives, random games, continued runs and live evaluation need data_format=moves')
+    live_depths = []
+    if moves and recurrent and config['live_eval_iters']:
+        mode = config['recurrence_mode']
+        live_depths = (list(config['live_eval_depths']) if config['live_eval_depths'] is not None
+                       else [1] if mode == 'temporal' else [1, 2, 4])
+        if any(type(depth) is not int or depth < 1 for depth in live_depths) or (mode == 'temporal' and live_depths != [1]):
+            raise ValueError('live_eval_depths must be positive integers, and [1] for temporal models')
+    elif moves and config['live_eval_depths']:
+        raise ValueError('Live evaluation is for recurrent models; a transformer runs live exactly as trained')
+    live_strategy = 'final_depth' if config['recurrence_mode'] == 'temporal' else 'depth_specialized'
+    if moves:
+        if config['objective'] not in OBJECTIVES:
+            raise ValueError(f'objective must be one of {OBJECTIVES} for move data')
+        random_fraction = config['random_game_fraction']
+        if (isinstance(random_fraction, bool) or not isinstance(random_fraction, (int, float)) or
+                not 0 <= random_fraction <= 1):
+            raise ValueError('random_game_fraction must be between zero and one')
+        if config['objective'] == 'engine' and random_fraction:
+            raise ValueError('The engine objective trains on engine-labelled human games only')
+        if config['eval_panel_path']:
+            raise ValueError('Evaluation panels are defined for character data only')
+        if type(config['live_eval_iters']) is not int or config['live_eval_iters'] < 0:
+            raise ValueError('live_eval_iters must be a nonnegative integer')
+        # A resumed continuation keeps continue_from as provenance; resume checks it matches.
+        if (config['init_from'] == 'continue' and not config['continue_from'] or
+                config['init_from'] == 'scratch' and config['continue_from']):
+            raise ValueError("init_from='continue' needs continue_from; a scratch run can't have one")
     for key in ['batch_size', 'gradient_accumulation_steps', 'eval_interval', 'eval_iters', 'log_interval', 'num_threads']:
         if config[key] < 1:
             raise ValueError(f'{key} must be positive')
@@ -212,7 +258,11 @@ def train(config):
     train_rng = torch.Generator().manual_seed(seed)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    data = ChessData(Path('data') / config['dataset'], config['block_size'])
+    if moves:
+        data = MoveData(Path('data') / config['dataset'], config['block_size'],
+                        value_budget=config['value_budget'] if config['objective'] == 'engine' else None)
+    else:
+        data = ChessData(Path('data') / config['dataset'], config['block_size'])
     panel = None
     panel_indices = None
     if config['eval_panel_path']:
@@ -221,16 +271,21 @@ def train(config):
         panel_indices = panel['row_indices']
     out = Path(config['out_dir'])
     out.mkdir(parents=True, exist_ok=True)
-    if config['init_from'] == 'scratch' and (out / 'ckpt.pt').exists():
+    if config['init_from'] != 'resume' and (out / 'ckpt.pt').exists():
         raise FileExistsError('Checkpoint exists: choose a new out_dir or init_from=resume')
     model_args = {key: config[key] for key in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'dropout']}
     model_args['vocab_size'] = data.meta['vocab_size']
+    if moves:
+        # Moves in, a score per move out: the readout is untied and one move shorter than the vocabulary.
+        model_args.update(output_size=data.meta['output_size'], tie_weights=False)
     if recurrent:
         model_args.update({key: config[key] for key in ['n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda',
                                                         'recurrence_mode', 'temporal_memory_gate_init']})
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
     training_seconds = 0.0
+    move_counts = dict(human_plies=0, random_plies=0, supervised_positions=0, row_tokens=0)
+    continued = None
     if config['init_from'] == 'resume':
         checkpoint = torch.load(out / 'ckpt.pt', map_location='cpu', weights_only=False)
         saved_args = checkpoint['model_args']
@@ -247,7 +302,8 @@ def train(config):
             raise ValueError('Resume evaluation panel differs from checkpoint')
         mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'checkpoint_interval', 'eval_panel_path',
                    # A warm start changes how batches are processed, not the model or optimizer state.
-                   'warm_start_fraction', 'warm_start_max_passes', 'warm_start_tolerance'}
+                   'warm_start_fraction', 'warm_start_max_passes', 'warm_start_tolerance',
+                   'live_eval_iters', 'live_eval_depths'}
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:
@@ -256,12 +312,29 @@ def train(config):
         step, best_val = checkpoint['iter_num'], checkpoint['best_val_loss']
         last_eval_step = checkpoint['last_eval_step']
         training_seconds = checkpoint.get('training_seconds', 0.0)
+        move_counts = checkpoint.get('move_counts', move_counts)
+        continued = checkpoint.get('continued_from')
     model = (Recurrent2DGPT(RecurrentGPTConfig(**model_args)) if recurrent
              else GPT(GPTConfig(**model_args))).to(device)
     if checkpoint:
         model.load_state_dict(checkpoint['model'])
         if sampler is not None:
             sampler.load_state_dict(checkpoint['recurrence_sampler'])
+    if config['init_from'] == 'continue':
+        # Stage 2 of the move-target plan: the trunk of an earlier run, a fresh output layer.
+        source = torch.load(config['continue_from'], map_location='cpu', weights_only=False)
+        same_trunk = (RecurrentGPTConfig.from_checkpoint(source['model_args']) == RecurrentGPTConfig(**model_args)
+                      if recurrent else source['model_args'] == model_args)
+        if not same_trunk:
+            raise ValueError('continue_from has a different model configuration')
+        trunk = {key: value for key, value in source['model'].items() if not key.startswith('lm_head.')}
+        missing, unexpected = model.load_state_dict(trunk, strict=False)
+        if unexpected or missing != ['lm_head.weight']:
+            raise ValueError(f'continue_from does not match the model: missing {missing}, unexpected {unexpected}')
+        continued = dict(path=str(config['continue_from']), sha256=file_hash(config['continue_from']),
+                         iter_num=source['iter_num'], objective=source['config'].get('objective'),
+                         dataset_manifest_hash=source['manifest_hash'])
+        del source
     optimizer = model.configure_optimizers(config['weight_decay'], config['learning_rate'],
                                           (config['beta1'], config['beta2']), device_type)
     scaler = torch.amp.GradScaler('cuda', enabled=(device_type == 'cuda' and config['dtype'] == 'float16'))
@@ -286,7 +359,10 @@ def train(config):
         record = dict(config=config, model_args=model_args, provenance=run_info, world_size=world_size,
                       manifest_hash=data.manifest_hash, effective_batch_size=effective_batch,
                       parameter_count=sum(p.numel() for p in raw_model.parameters()),
-                      characters_per_step=effective_batch * config['block_size'], resume_step=step,
+                      **({'row_tokens_per_step': effective_batch * config['block_size'],
+                          'continued_from': continued} if moves else
+                         {'characters_per_step': effective_batch * config['block_size']}),
+                      resume_step=step,
                       eval_panel_path=panel['path'] if panel else '',
                       eval_panel_sha256=panel['sha256'] if panel else None,
                       eval_panel_split=panel['split'] if panel else None,
@@ -299,10 +375,90 @@ def train(config):
             return torch.autocast('cuda', dtype=getattr(torch, config['dtype']))
         return nullcontext()
 
+    def move_batch(split, generator, random_fraction, one_game_per_row=False):
+        return data.batch(split, config['batch_size'], device, generator, objective=config['objective'],
+                          random_fraction=random_fraction, one_game_per_row=one_game_per_row)
+
+    def live_logits(x, depth_steps):
+        """Cached token-by-token live execution: the deployed model, not the training graph."""
+        spec = validate_live_inference_spec(raw_model.config, depth_steps, live_strategy)
+        state = create_live_state(raw_model, spec.depth_steps, spec.kv_strategy, batch_size=x.shape[0])
+        # Rows hold one game each; nothing after the longest game is supervised.
+        steps = int((x != PAD).sum(1).max())
+        logits = torch.stack([decode_live_step(raw_model, x[:, t], state, spec) for t in range(steps)], 1)
+        return F.pad(logits, (0, 0, 0, x.shape[1] - steps))
+
+    def objective_loss(logits, targets):
+        if isinstance(targets, torch.Tensor):
+            return F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1)
+        return targets.loss(logits)
+
+    def move_metrics(name, batches):
+        """Pooled loss and objective metrics over (logits, loss, batch) triples."""
+        loss_sum, positions, sums = 0.0, 0, {}
+        for logits, loss, batch in batches:
+            count = batch.counts['supervised_positions']
+            loss_sum += loss.item() * count
+            positions += count
+            if config['objective'] == 'human':
+                valid = batch.targets >= 0
+                sums['correct'] = sums.get('correct', 0) + (logits.argmax(-1)[valid] == batch.targets[valid]).sum().item()
+            else:
+                for key, value in batch.targets.metrics(logits).items():
+                    sums[key] = sums.get(key, 0.0) + value
+        result = {name + '_loss': loss_sum / positions}
+        if config['objective'] == 'human':
+            result[name + '_accuracy'] = sums['correct'] / positions
+        elif config['objective'] == 'legal':
+            result.update({f'{name}_{key}': sums[key] / sums['positions']
+                           for key in ('legal_bce', 'illegal_bce', 'constant_bce', 'exact_set')})
+            result[name + '_precision'] = sums['true_positives'] / max(sums['predicted_positives'], 1)
+            result[name + '_recall'] = sums['true_positives'] / sums['legal_moves']
+        else:
+            result.update({f'{name}_{key}': sums[key] / sums['positions'] for key in ('regret', 'best_move')})
+        return result
+
+    @torch.no_grad()
+    def evaluate_moves():
+        """Training-graph metrics on training rows, dev games and random games; live metrics on dev games.
+
+        Dev and random games are evaluated one game per row, so no game reads another's state.
+        """
+        result = {}
+        sets = [('train', 'train', config['random_game_fraction'], False, 10000), ('val', 'dev', 0.0, True, 20000)]
+        if config['objective'] != 'engine':
+            sets.append(('random', 'dev', 1.0, True, 30000))
+        for name, split, random_fraction, alone, offset in sets:
+            generator = torch.Generator().manual_seed(config['seed'] + offset)
+            schedule_rng = random.Random(config['recurrence_seed'] + offset)
+            scored = []
+            for _ in range(config['eval_iters']):
+                batch = move_batch(split, generator, random_fraction, alone)
+                kwargs = dict(schedule=sample_schedule(config['eval_u_t'], config['eval_u_d'], schedule_rng)) if recurrent else {}
+                with context():
+                    logits, loss = raw_model(batch.x, batch.targets, **kwargs)
+                scored.append((logits, loss, batch))
+            result.update(move_metrics(name, scored))
+        for depth_steps in live_depths:
+            # The same dev games as the training-graph 'val' metrics, so the two are paired.
+            generator = torch.Generator().manual_seed(config['seed'] + 20000)
+            scored = []
+            for _ in range(config['live_eval_iters']):
+                batch = move_batch('dev', generator, 0.0, True)
+                with context():
+                    logits = live_logits(batch.x, depth_steps)
+                scored.append((logits, objective_loss(logits, batch.targets), batch))
+            result.update(move_metrics(f'live_J{depth_steps}_val', scored))
+        return result
+
     @torch.no_grad()
     def evaluate():
         # Independent fixed batches make evaluations comparable and do not advance training RNG.
         raw_model.eval()
+        if moves:
+            result = evaluate_moves()
+            raw_model.train()
+            return result
         result = {}
         for split in ['train', 'val']:
             generator = torch.Generator().manual_seed(config['seed'] + (10000 if split == 'train' else 20000))
@@ -341,6 +497,8 @@ def train(config):
                              eval_panel_split=panel['split'] if panel else None,
                              eval_panel_row_indices=panel['row_indices'] if panel else None,
                              recurrence_sampler=sampler.state_dict() if sampler else None)
+            if moves:
+                payload.update(move_counts=dict(move_counts), continued_from=continued)
             atomic_save(payload, out / 'ckpt.pt')
             if (retain and config['keep_checkpoints'] and
                     (config['checkpoint_steps'] is None or step in config['checkpoint_steps'])):
@@ -359,10 +517,13 @@ def train(config):
         if config['eval_only'] or ((step % config['eval_interval'] == 0 or step == config['max_iters'] or exhausted) and step != last_eval_step):
             # All ranks participate; raw-model evaluation avoids DDP synchronization asymmetry.
             metrics = evaluate()
-            best_val = min(best_val, metrics['val_nll'])
+            best_val = min(best_val, metrics['val_loss' if moves else 'val_nll'])
             last_eval_step = step
             if master:
-                print(f"step {step}: train {metrics['train_nll']:.4f}, val {metrics['val_nll']:.4f}, accuracy {metrics['val_accuracy']:.3f}", flush=True)
+                if moves:
+                    print(f'step {step}: ' + ', '.join(f'{key} {value:.4f}' for key, value in metrics.items()), flush=True)
+                else:
+                    print(f"step {step}: train {metrics['train_nll']:.4f}, val {metrics['val_nll']:.4f}, accuracy {metrics['val_accuracy']:.3f}", flush=True)
                 label = dict(execution='training_graph', u_t=config['eval_u_t'], u_d=config['eval_u_d']) if recurrent else {}
                 if recurrent:
                     active_matrix = update_probabilities_at_step(config, step)
@@ -393,10 +554,17 @@ def train(config):
         schedules = []
         probabilities = update_probabilities_at_step(config, step) if recurrent else None
         warm_microbatches = round(config['warm_start_fraction'] * accumulation)
+        update_counts = dict.fromkeys(move_counts, 0)
         for micro_step in range(accumulation):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1
-            x, y = data.batch('train', config['batch_size'], device, train_rng)
+            if moves:
+                batch = move_batch('train', train_rng, config['random_game_fraction'])
+                x, y = batch.x, batch.targets
+                for key, value in batch.counts.items():
+                    update_counts[key] += value
+            else:
+                x, y = data.batch('train', config['batch_size'], device, train_rng)
             kwargs = {}
             if recurrent:
                 schedule = next_schedule(probabilities)
@@ -428,6 +596,13 @@ def train(config):
                 intermediate_weight += 1 / accumulation
             scaler.scale(scaled_loss).backward()
         gradient_stats = aggregate_gradient_stats(model, scaler, optimizer, config['grad_clip'], step)
+        if moves:
+            if ddp:
+                totals = torch.tensor(list(update_counts.values()), dtype=torch.float64, device=device)
+                dist.all_reduce(totals)
+                update_counts = dict(zip(update_counts, (int(value) for value in totals.tolist())))
+            for key, value in update_counts.items():
+                move_counts[key] += value
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
@@ -448,6 +623,13 @@ def train(config):
             save_checkpoint(retain=retained_step)
         if master and (step % config['log_interval'] == 0 or step == 1):
             print(f'step {step}: loss {loss_sum:.4f}, {elapsed:.3f}s', flush=True)
+            if moves:
+                volume = dict(**move_counts, **{key + '_this_update': value for key, value in update_counts.items()},
+                              row_tokens_per_second=update_counts['row_tokens'] / elapsed)
+            else:
+                volume = dict(characters_processed=step * effective_batch * config['block_size'],
+                              characters_this_update=effective_batch * config['block_size'],
+                              characters_per_second=effective_batch * config['block_size'] / elapsed)
             append_json(out / 'metrics.jsonl', dict(event='train', step=step, nll=loss_sum, lr=lr,
                                                    final_nll=final_loss_sum,
                                                    intermediate_nll=(intermediate_loss_sum / intermediate_weight
@@ -455,11 +637,8 @@ def train(config):
                                                    deep_supervision=config['deep_supervision'],
                                                    deep_supervision_lambda=config['deep_supervision_lambda'],
                                                    seconds=elapsed, training_seconds=training_seconds, statistics='accumulated_update',
-                                                   **gradient_stats,
-                                                   characters_processed=step * effective_batch * config['block_size'],
-                                                   characters_this_update=effective_batch * config['block_size'],
-                                                   schedules=schedules, microbatch_schedules=schedules,
-                                                   characters_per_second=effective_batch * config['block_size'] / elapsed))
+                                                   **gradient_stats, **volume,
+                                                   schedules=schedules, microbatch_schedules=schedules))
     if ddp:
         dist.destroy_process_group()
     return out / 'ckpt.pt'
