@@ -11,7 +11,6 @@ REVISION = '1a932e1abca935aae585f417ede39ecde4f2a620'
 TOKENS_PER_UPDATE = 100 * 1023
 LONG_RUN_ROOTS = {
     10**9: 'experiments/long_runs/1B_baseline',
-    64 * 10**9: 'experiments/long_runs/64B_core',
 }
 COMMON = dict(
     dataset='chess_8M_v1', block_size=1023, n_layer=8, n_head=8, n_embd=512,
@@ -58,7 +57,7 @@ def supervision_choice():
 
 def long_run(model, characters):
     if model not in ('transformer', 'recurrent_a') or characters not in LONG_RUN_ROOTS:
-        raise ValueError('Supported series: transformer/recurrent_a at 1B/64B')
+        raise ValueError('Supported series: transformer/recurrent_a at 1B')
     selected = supervision_choice()  # Both members of the queued pair require the decision.
     steps = math.ceil(characters / TOKENS_PER_UPDATE)
     label = f'{model}_{characters // 10**9}B'

@@ -57,7 +57,7 @@ a = α ⊙ W_m · norm(r) + β ⊙ W_p · norm(p)          # α starts at 0.1, �
 
 Position 0 has no predecessor, so it bypasses the mixer. A zero-valued memory anywhere else is still a valid input.
 
-At inference, the state is written once per token and read by the next one. The chain now runs through *every* earlier token, while training only chained a few. The two executions are therefore different, and their difference is something to measure (see §7).
+At inference, the state is written once per token and read by the next one. The chain now runs through *every* earlier token, while training only chained a few. The two executions are therefore different, and their difference is something to measure (see §7). In the 20B study the live memory settled on a stable value that the temporal-only model had never been trained to read. Training it on that settled memory closed the gap.
 
 In this repository, the temporal-only model keeps the full layout: its memory comes from the T-source (L7), as in the hybrid.
 
@@ -146,7 +146,22 @@ Counting transformer-block applications for layout A:
 - **Training pass count `B`:** `3 + 5B + U_T`. The prelude and coda run once; the buffer and core run every pass; the T-source runs once per temporal write plus once for the prediction.
 - **Live inference with `J` core iterations per token:** `4 + 4J`.
 
-Measured in the 5B-character study, with the same distribution of pass counts, a hybrid update took about 1.00 s, a temporal-only update 1.03 s, and a depth-only update 0.90 s. Each arm ran on its own RTX 3090 pod. Adding the second axis to a model that already loops costs little. Most of the cost is the passes themselves.
+Averaged over the 20B curriculum, estimated training compute per update relative to the transformer (forward matrix multiplications, including the mixers and attention):
+
+| Model | vs transformer |
+| --- | --- |
+| Depth-only | 2.45× |
+| Temporal-only | 2.80× |
+| Hybrid | 2.81× |
+
+Adding depth to a temporal model costs 0.2%; adding temporal to a depth model costs about 15%. The cost is in the passes, which either single-axis model already pays. Measured update times agree.
+
+Measured live latency per token, same host (Apple MPS, batch 1):
+
+| Model | vs transformer |
+| --- | --- |
+| Temporal or hybrid, `J = 1` | about +12–13% |
+| Depth or hybrid, `J = 4` | about 2.5× |
 
 Always say what a comparison holds equal: data, passes, FLOPs or parameters. They answer different questions.
 

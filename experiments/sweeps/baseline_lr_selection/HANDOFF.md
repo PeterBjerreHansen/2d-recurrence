@@ -2,7 +2,7 @@
 
 Historical record of the completed experiment. Paths below follow the current repository layout; recorded configurations, measurements, and raw artifact provenance retain their original meaning. See the experiment README for current commands.
 
-Work in `/Users/peterbjerrehansen/Desktop/projects/coding_projects/active/2d_recurrence` on `mvp-2d-recurrence`. Read `experiments/sweeps/baseline_lr_selection/PLAN.md` for rationale and `docs/RECURRENCE_CONTRACT.md` for model semantics. This handoff fixes the executable protocol and selection rule. The user authorizes implementation of the small prerequisite fixes below, two matched LR candidates, and continuation of one selected candidate. Do not expand the architecture, objective, optimizer, recurrence distribution, or number of training runs.
+Work in `/Users/peterbjerrehansen/Desktop/projects/coding_projects/active/2d_recurrence` on `main`. Read `experiments/sweeps/baseline_lr_selection/PLAN.md` for rationale and `docs/RECURRENCE_CONTRACT.md` for model semantics. This handoff fixes the executable protocol and selection rule. The user authorizes implementation of the small prerequisite fixes below, two matched LR candidates, and continuation of one selected candidate. Do not expand the architecture, objective, optimizer, recurrence distribution, or number of training runs.
 
 The configurations are defined in `experiments/sweeps/baseline_lr_selection/configs/lr3e4.py` and `experiments/sweeps/baseline_lr_selection/configs/lr1e4.py`. They deliberately fail before launch until `eval_panel_path` is supported; they are experiment definitions, not a claim that the prerequisite tooling is already implemented. Do not remove that check to work around missing functionality.
 

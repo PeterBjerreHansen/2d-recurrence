@@ -9,6 +9,7 @@ matplotlib is not a project dependency, hence ``--with``.
 """
 
 import csv
+import json
 from pathlib import Path
 
 import matplotlib
@@ -16,7 +17,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 ROOT = Path('experiments/long_runs/20B_recurrence')
-OUTPUT = ROOT / 'report_figures' / 'nll_trajectories.png'
+OUTPUT = ROOT / 'report_figures' / 'nll_trajectories_20B.png'
+# Live NLL of temporal 20B after the 200-update mixer fine-tune (align.py), same selection panel.
+ALIGNED = Path('experiments/ablations/live_warm_start/results/check_temporal_aligned_J1.json')
 CHARACTERS_PER_UPDATE = 100 * 1023
 # Reference palette, categorical slots 1-4 (light mode), fixed per arm.
 COLORS = {'hybrid': '#2a78d6', 'temporal': '#eb6834', 'depth': '#1baf7a', 'transformer': '#eda100'}
@@ -81,11 +84,22 @@ def main():
         else:
             points = series(arm, lambda r, d=depth: r['execution'] == 'live' and r['depth_steps'] == d)
         x, y = zip(*points)
-        right.plot(x, y, color=COLORS[arm], linewidth=2, marker='o', markersize=4)
+        right.plot(x, y, color=COLORS[arm], linewidth=2, marker='o', markersize=4, zorder=2)
         right_ends.append((arm, x[-1], y[-1]))
     label_ends(left, left_ends, 0.0045)
-    label_ends(right, right_ends, 0.011)
-    right.set_title('Live, token by token (as trained)', color=INK, fontsize=10, loc='left')
+    # After training, a 200-update fine-tune of the temporal mixer (3.3M characters) fixes live execution.
+    final_x, final_y = next((x, y) for arm, x, y in right_ends if arm == 'temporal')
+    fixed_y = json.loads(ALIGNED.read_text())['nll']
+    right.annotate('', (final_x, fixed_y), xytext=(final_x, final_y),
+                   arrowprops=dict(arrowstyle='-|>', linestyle='--', color=COLORS['temporal'], linewidth=1.5,
+                                   shrinkA=4, shrinkB=4), zorder=1)
+    right.plot([final_x], [fixed_y], marker='o', markersize=5, markerfacecolor='white',
+               markeredgecolor=COLORS['temporal'], markeredgewidth=1.5, zorder=3)
+    right.text(final_x + 0.5, (final_y + fixed_y) / 2 + 0.04, 'after a 200-update\nfine-tune of the\nmemory reader',
+               fontsize=8, color=MUTED, ha='left', va='center')
+    label_ends(right, [end for end in right_ends if end[0] != 'temporal'] +
+               [('temporal', final_x, final_y), ('temporal_fixed', final_x, fixed_y)], 0.011)
+    right.set_title('Live, token by token', color=INK, fontsize=10, loc='left')
     right.set_xlim(left.get_xlim()[0], 22.5)
     left.set_xlim(left.get_xlim()[0], 22.5)
     handles, labels = left.get_legend_handles_labels()

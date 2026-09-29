@@ -2,7 +2,7 @@
 
 Historical record of the completed experiment. Paths below follow the current repository layout; recorded configurations, measurements, and raw artifact provenance retain their original meaning. See the experiment README for current commands.
 
-Implemented on `mvp-2d-recurrence`. The frozen `baseline-chessgpt` branch and `baseline-stage01` tag remain unchanged. The proposal and implementation plan remain in the repository. The maintained execution and initialization reference is [RECURRENCE_CONTRACT.md](../../docs/RECURRENCE_CONTRACT.md).
+Implemented on `main`. The frozen `baseline-chessgpt` branch and `baseline-stage01` tag remain unchanged. The proposal and implementation plan remain in the repository. The maintained execution and initialization reference is [RECURRENCE_CONTRACT.md](../../docs/RECURRENCE_CONTRACT.md).
 
 ## Scope
 

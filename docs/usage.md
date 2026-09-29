@@ -54,19 +54,18 @@ Five block counts follow physical block order: prelude, buffer, core, source, co
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Default A | 1 | 1 | 4 | 1 | 1 |
 | B, coincident | 1 | 0 | 6 | 0 | 1 |
-| Original experiments | 2 | 0 | 4 | 1 | 1 |
 
-Changing counts moves the injection and source boundaries within one ordered stack. An empty buffer means adjacent injection sites, and an empty source means both states come from the core output. These are not new module types or duplicated weights. Historical configs pin their layout explicitly. A was chosen after a near-tied [A/B comparison](../experiments/ablations/architecture_sites/REPORT.md). B was slightly better at late predictive NLL, but below the predeclared selection margin.
+Changing counts moves the injection and source boundaries within one ordered stack. An empty buffer means adjacent injection sites, and an empty source means both states come from the core output. A is the default, after a near-tied [A/B comparison](../experiments/ablations/architecture_sites/REPORT.md).
 
 ## Checkpoints and resume
 
 Checkpoints include model, optimizer, scaler, completed update count, random generators, recurrence sampler, configuration, dataset and panel identity, and environment provenance.
 
 - Resume with the same config plus `--init_from=resume`. `max_iters` is an absolute stopping step.
-- Output, logging, evaluation and checkpoint-interval settings may change on resume, as may the panel file's location if its content is unchanged. Other training-setting changes are rejected.
+- Output, logging, evaluation, checkpoint-interval and warm-start settings may change on resume, as may the panel file's location if its content is unchanged. Other training-setting changes are rejected.
 - Raising the stopping step does not extend the LR decay schedule.
 - New checkpoints store the complete layout. Old checkpoints load with their original missing-field defaults, not today's A defaults.
-- Exact resume is tested on CPU. A 100-update CUDA test matched bitwise with deterministic kernels (`RECURRENCE_TORCH_DETERMINISTIC=1`); a longer deterministic test is pending. With ordinary CUDA kernels, resumed and uninterrupted runs match statistically, not bitwise, because two uninterrupted runs also diverge.
+- Exact resume is tested on CPU and, with deterministic kernels (`RECURRENCE_TORCH_DETERMINISTIC=1`), over 1,000 CUDA updates with the WSD schedule and curriculum. With ordinary CUDA kernels, resumed and uninterrupted runs match statistically, not bitwise, because two uninterrupted runs also diverge.
 - Under DDP, rank zero samples and broadcasts each microbatch schedule, and global accumulation must divide evenly across workers.
 - Load only trusted checkpoints and vocabulary files.
 
@@ -93,6 +92,10 @@ uv run python -m evaluation.recurrence_grid \
 
 Live execution runs token by token with real temporal feedback and incremental KV caches; see the [inference contract](INFERENCE_CONTRACT.md). `evaluation.live_inference.evaluate_teacher_forced` computes teacher-forced live NLL on validation rows. The 20B study records it at major checkpoints. Training-graph and live results measure different executions and are reported separately.
 
+- **Paired comparisons:** the [evaluation battery](../experiments/evaluation_battery/README.md) compares checkpoints on the same rows, for the training graph and live execution. It adds legal-move probability, per-character-class and per-ply breakdowns, and bootstrap intervals.
+- **Aligning a temporal model with live execution after training:** use [`align.py`](../experiments/ablations/live_warm_start/align.py).
+- **Aligning it during training:** set `warm_start_fraction`. That share of each update's microbatches first settles the temporal memory without gradients (at most `warm_start_max_passes` passes, stopping below `warm_start_tolerance`), then trains from it. This is temporal mode only, and off by default.
+
 ## Generation
 
 ```sh
@@ -114,25 +117,19 @@ model.py, train.py, sample.py      # baseline GPT, trainer, generation CLI
 models/recurrent_2d.py             # configurable layout, mixers, training trajectory
 recurrence/schedule.py             # update counts, write masks, sampler state
 inference/                         # live execution, KV caches, slow reference oracle
-evaluation/                        # reusable evaluators (grid, live NLL, stress checks, chess)
+evaluation/                        # reusable evaluators (grid, live NLL, legality, paired comparisons)
 configs/local/                     # small local MPS configs
 data/chess_v1/prepare.py           # dataset preparation
 experiments/
   serious.py, run_serious.py       # shared batch-100 CUDA profile and its runner
-  ablations/                       # architecture sites, deep supervision, gate init, update schedule
+  ablations/                       # architecture sites, deep supervision, gate init, update schedule, live warm start
   sweeps/baseline_lr_selection/    # LR selection and 10k continuation
-  long_runs/                       # 1B_baseline, 5B_axis, 20B_recurrence, 64B_core
-  benchmarks/                      # runtime, throughput and resume probes
-  smoke/                           # small pipeline checks and historical validations
-  relocations.json                 # old paths in immutable provenance -> current locations
-docs/                              # concepts, contracts, usage, plans, figures
+  long_runs/                       # 1B_baseline, 5B_axis, 20B_recurrence
+  evaluation_battery/              # post-training comparisons of the 20B arms
+  benchmarks/                      # runtime, throughput, resume and same-host cost probes
+  smoke/                           # small pipeline checks
+docs/                              # concepts, contracts, usage, 20B plan, figures
 tests/
 ```
 
-Each experiment owns its `results/` directory; there is no global results directory. Code, configs, protocols and concise reports are tracked. Checkpoints, logs, plots and raw reports stay local and ignored. Paths embedded in historical checkpoints and receipts are left unchanged; [relocations.json](../experiments/relocations.json) records where they moved.
-
-Reusable metrics live in `evaluation/`. Experiment-specific analysis lives with its experiment. For example, this rebuilds the completed A/B summary on CPU from the preserved protocol and checkpoints:
-
-```sh
-uv run python -m experiments.ablations.architecture_sites.run summarize
-```
+Each experiment owns its `results/` directory. Code, configs, protocols and reports are tracked; checkpoints, logs and raw results stay local and ignored.

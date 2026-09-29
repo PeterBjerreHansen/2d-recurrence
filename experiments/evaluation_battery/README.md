@@ -9,7 +9,6 @@ This battery answers the questions the 20B study needs after training, using onl
 
 It does not measure playing strength.
 
-The [5B dry run](#5b-dry-run) exercises every stage on the completed 5B arms.
 
 ## Tests
 
@@ -80,14 +79,3 @@ uv run python -m experiments.evaluation_battery.run $ARGS --stages compare
 - **Outputs:** results go to `experiments/evaluation_battery/results/<preset>-step<step>/`. That folder holds per-arm `cell_*.npz` and `live_J*.shard*.npz` files, plus `compare_training_graph.{json,md}` and `compare_live.{json,md}`.
 
 Run the cost benchmark on the same host type as the arms: all four arms together, one process, one GPU.
-
-## 5B dry run
-
-```sh
-uv run python -m experiments.evaluation_battery.run --preset 5B --tg-limit 1000 --live-limit 24 \
-    --max-passes 8 --max-live-depth 4 --tg-device mps --live-device cpu --live-workers 6
-```
-
-- **Stand-in transformer:** the 5B transformer arm was never completed, so the dry run uses the 20B transformer at 4B characters (step 39,101). That transformer has a different learning-rate schedule and horizon, so its comparisons check the tooling only.
-- **Sample sizes:** the dry run uses 1,000 training-graph rows and 24 live rows.
-- **Results:** see `results/5B-dry-run/`.

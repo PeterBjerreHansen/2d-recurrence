@@ -113,7 +113,7 @@ If depth state exists, compute $z_b=W_hN_h(h_D)+W_aN_a(q_b)$; otherwise use $z_b
 
 After a nonfinal pass, store $h_D\leftarrow h_b$ when its write mask is true. Store $m_T\leftarrow S(h_b)$ when its write mask is true, where $S$ is the source segment or identity when empty. A source segment is executed on a nonfinal pass only if its output is consumed by a temporal write. Both writes happen after all reads. With a shared source, different write masks can still give the stored states different ages.
 
-After the final pass, compute logits through $C(S(h_B))$, final normalization, and the head. Backpropagate final-output cross entropy through the complete trajectory and all held-state reads. There are no detached states or intermediate losses. The model performs $L_P+B(L_Q+L_R)+(U_T+1)L_S+L_C$ transformer-block applications. A uses $3+5B+U_T$; B uses $2+6B$.
+After the final pass, compute logits through $C(S(h_B))$, final normalization, and the head. Backpropagate final-output cross entropy through the complete trajectory and all held-state reads. There are no detached states or intermediate losses. The one optional exception is the trainer's warm start (`warm_start_fraction`, temporal mode, off by default). It gives some microbatches a detached, settled temporal memory as their initial state. The model performs $L_P+B(L_Q+L_R)+(U_T+1)L_S+L_C$ transformer-block applications. A uses $3+5B+U_T$; B uses $2+6B$.
 
 ## Execution scope
 

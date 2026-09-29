@@ -222,7 +222,7 @@ def main():
     p.add_argument('mode', choices=['final', 'deep'])
     p.add_argument('--reason', required=True)
     p = sub.add_parser('pair')
-    p.add_argument('--billions', type=int, choices=[1, 64], default=1)
+    p.add_argument('--billions', type=int, choices=[1], default=1)
     args = parser.parse_args()
     if args.command == 'preflight':
         preflight()

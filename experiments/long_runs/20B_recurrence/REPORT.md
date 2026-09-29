@@ -10,15 +10,15 @@ Four arms of the same 8-layer, width-512 character-level chess model, each train
   - All three recurrent models beat the transformer by 0.012–0.014 NLL.
   - The plan's strongest outcome, both gaps growing with scale, did not happen: from 4B to 20B both gaps shrink.
 - **As trained, temporal fails in live execution.** Its token-by-token NLL is 0.48, twice the transformer's, although its training-graph NLL ties for best. About 95% of that penalty is one thing: live temporal loses track of **move numbers**. Its move choice suffers only mildly. The hybrid and depth models run live at their training-graph quality.
-- **The failure is a train/live mismatch, and a tiny fine-tune removes it.** Retraining only the temporal mixer (about 6% of parameters) on settled memory, for 200 small updates (3.3M characters, 0.016% of the training data), brings temporal's live NLL to 0.2176, 0.0087 better than the transformer.
+- **The failure is a train/live mismatch, and a tiny fine-tune removes it.** Retraining only the temporal mixer (about 6% of parameters) on settled memory, for 200 small updates (3.3M characters, 0.016% of the training data), brings temporal's live NLL to 0.2176, 0.0087 better than the transformer. Redoing the decay phase with warm-start batches also fixes it, with almost no training-graph cost (see [Alignment during the decay](#alignment-during-the-decay)).
 - **Best deployable model: the hybrid with four core iterations per token** (live 0.2137). It beats depth, which applies the same number of transformer blocks per token, by 0.0012 and the transformer by 0.0127.
   - **At the transformer's block count** (one core iteration, 8 block applications per token), aligned temporal is best: 0.0034 ahead of the aligned hybrid and 0.0087 ahead of the transformer. The temporal mixer adds about 12% per-token latency on top of those blocks.
 - **The gains are in move choice and grow over the game.** The hybrid's advantage over the transformer rises from 0.001 NLL in the first ten plies to 0.028 at plies 60–79.
 - **Single seed.** The intervals cover which rows were evaluated, not training-seed variation.
 
-![Four-pass training-graph NLL and live NLL against training characters](report_figures/nll_trajectories.png)
+![Four-pass training-graph NLL and live NLL against training characters](report_figures/nll_trajectories_20B.png)
 
-*Selection panel (128 rows), at every retained checkpoint. The confirmation results below use separate, larger row sets.*
+*Selection panel (128 rows), at every retained checkpoint. The dashed arrow shows temporal after the 200-update fine-tune described below. The confirmation results below use separate, larger row sets.*
 
 ## Setup
 
@@ -31,7 +31,7 @@ Four arms of the same 8-layer, width-512 character-level chess model, each train
 | Arms | temporal `(U, 0)`, depth `(0, U)`, hybrid (80% diagonal), transformer |
 | Hardware | one Secure RTX 4090 per arm on Runpod |
 
-**What is matched:** data, data order, optimiser, and the distribution of executed passes. **What is not:** compute and parameters. Averaged over the curriculum, a recurrent training step applies about 19–22 transformer blocks per token against the transformer's 8, so the recurrent arms use roughly 2.4–2.7 times its training compute. At inference, one core iteration per token applies 8 transformer blocks, the same number as the transformer, and four iterations apply 20. The mixers add work on top of those blocks. Measured same-host live latency (Apple MPS, batch 1, same architecture):
+**What is matched:** data, data order, optimiser, and the distribution of executed passes. **What is not:** compute and parameters. Averaged over the curriculum, the estimated training compute per update ([`training_flops.py`](training_flops.py)) is 2.45× the transformer's for depth, 2.80× for temporal and 2.81× for the hybrid. That is forward matrix multiplications, including the mixers and attention. At inference, one core iteration per token applies 8 transformer blocks, the same number as the transformer, and four iterations apply 20. The mixers add work on top of those blocks. Measured same-host live latency (Apple MPS, batch 1, same architecture):
 
 | | ms per token | vs transformer |
 | --- | --- | --- |
@@ -48,7 +48,6 @@ Comparisons below are therefore stated as **matched block applications**, not eq
 - **Live execution:** the first 400 of those rows (409k targets, 74k move starts).
 - **Intervals:** 95% row-bootstrap, 2,000 replicates.
 - **Trajectories:** the selection-panel checkpoint reports produced during training.
-- **Row reuse:** these confirmation rows were not used to design the alignment, but earlier analyses of other models evaluated some of them (see Limitations).
 
 ## Pre-registered result
 
@@ -71,7 +70,7 @@ Comparisons below are therefore stated as **matched block applications**, not eq
 | 18B (decay starts) | 0.2420 | 0.2253 | 0.2283 | 0.2253 | 0.0000 | +0.0030 |
 | 20B | 0.2272 | 0.2122 | 0.2156 | 0.2125 | −0.0003 | +0.0031 |
 
-- **Hybrid vs temporal:** within ±0.0015 at every checkpoint, ending in an exact tie. At 5B, temporal led by 0.0006, so the gap narrowed further.
+- **Hybrid vs temporal:** within ±0.0015 at every checkpoint, ending in an exact tie.
 - **Hybrid vs depth:** the hybrid leads throughout. The lead shrinks from 0.009 at 1B to 0.003 from 18B on.
 - **The decay phase** improves every arm by 0.013–0.015 and leaves the ranking unchanged.
 - **One hybrid does not replace the single-axis models at their own settings.** Run at `(3,0)`, the hybrid scores 0.0065 worse than the dedicated temporal model. At `(0,3)`, it's 0.0055 worse than depth. It matches the best model only at its own `(3,3)`.
@@ -109,22 +108,20 @@ As trained, live temporal puts 99.0% of its probability on legal moves, slightly
 
 ## Why temporal fails live
 
-Diagnostics on the collected checkpoints (scratch analyses on the selection panel; not part of the frozen protocol):
+Scratch diagnostics on the selection panel (not part of the frozen protocol):
 
-1. **The memory is stable, and it settles.** Its norm stays at about 40–60 along the row. Enough training-graph passes reproduce live memory exactly.
-2. **Training never shows the model the settled memory.** Every training trajectory starts with a memory-free pass and makes at most three temporal updates. That memory is 20–28% (relative L2) from the settled memory live execution uses.
-3. **The memory update oscillates, and training saw only one phase.** Successive memory updates point in opposite directions (cosine −1.00), so the memory alternates between two states on odd and even passes. The support {0, 1, 3} has no even count above zero. After step 39,101 the temporal arm trained only on 1 and 3 updates, and its reader specialised to the odd state:
+- **Training never shows the settled memory.** Every training trajectory starts from a memory-free pass and makes at most three temporal updates. Live execution reads the memory once it has settled, which is 20–28% away (relative L2).
+- **The memory alternates between two states, and training saw only one.** Successive updates point in opposite directions, so odd and even passes land in different states. After step 39,101, the temporal arm trained only on 1 and 3 updates, and it learned to read only the odd state:
 
-   | Temporal updates | 1 | 2 | 3 | 4 | 5 | 6 |
-   | --- | --- | --- | --- | --- | --- | --- |
-   | Temporal 4B | 0.253 | 0.267 | 0.251 | 0.267 | 0.251 | 0.264 |
-   | **Temporal 20B** | **0.216** | **1.44** | **0.212** | **1.41** | 0.213 | 1.35 |
-   | Hybrid 14B | 0.242 | 0.294 | 0.239 | 0.291 | 0.239 | 0.290 |
+  | Temporal updates | 1 | 2 | 3 | 4 |
+  | --- | --- | --- | --- | --- |
+  | Temporal 4B | 0.253 | 0.267 | 0.251 | 0.267 |
+  | **Temporal 20B** | **0.216** | **1.44** | **0.212** | **1.41** |
+  | Hybrid 14B | 0.242 | 0.294 | 0.239 | 0.291 |
 
-   The settled memory lies between the two states, and the 20B temporal reader misreads it. The move counter is what breaks. A plausible reading is that the model tracks move-number parity through the alternating memory, but this is not tested.
-4. **The failure is specific, not general fragility.** A random push as large as the gap to the settled memory costs +0.001 at every checkpoint. The push toward the settled memory costs nothing up to halfway, then +0.27 at the settled value.
-5. **The decay phase amplified the sensitivity, not the gap.** The gap is about the same at 14B and at 20B, but the live penalty grew from +0.12 to +0.27.
-6. **The hybrid resists it.** Its memory settles closer to the trained state, its parity sensitivity is mild, and its live penalty stays below 0.01 at every position. Its mixed temporal and depth schedules vary the context in which memory is written and read, which is the likely reason its reader stays broad.
+  The settled memory lies between the two states, and the 20B reader misreads it. A random push of the same size does no harm, so the failure is specific to that state, not general fragility.
+- **The decay phase made the reader more selective.** The gap to the settled memory stayed the same, but the live penalty grew from +0.12 at 14B to +0.27 at 20B.
+- **The hybrid resists it.** Its memory settles closer to the trained state, and its mixed temporal and depth schedules keep its reader broad.
 
 ## Post-hoc live alignment
 
@@ -134,8 +131,6 @@ Diagnostics on the collected checkpoints (scratch analyses on the selection pane
 - **Optimiser:** 200 updates, AdamW, learning rate 3e-4 with a 20-update warmup.
 - **Hybrid:** the same procedure, alternating one and four core iterations across microbatches to cover both deployed settings.
 - **Extra data:** 3,273,600 characters, 0.016% of the 20B budget.
-- **Exported as evaluation-only checkpoints,** with no optimiser or other resume state, and rejected by the study's checkpoint validator. The battery evaluated the first exports, which still carried the source's resume state. Their model weights are identical to the current files, as the weight digest in each `*_aligned.json` shows.
-- **Verified:** tests check that the settled memory and final pass reproduce live execution exactly. The run took about 6 minutes for temporal and 12 for the hybrid on one RTX 4090.
 
 **Confirmation results:**
 
@@ -150,10 +145,25 @@ Diagnostics on the collected checkpoints (scratch analyses on the selection pane
 - **Temporal:** aligned, its live NLL is only 0.0012 above its own training graph, and the settled memory converges within about six passes. The cost is 0.0038 in the training graph, because the reader moved from the odd state to the settled one.
 - **Hybrid:** alignment helps one-iteration execution and leaves four iterations unchanged.
 
-**Why it works (scratch diagnostics on temporal 20B):**
-- **It fixes the reader.** A mixer trained only on the original model's frozen settled memory reads that memory at 0.214 and runs live at 0.219.
-- **The fixed point moves anyway.** The new mixer shifts the settled memory by 19–23%, because the mixer sits inside the loop. The new reader handles both the old and the new fixed point.
-- **Fixing the reader is enough.** Training all parameters the same way was slightly worse than training only the mixer.
+The repair fixes the reader. A mixer trained on the original model's frozen settled memory reads that memory at 0.214 and runs live at 0.219. Training all parameters instead was no better.
+
+### Alignment during the decay
+
+The same idea can be applied during training instead of after it. [`aligned_decay.py`](../../ablations/live_warm_start/aligned_decay.py) resumes temporal from the retained pre-decay checkpoint (step 175,954) and redoes the 19,550 decay updates.
+
+- **The change:** in 5 of every 20 microbatches, the memory is first settled without gradients (up to 64 passes, stopping at a tolerance; about 28 on average). The sampled schedule then trains from that memory instead of from none.
+- **Everything else is the same:** data, schedules and learning rate match the original decay, so no characters are added.
+- **Cost:** updates averaged 1.44 s, against 0.66 s in the original decay. The runs were on different hosts (EPYC 7282 against Ryzen 9 7950X), and these models are CPU-bound on EPYC hosts, so this is not a clean measure of the overhead. From the pass counts, the warm-start batches should add roughly 60% at equal hardware.
+
+| Temporal, confirmation rows | Original decay | Post-hoc aligned | Aligned decay |
+| --- | --- | --- | --- |
+| Training graph (3,0) | 0.2136 | 0.2174 | 0.2143 |
+| Training graph (7,0) | 0.2197 | 0.2185 | 0.2145 |
+| Live, 1 iteration | 0.4814 | 0.2176 | 0.2142 |
+
+On the live rows, the aligned decay is 0.0034 [0.0030, 0.0039] better than the post-hoc aligned model, and within 0.0008 of its own training graph. On the selection panel, its live NLL improves steadily during the decay (0.227 at 180k, 0.214 at 195.5k), where the original decay worsened.
+
+Even update counts are still misread in the training graph (0.61–0.64 at 2 and 4 updates, against 1.40–1.43 before). Live execution does not use those states. This is one seed and one variant; the report's main comparisons use the post-hoc aligned model.
 
 ## Deployable comparison
 
@@ -207,38 +217,21 @@ It was evaluated on the same confirmation rows as the battery ([karvonen-referen
 
 - **Beats Karvonen live:** on a third of his data, only the four-iteration models, hybrid and, narrowly, depth, at about 2.5 times the per-token latency.
 - **Aligned temporal:** 0.0021 worse than Karvonen live.
-- **Karvonen's released 16-layer Lichess model** (twice the layers, also 600,000 updates) scores 0.2063 on the same 8,192 rows, 0.007 below the best model here. It is shown for scale only: its training data was not checked here.
-- **Temporal as trained:** beats Karvonen in the training graph, but that execution cannot generate text.
 
 ## Limitations
 
 - **One training seed per arm.** The intervals cover row sampling, not seed variation.
 - **Matched in data and pass distribution, not in compute.**
-- **The alignment was designed after seeing the live failure on the selection panel.** Its settings were fixed before the confirmation evaluation, and no confirmation row was used to design or select it. The rows are not previously unseen, though. The 5B dry run of this battery evaluated the first 1,000 rows of the same row order, with different (5B) checkpoints: all 400 live rows and 1,000 of the 8,192 training-graph rows. The Karvonen reference (all 8,192 rows) and a separate depth ablation (all 400 live rows and 2,048 training-graph rows) also evaluated these rows. Both ran alongside or after this battery.
-- **Evaluated on subsets:** the battery covers 8,192 of 82,675 confirmation rows for the training graph and 400 for live execution. The 16-pass extrapolation cells and eight-iteration live execution were skipped for time.
-- **Training hours are not comparable across arms,** because the arms ran on different hosts.
+- **The alignment was designed after the live failure was seen on the selection panel.** No confirmation row was used to design it. Some of those rows had been evaluated before, but only with other models.
+- **Evaluated on subsets:** 8,192 of 82,675 confirmation rows for the training graph, and 400 for live execution.
 - **Teacher-forced metrics only.** None of this measures playing strength.
 
 ## Implications for future runs
 
 - **Measure deployed execution during training:** live NLL, NLL at long update chains, the gap between neighbouring update counts, and per-character-class NLL. Temporal's failure showed first and most clearly on move numbers.
 - **Keep the update support gap-free and the mixture broad** throughout training. Deepen by moving the centre, never by concentrating the mass.
-- **Add warm-start batches in the decay phase**, and consider starting them earlier.
-- **See the follow-ups:** [live temporal feedback](../../ablations/live_warm_start/PLAN.md).
+- **Add warm-start batches in the decay phase.** Tested once for temporal (see above): it fixed live execution without the post-hoc model's training-graph cost.
 
-## Appendix: operations and cost
+## Appendix: cost
 
-| Arm | Training hours | Host CPU | Restarts |
-| --- | --- | --- | --- |
-| Transformer | 23.0 | EPYC 7K62 | 0 |
-| Temporal | 33.8 | Ryzen 9 7950X | 0 |
-| Depth | 46.1 | EPYC 7642 | 0 |
-| Hybrid | 54.4 | EPYC 7532 | 0 |
-
-- **Spend:** $134.73 for training, and about $4.60 for the evaluation pod (alignment and battery, about six hours on one Secure RTX 4090).
-- **Integrity:** every arm passed the frozen-protocol integrity check after collection. All nine checkpoint evaluations were present, with hashes matching their checkpoints. The alignment and battery outputs were verified by SHA-256 after transfer.
-- **Incidents, all without data loss:**
-  - Community RTX 4090s were never usable.
-  - One host had a driver too old for CUDA 13, some machines were faulted or power-capped, and the hybrid landed on a slow-CPU host.
-  - Two collection bugs were fixed.
-  - The monitoring agent's credentials failed for a period.
+- **Spend:** $134.73 for training, about $4.60 for the evaluation pod (alignment and battery), and about $7 for the aligned-decay run.
