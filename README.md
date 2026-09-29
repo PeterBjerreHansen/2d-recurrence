@@ -1,5 +1,7 @@
 # 2D recurrence: training looped and feedback transformers at once
 
+> **On the `engine-policy` branch:** the models are being retrained on move tokens with move targets. See [`AGENTS.md`](AGENTS.md) and the [plan](docs/engine_policy_plan.md). The data and training sections below describe the character-level setup.
+
 **Looped transformers and temporally recurrent (feedback) transformers are both trained the same way: run the model several times over the whole sequence, and let each pass read state left behind by the previous one. If the training loop is the same, you can train both mechanisms in one model, in one trajectory, for little extra cost.**
 
 This repository tests that idea on a small character-level chess language model: the [ChessGPT](https://github.com/adamkarvonen/train_ChessGPT) backbone, with 8 layers and width 512, trained on PGN text.
