@@ -178,7 +178,9 @@ def test_move_cycle_roles_and_latest_move_squares():
     role, current, previous, valid = label_row(text, len(text))
     roles = {i: ROLES[r] for i, r in enumerate(role) if valid[i]}
     assert [roles[i] for i in range(1, 9)] == [
-        'digit', 'dot', 'first_white', 'last_white', 'space_black', 'first_black', 'last_black', 'space_number']
+        'digit_last', 'dot', 'first_white', 'last_white', 'space_black', 'first_black', 'last_black', 'space_number']
+    ten = text.index('10.')
+    assert (roles[ten], roles[ten + 1], roles[ten + 2]) == ('digit', 'digit_last', 'dot')
     assert roles[text.index('+')] == 'check_white'
     # The move is applied at its last character, not before.
     e4_first, e4_last = text.index('e4'), text.index('e4') + 1
@@ -197,3 +199,50 @@ def test_update_pairs_each_decision_with_the_previous_one():
                   ply=np.array([0, 1, 2, 2, 3]))
     current, previous = paired_points(labels)
     assert sorted(zip(current.tolist(), previous.tolist())) == [(1, 0), (2, 1), (4, 2)]
+
+
+def test_scaled_memory_and_mixer_terms():
+    from experiments.interp.board_state.memory_scale import scaled_memory
+    from experiments.interp.board_state.mixer_terms import mixer_terms
+    model = _recurrent('temporal')
+    runner = SiteRunner(model)
+    x = torch.randint(0, 32, (2, 12))
+    index = (torch.tensor([0, 1]), torch.tensor([5, 9]))
+    base = runner.run(x, capture=['L1', 'Tmix'], index=index, passes=12)
+    with scaled_memory(model.temporal_mixer, 1.0):
+        same = runner.run(x, passes=12)
+    torch.testing.assert_close(same.logits, base.logits)
+    with scaled_memory(model.temporal_mixer, 2.0):
+        assert not torch.allclose(runner.run(x, passes=12).logits, base.logits)
+    torch.testing.assert_close(runner.run(x, passes=12).logits, base.logits)  # restored
+    # The two terms add up to the mixer output. Memory is the T-source output (L5 in this
+    # six-layer model, L7 in the 20B arms) one position back.
+    memory = runner.run(x, capture=['L5'], index=(index[0], index[1] - 1), passes=12).captures['L5']
+    m_term, c_term = mixer_terms(model.temporal_mixer, memory.float().numpy(),
+                                 base.captures['L1'].float().numpy(), 'cpu')
+    np.testing.assert_allclose(m_term + c_term, base.captures['Tmix'].float().numpy(), atol=2e-3)
+
+
+def test_blocked_attention_and_attention_to_previous():
+    from experiments.interp.board_state.attention import attention_to_previous, blocked_attention
+    torch.manual_seed(4)
+    model = GPT(GPTConfig(n_layer=2, n_head=2, n_embd=16, block_size=24)).eval()
+    runner = SiteRunner(model)
+    x = torch.randint(0, 32, (1, 10))
+    base = runner.run(x).logits
+    forbid = torch.zeros(1, 24, 24, dtype=torch.bool)
+    with blocked_attention(model, [0, 1], lambda: forbid):
+        torch.testing.assert_close(runner.run(x).logits, base, atol=1e-5, rtol=1e-5)
+    forbid[0, 6, 5] = True
+    with blocked_attention(model, [0, 1], lambda: forbid):
+        blocked = runner.run(x).logits
+    torch.testing.assert_close(blocked[:, :6], base[:, :6], atol=1e-5, rtol=1e-5)
+    assert not torch.allclose(blocked[:, 6], base[:, 6])
+    # Attention weights match a direct softmax over the causal scores.
+    block, h = model.transformer.h[0], model.embed(x)[0]
+    got = attention_to_previous(block, h, torch.tensor([4, 7]))
+    q, k, _ = block.attn.c_attn(block.ln_1(h)).split(16, dim=-1)
+    for qi, pos in enumerate([4, 7]):
+        for head in range(2):
+            s = q[pos, head * 8:(head + 1) * 8] @ k[:pos + 1, head * 8:(head + 1) * 8].T / 8 ** 0.5
+            torch.testing.assert_close(got[head, qi], s.softmax(-1)[pos - 1], atol=1e-5, rtol=1e-5)

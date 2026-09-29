@@ -38,6 +38,9 @@ ARMS = {
     'hybrid': Arm(RUNS / 'hybrid_20B/results/ckpt-step195504.pt', 4),
     'random_init': Arm(RUNS / 'transformer_20B/results/ckpt-step000000.pt', 1),
     'karvonen': Arm(Path('/'.join(KARVONEN)), 1),
+    # Temporal model whose decay phase trained the whole network with 25% of batches
+    # reading settled memory (experiments/ablations/live_warm_start).
+    'temporal_decay': Arm(Path('experiments/ablations/live_warm_start/results/aligned_decay_temporal/ckpt-step195504.pt'), 1),
 }
 
 # Validation rows: the first TRAIN_ROWS of the selection train the probes, the rest test them.

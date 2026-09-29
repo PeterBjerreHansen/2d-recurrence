@@ -40,7 +40,8 @@ _MOVE_ROLES = {'first': "first character of {}'s move", 'body': "inside {}'s mov
                'last': "last character of {}'s move (move applied)", 'check': "+ or # after {}'s move"}
 ROLE_NAMES = {
     'space_number': "space after Black's move (next: move number)",
-    'digit': 'move-number digit',
+    'digit': 'earlier move-number digit (the 1 in 12.)',
+    'digit_last': "last move-number digit (next: the '.')",
     'dot': 'dot (next: White chooses)',
     **{f'{role}_white': text.format('White') for role, text in _MOVE_ROLES.items()},
     'space_black': "space after White's move (next: Black chooses)",
@@ -80,7 +81,7 @@ def label_row(text, limit):
                 mark(token_start - 1, ROLES.index('space_number' if number else 'space_black'))
             offset = number.end() if number else 0
             for i in range(token_start, token_start + offset - 1):
-                mark(i, ROLES.index('digit'))
+                mark(i, ROLES.index('digit_last' if i == token_start + offset - 2 else 'digit'))
             if number:
                 mark(token_start + offset - 1, ROLES.index('dot'))
             san = token[offset:]
