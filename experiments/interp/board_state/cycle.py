@@ -20,7 +20,7 @@ Probes train on held-in rows and test on the held-out rows of the main
 selection. Writes ``results/cycle/<arm>.json``.
 
 Example:
-    python -m experiments.interp.board_state.cycle --arms temporal transformer
+    python -m experiments.interp.board_state.cycle
 """
 
 import argparse
@@ -183,7 +183,7 @@ def analyse(name, rows, meta, train_rows, device_name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--arms', nargs='+', default=['temporal', 'transformer'])
+    parser.add_argument('--arms', nargs='+', default=['transformer', 'temporal', 'depth', 'hybrid'])
     parser.add_argument('--train-rows', type=int, default=600)
     parser.add_argument('--test-rows', type=int, default=100)
     parser.add_argument('--device', default=device())

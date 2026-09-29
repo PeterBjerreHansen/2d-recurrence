@@ -66,7 +66,7 @@ From the repository root, in order:
 uv run python -m experiments.interp.board_state.capture
 uv run python -m experiments.interp.board_state.probe
 uv run --with matplotlib python -m experiments.interp.board_state.figures
-uv run python -m experiments.interp.board_state.cycle --arms temporal transformer
+uv run python -m experiments.interp.board_state.cycle
 uv run python -m experiments.interp.board_state.mixer
 uv run python -m experiments.interp.board_state.update
 uv run python -m experiments.interp.board_state.decision
