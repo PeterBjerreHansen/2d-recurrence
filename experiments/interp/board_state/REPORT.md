@@ -5,9 +5,14 @@ What the four 20B arms represent about the board and the side to move, at which 
 ## Summary
 
 - **The probes are validated.** On Karvonen's released model, our pipeline gets 0.981 of squares right at L6 in his setting (paper: 0.991, with about ten times more probe games). A random-init model scores 0.760 (paper: 0.750).
-- **Board tracking depends on the character.** Every model assembles the full board only at the two characters where a move is chosen: the `.` before White's move and the space before Black's. At other characters the board stays partial even in late layers. The two spaces are the same input token, yet only the one followed by a decision gets the full board.
-- **The temporal memory delivers the board early, but what it holds depends on the character that wrote it.** The memory is sharpest on the latest move right after that move is written (0.95). It holds the fullest board just before a decision: the digit before the `.` writes older changes at 0.86 (hybrid 0.90), where the same layer of the arms without memory holds 0.69–0.72.
-- **The temporal mixer passes older changes poorly at every character,** losing 0.10–0.17 in the temporal model and up to 0.22 in the hybrid. It passes the latest move well only while the move is fresh. At decision characters the layers after the mixer rebuild the board: temporal completes it by L5, the transformer and the hybrid by L7.
+- **Board tracking depends on the character.** Every model assembles the full board at the two characters where a move is chosen: the `.` before White's move and the space before Black's. The memory models also assemble it one character earlier, at the last digit of the move number. At other characters the board stays partial even in late layers. The two spaces are the same input token, yet only the one followed by a decision gets the full board.
+- **The temporal memory delivers the board early, but what it holds depends on the character that wrote it.** The memory is sharpest on the latest move right after that move is written (0.95). Before a decision, the last digit of the move number builds the full board and hands it to the `.`: the memory arriving there reads 0.86 / 0.86 (hybrid 0.86 / 0.90). In the arms without memory, that digit holds 0.53–0.57 / 0.69–0.72.
+- **The temporal mixer passes older changes poorly at every character,** losing 0.09–0.17 in the temporal model and up to 0.22 in the hybrid. It passes the latest move well only while the move is fresh. At decision characters the layers after the mixer rebuild the board: temporal completes it by L5, the transformer and the hybrid by L7.
+- **The loss happens in the mixer's memory term itself,** not through interference from the current character.
+  - Much of it is a nonlinear re-encoding that an MLP probe reads back, but not all.
+  - Training the whole network partly on settled memory (the aligned-decay model) doesn't change it.
+  - Doubling the memory term makes NLL much worse (0.221 → 0.295) without passing more board.
+- **The temporal model gets the board from its memory, not by attending to the previous character.** Blocking that attention leaves temporal's board unchanged. In the transformer it drops the board at White's first move character from 0.65 / 0.69 to 0.28 / 0.41.
 - **The temporal model uses the board in its memory to choose its move** (memory swap, tested at the `.` only).
 - **Recurrence gives an earlier board, not a better one.** Peak board accuracy in Karvonen's setting: temporal 0.961, transformer 0.958, hybrid 0.953, depth 0.948, and Karvonen's 3×-longer-trained transformer 0.981.
 - **Looped cores stop improving early.** Depth needs its second pass and the hybrid only its first; later passes add little to board or move readouts.
@@ -63,7 +68,8 @@ The per-square majority baseline is 0.667. Over whole rows, which include long g
 | Role | Memory | Mixer | L2 | L5 | L7 |
 | --- | --- | --- | --- | --- | --- |
 | Space after Black's move | 0.95 / 0.77 | 0.92 / 0.61 | 0.85 / 0.66 | 0.80 / 0.67 | 0.77 / 0.67 |
-| Move-number digit | 0.62 / 0.65 | 0.45 / 0.55 | 0.52 / 0.59 | 0.66 / 0.73 | 0.68 / 0.75 |
+| Earlier move-number digit (`1` in `12.`) | 0.74 / 0.67 | 0.52 / 0.58 | 0.51 / 0.60 | 0.51 / 0.70 | 0.52 / 0.71 |
+| **Last move-number digit** (before the `.`) | 0.60 / 0.69 | 0.45 / 0.55 | 0.58 / 0.62 | **0.85 / 0.83** | **0.86 / 0.86** |
 | **`.`** | 0.86 / 0.86 | 0.59 / 0.70 | 0.69 / 0.70 | **0.87 / 0.89** | 0.86 / 0.90 |
 | First character of White's move | 0.86 / 0.90 | 0.64 / 0.76 | 0.68 / 0.74 | 0.81 / 0.86 | 0.80 / 0.84 |
 | Inside White's move | 0.79 / 0.82 | 0.56 / 0.65 | 0.61 / 0.66 | 0.74 / 0.79 | 0.73 / 0.77 |
@@ -75,7 +81,8 @@ The per-square majority baseline is 0.667. Over whole rows, which include long g
 | Role | Previous L7 | L2 | L5 | L7 |
 | --- | --- | --- | --- | --- |
 | Space after Black's move | 0.96 / 0.80 | 0.46 / 0.55 | 0.64 / 0.60 | 0.68 / 0.73 |
-| Move-number digit | 0.56 / 0.69 | 0.46 / 0.56 | 0.47 / 0.59 | 0.50 / 0.67 |
+| Earlier move-number digit (`1` in `12.`) | 0.63 / 0.73 | 0.47 / 0.57 | 0.49 / 0.62 | 0.52 / 0.70 |
+| Last move-number digit (before the `.`) | 0.58 / 0.69 | 0.46 / 0.55 | 0.48 / 0.58 | 0.53 / 0.69 |
 | **`.`** | 0.53 / 0.69 | 0.46 / 0.55 | **0.83 / 0.70** | 0.85 / 0.88 |
 | First character of White's move | 0.85 / 0.88 | 0.46 / 0.55 | 0.65 / 0.69 | 0.79 / 0.85 |
 | Inside White's move | 0.80 / 0.84 | 0.44 / 0.55 | 0.59 / 0.65 | 0.75 / 0.80 |
@@ -100,23 +107,29 @@ The per-square majority baseline is 0.667. Over whole rows, which include long g
 | Depth | 0.73 | 0.89 |
 | Hybrid | 0.75 | 0.90 |
 
-- **The full board is built only when a decision follows.**
+- **The full board is built where a move is chosen, and in the memory arms one character earlier.**
   - At the two decision characters, older changes reach 0.88–0.90 at L7 in every arm.
+  - At the last digit of the move number they reach 0.86 (temporal) and 0.90 (hybrid) at L7, against 0.69–0.72 in the arms without memory.
   - At a move's first character they are still 0.83–0.85 at L7; at the other characters they stay at 0.67–0.84.
   - The two spaces are the same input token, yet in every arm only the one followed by a decision gets the full board.
 - **Temporal completes the board at L5 at decision characters; the transformer and hybrid only at L7.** At the `.`, older changes read 0.89 at temporal's L5 against 0.70 for the transformer and 0.84 for the hybrid's last pass. Depth reaches 0.87 at L5, but only in its fourth pass.
 - **Every arm applies a move at its last character by L5** (0.98–0.99 on the moved squares). The temporal model also holds older changes better there than the transformer: 0.76 against 0.63.
 - **What the memory holds depends on the character that wrote it:**
   - Right after a move, it is sharp on that move (0.95) and loose on older changes (0.76–0.77).
-  - Arriving at the `.`, it reads 0.86 / 0.86 (hybrid 0.86 / 0.90). That memory is the L7 of the digit before the `.`. In the two arms without memory the same readout is 0.53 / 0.69 (transformer) and 0.57 / 0.72 (depth). The memory arms load the board into their memory one character before the decision.
-  - Arriving at a move-number digit, it reads 0.62 / 0.65.
-- **The temporal model's early advantage holds at every character, but its size varies.** At L2 temporal reads 0.52–0.85 / 0.59–0.74 across roles, the transformer 0.44–0.57 / 0.55–0.63.
+  - Arriving at a move-number digit, it reads 0.60–0.74 / 0.67–0.69.
+  - Arriving at the `.`, it reads 0.86 / 0.86. This is the same activation as the last digit's L7 in the table.
+- **The memory models build the board twice before White decides.**
+  - The last digit builds it (L5 0.85 / 0.83, from an incoming memory of 0.60 / 0.69) and hands it to the `.`.
+  - The mixer drops part of it (0.59 / 0.70), and the `.` builds it again (L5 0.87 / 0.89).
+  - Earlier digits don't build it (L7 0.52 / 0.71).
+  - Nor does the last digit in the arms without memory (L7 0.53 / 0.69 transformer, 0.57 / 0.72 depth); those arms build the board only at the `.`.
+- **The temporal model's early advantage holds at every character, but its size varies.** At L2 temporal reads 0.51–0.85 / 0.59–0.74 across roles, the transformer 0.44–0.57 / 0.55–0.63.
 
 ## 3. The temporal memory and the mixer
 
 The mixer blends the memory with the current character's embedding, using per-dimension gates. What it passes depends on the character (section 2):
 
-- **Older changes lose 0.10–0.17 at every role in the temporal table** (0.04–0.07 at check markers). The hybrid's memory holds more but loses more: 0.90 → 0.69 at the `.`, and 0.84 → 0.64 at the space before Black chooses.
+- **Older changes lose 0.09–0.17 at every role in the temporal table** (0.04–0.07 at check markers). The hybrid's memory holds more but loses more: 0.90 → 0.69 at the `.`, and 0.84 → 0.64 at the space before Black chooses.
 - **The latest move survives only while it is fresh.** It drops 0.03–0.04 at the spaces right after a move is written, but 0.22–0.27 at the `.`, the move's first character and inside the move.
 - **The gates barely vary by role.** For temporal, memory gate means are 0.11–0.20 (highest inside moves) and current-character gate means 0.10–0.15; for the hybrid, 0.05–0.11 and 0.11–0.20. The selectivity is per dimension, not per character.
 
@@ -131,6 +144,60 @@ Cross-check at the `.` in Karvonen's setting (`mixer.py`):
 
 - **Memory term against current-character term** (each gate × its projected input): the memory term is a median 0.64× the current-character term for temporal (10th–90th percentile 0.32–0.98), and 0.50× for the hybrid (0.25–0.74).
 - **Trained gates:** mean gates are 0.16 (memory) and 0.12 (current character) for temporal, and 0.08 and 0.15 for the hybrid. They start at 0.10 and 0.90.
+
+### Why the mixer passes only part of the board
+
+Four explanations, tested in turn: the board survives but isn't linearly readable; it is lost; the network was trained to treat the memory as unreliable; or the model gets the board by attention instead.
+
+**Decomposition** (`mixer_terms.py`, temporal). The mixer output is the sum of a memory term (`gate_m ⊙ W_m·norm(memory)`) and a current-character term. Each cell is latest move / older changes:
+
+| Role | Memory | Memory term | Current term | Mixer output | Memory, MLP probe | Mixer output, MLP probe |
+| --- | --- | --- | --- | --- | --- | --- |
+| Last move-number digit | 0.60 / 0.69 | 0.46 / 0.56 | 0.39 / 0.53 | 0.44 / 0.55 | 0.67 / 0.76 | 0.60 / 0.68 |
+| `.` | 0.86 / 0.86 | 0.58 / 0.70 | 0.44 / 0.60 | 0.59 / 0.70 | 0.89 / 0.88 | 0.82 / 0.82 |
+| First character of White's move | 0.86 / 0.90 | 0.66 / 0.77 | 0.48 / 0.65 | 0.64 / 0.76 | 0.88 / 0.91 | 0.74 / 0.81 |
+| Space after White's move | 0.95 / 0.76 | 0.92 / 0.60 | 0.82 / 0.56 | 0.91 / 0.60 | 0.96 / 0.80 | 0.94 / 0.72 |
+
+- **The loss is in the memory term itself.** It reads about as well as the full mixer output, so the current character's term doesn't mask the board.
+- **Much of the loss is a nonlinear re-encoding.** At the `.`, an MLP probe reads the mixer output at 0.82 / 0.82 against 0.59 / 0.70 for the linear probe. The memory itself reads 0.89 / 0.88 with an MLP, so some information is lost as well. The multiplicative, input-dependent gates are the likely cause.
+
+**Training on settled memory** (`cycle.py`, the aligned-decay model). Its decay phase trained the whole network with 25% of batches reading settled memory (live NLL 0.2142, against 0.2176 for the aligned temporal model):
+
+| Role | Aligned temporal: memory → mixer → L5 | Aligned-decay: memory → mixer → L5 |
+| --- | --- | --- |
+| `.` | 0.86 / 0.86 → 0.59 / 0.70 → 0.87 / 0.89 | 0.86 / 0.83 → 0.62 / 0.70 → 0.86 / 0.89 |
+| First character of White's move | 0.86 / 0.90 → 0.64 / 0.76 → 0.81 / 0.86 | 0.85 / 0.90 → 0.60 / 0.76 → 0.80 / 0.86 |
+| Space after White's move | 0.95 / 0.76 → 0.91 / 0.60 → 0.87 / 0.89 | 0.95 / 0.76 → 0.88 / 0.60 → 0.87 / 0.89 |
+
+The mixer passes the same share of the board. Settled memory in 25% of decay-phase batches is not enough to change it. Training on settled memory throughout remains untested.
+
+**Scaling the memory term** (`memory_scale.py`). The memory term is multiplied by 2 on every settling pass, and the model is read at its new fixed point:
+
+| | NLL, scale 1 → 2 | `.`: mixer, scale 1 → 2 | `.`: L2 | `.`: L5 |
+| --- | --- | --- | --- | --- |
+| Aligned temporal | 0.2210 → 0.2951 | 0.59 / 0.70 → 0.62 / 0.73 | 0.69 / 0.70 → 0.67 / 0.72 | 0.87 / 0.89 → 0.84 / 0.87 |
+| Aligned-decay | 0.2172 → 0.3050 | 0.62 / 0.70 → 0.65 / 0.72 | 0.67 / 0.71 → 0.66 / 0.71 | 0.86 / 0.89 → 0.83 / 0.88 |
+
+A larger memory term carries hardly more board, and prediction gets much worse. The layers after the mixer depend on the memory term's learned size.
+
+**Attention to the previous character** (`attention.py`). Attention from the focus characters to the character before them (or, as a control, two before) is blocked in every block after the mixer. The board at L5 is then read with probes fit on unablated activations:
+
+| Role | Temporal: normal / previous blocked / two back blocked | Transformer: normal / previous blocked / two back blocked |
+| --- | --- | --- |
+| `.` | 0.87 / 0.89, 0.87 / 0.89, 0.84 / 0.89 | 0.83 / 0.70, 0.56 / 0.58, 0.83 / 0.69 |
+| First character of White's move | 0.81 / 0.86, 0.81 / 0.86, 0.81 / 0.86 | 0.65 / 0.69, 0.28 / 0.41, 0.65 / 0.69 |
+| First character of Black's move | 0.82 / 0.85, 0.76 / 0.86, 0.51 / 0.86 | 0.68 / 0.69, 0.43 / 0.61, 0.43 / 0.69 |
+
+- **The temporal model doesn't rely on the previous character.** Blocking it leaves the board nearly unchanged, and its mean attention to the previous character is 0.01–0.10 per block.
+- **The transformer depends on the previous character.** There is no memory to take that role.
+- **Both models read the latest move at Black's first character from two back.** That position is the last character of White's move. Blocking it lowers latest-move squares (temporal 0.82 → 0.51, transformer 0.68 → 0.43) and leaves older changes unchanged.
+
+**What this settles:**
+
+- **The board is partly re-encoded and partly lost inside the mixer's memory term.** Attention to the decision character doesn't compensate for it.
+- **A mixer that is merely too weak is ruled out:** scaling it up hurts.
+- **Unreliable training memory is not supported,** within the limits of the aligned-decay run.
+- **What remains:** the learned gate and projection, or the task not needing more. Separating these needs a model trained with a different mixer or with settled memory throughout.
 
 ## 4. Layer profiles at decision characters
 
@@ -218,7 +285,10 @@ The transformer reaches 0.850 only at L5. The temporal-over-transformer peak dif
 
 - **Pass 1 → 2:** the depth model needs its second pass for both readouts; the hybrid has them after its first.
 - **Passes 3 and 4 add almost nothing to either readout.**
-- **Why the hybrid barely updates:** its passes restart mostly from L2. Entering each pass, the depth mixer's previous-pass term is 0.48–0.50× its fresh-start term in the hybrid, and 0.79–0.85× in the depth model.
+- **Why the hybrid barely updates between passes:**
+  - Each pass after the first starts from `W_prev·norm(L6 of the previous pass) + W_fresh·norm(L2)`. L2 is the same in every pass and, in the hybrid, already contains the temporal memory.
+  - The previous-pass term is a median 0.48–0.50× the size of the fresh-start term in the hybrid, and 0.79–0.85× in the depth model.
+  - So each hybrid pass is pulled about 2:1 back toward the same L2 state. A size ratio says nothing about information by itself; the causal check is in section 9: a first-pass edit has no effect in the hybrid and a strong effect in the depth model.
 
 ## 9. Causal checks
 
@@ -241,7 +311,7 @@ Each condition is paired with a random direction of the same norm.
 
 - **Side to move is computed from the text at L2–L3.** Edits at the mixer do nothing, although the probe reads side to move perfectly there.
 - **A flip rate near 0.50 means only one direction flips.**
-- **Hybrid first-pass edits have no effect even at ×16** (40 spaces), although random pushes there do change the output. Each pass restarts mostly from the unedited L2 (section 8).
+- **Hybrid first-pass edits have no effect even at ×16** (40 spaces), although random pushes there do change the output. Each later pass weights the unedited L2, which already holds the correct side to move, about twice as much as the edited previous pass (section 8).
 
 **Piece removal** (Karvonen's intervention; 150 held-out decision characters, 100 for the hybrid). Each position's original greedy move uses the deleted piece, so the unedited success rate is 0.
 
@@ -275,7 +345,7 @@ Each condition is paired with a random direction of the same norm.
 ## Open questions
 
 - **Other characters:** the memory swap and steering were run only at decision characters. We don't know whether the partial boards at other characters are used.
-- **How L2–L5 rebuild the board at a decision:** re-reading the text, or attending to past move endings, where the latest-move information is sharp.
+- **How the temporal model rebuilds older changes at a decision:** not from the previous character (section 3). Whether it reads them from earlier move endings, where each move's change is sharp, is untested.
 - **What the mixer's blur makes room for:** whether the mixer output holds alternative moves as well as the one chosen.
 
 ## Limitations

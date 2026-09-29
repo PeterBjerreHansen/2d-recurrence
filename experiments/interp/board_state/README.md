@@ -20,6 +20,7 @@ Settled memory equals live memory (see `experiments/ablations/live_warm_start/al
 | `hybrid` | `hybrid_20B` step 195,504 | 4 | `Tmix` and the looped core |
 | `karvonen` | `adamkarvonen/chess_llms`, `lichess_8layers_ckpt_no_optimizer.pt` | 1 | same architecture and data, 61.4B training characters |
 | `random_init` | `transformer_20B` step 0 | 1 | control for what a probe reads from untrained features |
+| `temporal_decay` | `live_warm_start/results/aligned_decay_temporal/ckpt-step195504.pt` | 1 | temporal model whose decay phase trained the whole network with 25% of batches on settled memory |
 
 The temporal arm is the live-aligned export, because the as-trained reader misreads settled memory (see the [20B report](../../long_runs/20B_recurrence/REPORT.md)). Each site records the transformer blocks applied so far, so looped and single-pass arms can be compared by compute as well as by layer.
 
@@ -43,6 +44,9 @@ The site executor is `interp/sites.py`. `tests/test_interp.py` checks that it re
 | `figures.py` | Layer curves of the board probes | `report_figures/probe_curves.png` (tracked) |
 | `cycle.py` | The board at every character of the move cycle: in the memory, after the mixer, and at L2, L5 and L7; mixer gates per character role | `cycle/<arm>.json` |
 | `mixer.py` | How much of the board survives the temporal mixer; the size of each mixer input's term; the depth mixer's previous-iteration versus fresh-start terms | `mixer/<arm>.json` |
+| `mixer_terms.py` | Is the board lost in the mixer, or only hard to read? Probes on the memory term and current-character term separately, linear and MLP | `mixer_terms/<arm>.json` |
+| `memory_scale.py` | What if the mixer passed more memory? NLL and board readouts with the memory term scaled | `memory_scale/<arm>.json` |
+| `attention.py` | Does a character get the board by attending to the previous one? Attention weights, and the board with that attention blocked | `attention/<arm>.json` |
 | `update.py` | Where the latest move is applied: probes for the board before and after it | `update/<arm>.json` |
 | `decision.py` | Where the move choice becomes readable: from- and to-square probes, and the logit lens | `decision/<arm>.json` |
 | `swap.py` | Does the model use the board in its memory? Swap in another game's memory over the last *k* characters | `swap/<arm>.json` |
@@ -68,6 +72,9 @@ uv run python -m experiments.interp.board_state.probe
 uv run --with matplotlib python -m experiments.interp.board_state.figures
 uv run python -m experiments.interp.board_state.cycle
 uv run python -m experiments.interp.board_state.mixer
+uv run python -m experiments.interp.board_state.mixer_terms
+uv run python -m experiments.interp.board_state.memory_scale
+uv run python -m experiments.interp.board_state.attention
 uv run python -m experiments.interp.board_state.update
 uv run python -m experiments.interp.board_state.decision
 uv run python -m experiments.interp.board_state.swap --arm temporal --pairs 200
