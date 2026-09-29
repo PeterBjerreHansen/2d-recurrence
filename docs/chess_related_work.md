@@ -10,9 +10,9 @@ Surveyed 2026-09-29 for the [move-target plan](engine_policy_plan.md). A targete
 | State-tracking benchmarks (Chess-World-Model) | move tokens | board | transformer vs linear RNNs |
 | Searchless chess (Ruoss, Chessformer, Maia) | board | move / values | transformer or CNN |
 | Human-move models from history (Allie) | move tokens | move, time, value | transformer |
-| **This plan** | **move text** | **move distribution: legal, then engine-weighted** | **transformer vs temporal, depth and joint recurrence** |
+| **This plan** | **move tokens** | **next move: human, legal, or value of every move** | **transformer vs temporal, depth and joint recurrence** |
 
-We found no work that compares recurrence **across tokens** with recurrence **within a token** on chess, or that trains a model to read game text and output a policy distilled from an engine.
+We found no work that compares recurrence **across tokens** with recurrence **within a token** on chess, or that trains a model on the game history to output engine values for every move.
 
 ## 1. Language models on chess text: state tracking and world models
 
@@ -69,8 +69,8 @@ All four study Leela, a transformer over board squares.
 
 ## What this changes in the plan
 
-- **Adopt ChessBench's 1,968-move vocabulary** (queen promotions explicit), so its labels map directly.
-- **Add uniformly random legal games as an out-of-distribution test.** Following Chess-World-Model, this separates arms after in-distribution metrics saturate.
+- **Adopt ChessBench's 1,968-move vocabulary** (queen promotions explicit), as input tokens and output vocabulary, so its labels map directly.
+- **Use uniformly random legal games.** Following Chess-World-Model, they separate arms after in-distribution metrics saturate. The plan mixes them into training and keeps held-out random games as a separate test set.
 - **Position stage 2 against Ruoss et al.** directly. History input fixes their repetition blindness, and it makes the model reconstruct the board itself.
 - **Use Allie as the reference design** for a history-in, policy-out model.
 - **Use Chess-World-Model and Merrill et al.** for the claim that recurrence across tokens should help chess state tracking. Both concern recurrence across tokens; neither covers loops within a token or a decision target.
