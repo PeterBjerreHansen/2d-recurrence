@@ -39,7 +39,7 @@ Implementation status: stages 0 and 1 are implemented and locally verified, incl
 
 Use a fork of [Karvonen's train_ChessGPT](https://github.com/adamkarvonen/train_ChessGPT) as the starting codebase. Record the upstream commit and retain its license. Keep the chess model, training loop, character vocabulary, preparation script, block-aligned batch loader, sampling support, and configuration mechanism. Remove unrelated datasets, GPT-2 import paths, and unused notebooks or examples after checking that the retained path does not depend on them. Make small, traceable changes rather than rewriting the pipeline.
 
-Create `baseline-chessgpt` and `mvp-2d-recurrence` from the common cleaned baseline commit. The ordinary baseline uses eight layers, matching the current 1/1/4/1/1 partition in Stage 3. Freeze its training code and configuration after smoke tests, and continue recurrent development on the MVP branch.
+Create `baseline-chessgpt` and `main` from the common cleaned baseline commit. The ordinary baseline uses eight layers, matching the current 1/1/4/1/1 partition in Stage 3. Freeze its training code and configuration after smoke tests, and continue recurrent development on the MVP branch.
 
 ### Data defaults
 
