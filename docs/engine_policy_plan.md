@@ -76,7 +76,7 @@ All losses apply at positions with a target, on the final pass only.
 
 ### Training protocol
 
-- **Updates:** 400 rows of 256 tokens (~100k tokens, as the 20B study's 100 × 1,023 characters). The micro-batch size (20 by default) only trades speed for memory; evaluation always covers 1,000 dev games, 100 of them live.
+- **Updates:** 400 rows of 256 tokens (~100k tokens, as the 20B study's 100 × 1,023 characters). The micro-batch size (50 by default, measured) only trades speed for memory; evaluation always covers 1,000 dev games, 100 of them live.
 - **Optimiser:** the 20B settings (AdamW 3e-4 to 3e-5, warmup–stable–decay: 3% warmup, the last 10% decaying). The learning rate is checked on the transformer per stage (1e-4, 3e-4, 1e-3) and applied to every arm.
 - **Update support {0, 1, 2, 3}, gap-free and broad throughout; deepen by moving the centre, never by concentrating the mass** (20B report). The probabilities of max(U_T, U_D) = 0, 1, 2, 3 are (0.25, 0.35, 0.25, 0.15), then (0.15, 0.30, 0.30, 0.25) from 25% of the run, then (0.10, 0.25, 0.35, 0.30) from 50%. Hybrid puts 80% of each count on the diagonal. Stage 2 keeps the final mixture.
 - **Temporal-only gets warm-start batches** (a quarter of each update's micro-batches) in the decay phase, as the 20B report recommends. This is a recipe difference, stated as one.
@@ -188,7 +188,8 @@ Margins and thresholds are set on the development sets before the main runs.
 
 ## Cost
 
-- **Stage-1 pilot run:** 5,944 updates; about $1 each at the 20B study's rate (about $1.7 per billion tokens per arm). GPU time per update is measured by the first run.
+- **Measured on a Verda A100 80 GB spot instance** ($0.89/h; EPYC 7643, 22 vCPUs), at the deepest update mixture, without evaluation: one hybrid run takes 0.44 s per update at micro-batch 50 (0.53 s at 20, 0.39 s at 400; 7 GB at 50). Four arms side by side take 0.98 (transformer) to 1.63 s (hybrid) per update each, about as long as running them one after another: the GPU, not the CPU, is the limit.
+- **Stage-1 pilot run:** 5,944 updates, at most about 0.75 hours alone on an A100, so under $1 each on spot pricing; the five stage-1 runs about $3.
 - **Builds:** stage 1 at 500M positions in 55 minutes on 8 workers; Leela conversion about 2,100 positions/s per process (1.7 hours per 100M on 8 cores); the Leela download runs at 0.4–3.7 MB/s.
 - **Storage:** 30 GB for the pilot stage-1 dataset, ~120 GB for the full one; ~11 GB per 100M Leela positions (estimated).
 

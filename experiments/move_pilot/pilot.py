@@ -52,7 +52,7 @@ SEEDS = (1337, 2024)
 # 400 rows of 256 tokens per update (~100k tokens, as the 20B study's 100 x 1,023 characters),
 # accumulated over micro-batches whose size only affects speed and memory.
 ROWS_PER_UPDATE = 400
-MICRO_BATCH = 20
+MICRO_BATCH = 50   # measured on an A100: 20 is 10-25% slower, 100 and above barely faster
 # Evaluation populations, in dev games, whatever the micro-batch size.
 EVAL_GAMES = 1000
 LIVE_GAMES = 100
@@ -263,15 +263,15 @@ def bench(names, micro_batches, updates, threads=None, device=None):
                 results.append(dict(name=name, micro_batch=micro_batch, error=f'exit code {process.returncode}'))
                 continue
             results.append(dict(name=name, micro_batch=micro_batch, **bench_summary(directories[name])))
-    print(f'{len(names)} runs side by side; hours per stage-1 pilot run are at the deepest mixture')
-    print(f"{'run':<22}{'micro':>6}{'s/update':>10}{'h/run':>8}{'peak GB':>9}")
+    print(f'{len(names)} runs side by side, at the deepest update mixture')
+    print(f"{'run':<22}{'micro':>6}{'s/update':>10}{'h/1k upd':>10}{'peak GB':>9}")
     for result in results:
         if 'error' in result:
             print(f"{result['name']:<22}{result['micro_batch']:>6}  {result['error']}")
             continue
-        hours = result['seconds_per_update'] * updates_for(STAGE1) / 3600
+        hours = result['seconds_per_update'] * 1000 / 3600
         memory = f"{result['peak_memory_gb']:.1f}" if result['peak_memory_gb'] is not None else '-'
-        print(f"{result['name']:<22}{result['micro_batch']:>6}{result['seconds_per_update']:>10.2f}{hours:>8.2f}{memory:>9}")
+        print(f"{result['name']:<22}{result['micro_batch']:>6}{result['seconds_per_update']:>10.2f}{hours:>10.2f}{memory:>9}")
     return results
 
 

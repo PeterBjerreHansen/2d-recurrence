@@ -145,5 +145,5 @@ def test_the_queue_keeps_at_most_its_slots_running(datasets, monkeypatch):
     monkeypatch.setattr(pilot.subprocess, 'Popen', Process)
     codes = pilot.queue(['legal_transformer', 'legal_temporal', 'legal_depth'], slots=2, threads=3, poll_seconds=0)
     assert codes == dict.fromkeys(['legal_transformer', 'legal_temporal', 'legal_depth'], 0) and peak[0] == 2
-    assert commands[0][3:] == ['run', 'legal_transformer', '--micro-batch', '20', '--threads', '3']
+    assert commands[0][3:] == ['run', 'legal_transformer', '--micro-batch', '50', '--threads', '3']
     assert (datasets / 'results' / 'legal_depth' / 'console.log').exists()
