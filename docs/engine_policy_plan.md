@@ -1,6 +1,6 @@
 # Move-target training: plan
 
-> **Status:** steps 1–3 are implemented: the dataset builders and loader (`moves/build_stage1.py`, `moves/build_leela.py`, `moves/rows.py`) and training on them (`data_format='moves'`). No dataset has been built at full size, and no pilot has run.
+> **Status:** steps 1–3 are implemented: the dataset builders and loader (`moves/build_stage1.py`, `moves/build_leela.py`, `moves/rows.py`) and training on them (`data_format='moves'`). The pilot runner is `experiments/move_pilot/pilot.py`. The pilot datasets are being built; no pilot has run.
 >
 > This document is the single source of truth for the `engine-policy` branch. Read [Pitfalls](#pitfalls) before implementing anything. Record every decision that changes the design under [Decisions](#decisions), with its reason; don't edit frozen items silently.
 
@@ -154,7 +154,7 @@ Stockfish labels the evaluation panel, with values from the mover's perspective:
 ### Training protocol
 
 - **Optimiser:** the 20B study's AdamW settings, with the same small learning-rate check for each objective on the transformer, applied to every arm.
-- **Update support:** gap-free, with a broad mixture throughout.
+- **Update support:** gap-free and broad throughout; deepen by moving the centre, never by concentrating the mass (the 20B report's recommendation). The concrete schedule is set in the pilot.
 - **Warm-start batches in the decay phase: temporal-only.** The trainer implements them for temporal only (`train.py`), and the 20B hybrid ran live at its training-graph quality without them. This is a difference between training recipes, and is stated as one.
 - **Live evaluation during training.**
 - **Seeds:** three per arm and condition.
@@ -271,7 +271,8 @@ For anyone implementing or analysing on this branch:
 
 - **Data:** build the 0.5B stage-1 dataset and the 100M-position Leela dataset.
 - **Stage 1:** small from-scratch runs of all four arms, human and legal, one seed, plus a second seed of one arm to estimate seed variance.
-- **Stage 2:** a short engine stage continued from both the legal and the human checkpoints.
+- **Stage 2:** a short engine stage (about 50M Leela positions) continued from both the legal and the human checkpoints.
+- **Runner:** `experiments/move_pilot/pilot.py` (`list`, `run <name>`), with the defaults logged under Decisions.
 - The old 5B checkpoints are character models and can't be reused.
 
 **Pass criteria** (none requires an arm to win):
@@ -300,6 +301,7 @@ For anyone implementing or analysing on this branch:
 
 **Open until the pilot:**
 - batch size and update count;
+- the update-support schedule;
 - learning rate for each objective;
 - loss weighting;
 - the Leela archive range;
@@ -390,6 +392,13 @@ For anyone implementing or analysing on this branch:
   - **Panel budgets and margins are set on a development panel,** not in the training pilot.
   - **Seed-level inference:** the mean of paired per-seed contrasts, with sign agreement across seeds.
   - Evaluation during training runs batch by batch; it had sent `eval_iters × batch_size` training rows through one forward pass. The Leela converter skips records with no probability mass or an out-of-range played move, and empty game stores load.
+- **2026-09-30 — Pilot defaults** (`experiments/move_pilot/pilot.py`).
+  - **Updates:** 400 rows of 256 tokens (about 100k tokens, as the 20B study's 100 × 1,023 characters), in 20 micro-batches of 20 rows. One pass over the stage-1 dataset per run.
+  - **Optimiser:** the 20B settings (AdamW 3e-4 to 3e-5, WSD), with 3% warmup and the last 10% decaying. The learning-rate check runs the transformer at 1e-4, 3e-4 and 1e-3 for a fifth of a run, per objective; the engine check continues from the legal transformer.
+  - **Update support {0, 1, 2, 3}:** the probabilities of max(U_T, U_D) = 0, 1, 2, 3 are (0.25, 0.35, 0.25, 0.15), then (0.15, 0.30, 0.30, 0.25) from 25% of the run, then (0.10, 0.25, 0.35, 0.30) from 50%. Hybrid puts 80% of each count on the diagonal, as in the 20B study. Stage 2 keeps the final mixture throughout.
+  - **Temporal** gets warm-start batches (a quarter of each update's micro-batches) in the decay phase only.
+  - **Seeds** change only the initial weights; the second seed runs legal hybrid.
+  - Reason: the 20B recipe where it worked, and the 20B report's recommendations (a gap-free, broad support deepened by moving the centre; warm starts in the decay) where it didn't. `build_update_probability_matrix` now accepts any increasing support starting at zero.
 
 
 ## Cost

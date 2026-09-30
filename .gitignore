@@ -15,3 +15,5 @@ data/smoke*/
 wandb/
 experiments/long_runs/5B_axis/runpod_batch_sweep_*/
 experiments/long_runs/5B_axis/runpod_live_backups/
+data/stage1_*/
+data/leela*/

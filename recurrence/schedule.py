@@ -164,12 +164,12 @@ def build_update_probability_matrix(update_support, recurrence_mode, update_prob
                                     hybrid_diagonal_mass=None):
     """Build a joint update matrix from max-update-count probabilities.
 
-    The current recurrence contract explicitly supports update_support
-    ``[0, 1, 3]``. Physical pass counts remain derived from the selected pair.
+    ``update_support`` must be increasing and start at zero, such as ``[0, 1, 3]``
+    or ``[0, 1, 2, 3]``. Physical pass counts remain derived from the selected pair.
     """
     update_support = _validate_update_support(update_support)
-    if update_support != (0, 1, 3):
-        raise ValueError('Update probability constructors currently require update_support [0, 1, 3]')
+    if update_support[0] != 0 or list(update_support) != sorted(update_support):
+        raise ValueError('Update probability constructors require an increasing update_support starting at zero')
     if recurrence_mode not in {'hybrid', 'temporal', 'depth'}:
         raise ValueError("recurrence_mode must be one of 'hybrid', 'temporal', or 'depth'")
     if hybrid_diagonal_mass is not None and recurrence_mode != 'hybrid':
@@ -198,7 +198,7 @@ def build_update_probability_matrix(update_support, recurrence_mode, update_prob
             raise ValueError('hybrid_diagonal_mass must be a finite number between zero and one')
         diagonal_mass = float(hybrid_diagonal_mass)
         matrix[0][0] = update_probabilities[0]
-        for count_index in (1, 2):
+        for count_index in range(1, len(update_support)):
             count = update_support[count_index]
             bucket = update_probabilities[count_index]
             candidates = [(i, j) for i, temporal in enumerate(update_support)
