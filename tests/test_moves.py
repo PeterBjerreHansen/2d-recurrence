@@ -1,5 +1,6 @@
 """Move tokens, parsing, the legality loss and the engine teacher."""
 
+import math
 import os
 from pathlib import Path
 import random
@@ -15,7 +16,7 @@ import torch.nn.functional as F
 
 from moves.games import MAX_PLIES, parse_row, random_game
 from moves.objectives import LegalTargets
-from moves.teacher import CHECKMATE, EXACT, LOWER_BOUND, RULE_DRAW, UPPER_BOUND, Teacher, history_key
+from moves.teacher import CHECKMATE, EXACT, LOWER_BOUND, RULE_DRAW, UPPER_BOUND, Teacher
 from moves.values import mate_after_move, q_from_centipawns, q_from_mate
 from moves.vocab import GAME_START, MOVE_COUNT, MOVES, PAD, id_move, legal_ids, move_id
 from tests.move_fakes import MaterialEngine
@@ -150,6 +151,20 @@ def test_legal_loss_is_mean_binary_cross_entropy_at_supervised_positions_only():
     assert metrics['positions'] == 2 and metrics['legal_moves'] == 5
 
 
+def test_exact_set_needs_the_threshold_and_separation_only_the_ranking():
+    targets = LegalTargets(**_sparse([0, 1], [[1, 4], [0, 2, 6]]))
+    ranked_below_threshold = torch.full((1, 2, 7), -5.0)
+    ranked_below_threshold[0, 0, [1, 4]] = -1.0
+    ranked_below_threshold[0, 1, [0, 2, 6]] = -1.0
+    summary = LegalTargets.summary('dev', targets.metrics(ranked_below_threshold))
+    assert summary['dev_separation'] == 1 and summary['dev_exact_set'] == 0
+    assert summary['dev_precision'] == 0 and summary['dev_recall'] == 0
+    summary = LegalTargets.summary('dev', targets.metrics(ranked_below_threshold + 3))
+    assert summary['dev_separation'] == summary['dev_exact_set'] == summary['dev_recall'] == 1
+    rate = 5 / 14
+    assert summary['dev_constant_bce'] == pytest.approx(-(rate * math.log(rate) + (1 - rate) * math.log(1 - rate)))
+
+
 # --- values and the teacher ---
 
 def test_value_scale_orders_mates_outside_centipawns():
@@ -220,7 +235,6 @@ def test_repetition_history_changes_the_label_of_the_same_position():
     for uci in shuffle * 2:
         repeated.push_uci(uci)
     assert repeated.fen().split(' ')[:4] == fresh.fen().split(' ')[:4]
-    assert history_key(repeated) != history_key(fresh)
     teacher = Teacher(MaterialEngine(), 5)
     move = move_id(chess.Move.from_uci('g1f3'))
     ids, labels = teacher.label(repeated)

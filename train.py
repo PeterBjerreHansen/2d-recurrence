@@ -417,6 +417,9 @@ def train(config):
         sets = [('train', row_chunks(data.training_rows(0, size)))]
         sets += [(split, row_chunks(np.arange(min(size, data.rows(split))))) for split in data.eval_splits]
 
+        def schedule_rng(number):
+            return random.Random(config['recurrence_seed'] + 10000 * (number + 1))
+
         def training_graph(split, chunks, schedule_rng):
             for chunk in chunks:
                 batch = row_batch(split, chunk)
@@ -434,13 +437,15 @@ def train(config):
 
         started = time.perf_counter()
         for number, (split, chunks) in enumerate(sets):
-            schedule_rng = random.Random(config['recurrence_seed'] + 10000 * (number + 1))
-            result.update(move_metrics(split, training_graph(split, chunks, schedule_rng)))
+            result.update(move_metrics(split, training_graph(split, chunks, schedule_rng(number))))
         result['evaluation_seconds'] = time.perf_counter() - started
         started = time.perf_counter()
         first = data.eval_splits[0]
-        # The first rows of the training-graph evaluation split, so the two are paired.
+        # Live decoding covers the first rows of the first evaluation split. The training graph is
+        # also scored on exactly those rows, with the same schedules, so the two are paired.
         live_chunks = row_chunks(np.arange(min(config['live_eval_batches'] * config['batch_size'], data.rows(first))))
+        if live_depths:
+            result.update(move_metrics(f'{first}_live_subset', training_graph(first, live_chunks, schedule_rng(1))))
         for depth_steps in live_depths:
             result.update(move_metrics(f'live_J{depth_steps}_{first}', live(first, live_chunks, depth_steps)))
         if live_depths:

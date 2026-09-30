@@ -36,15 +36,13 @@ def _policy_record(seed, plies):
         w = rng.random(count) ** 4
         weights.append(w / w.sum())
     record.weights = np.concatenate(weights).astype(np.float16)
-    record.values = rng.uniform(-1, 1, (len(record.plies), 2)).astype(np.float16)
-    record.visits = rng.integers(50, 800, len(record.plies)).astype(np.uint16)
     return record
 
 
-def _write(directory, split_games, *, sources=('human', 'random'), policy=False):
-    splits = {split: pack(directory, split, games, context=CONTEXT, sources=sources, policy=policy,
+def _write(directory, split_games, *, sources=('human', 'random'), weighted=False):
+    splits = {split: pack(directory, split, games, context=CONTEXT, sources=sources, weighted=weighted,
                           one_game_per_row=split != 'train') for split, games in split_games.items()}
-    write_dataset_manifest(directory, context=CONTEXT, sources=sources, targets='engine' if policy else 'legal',
+    write_dataset_manifest(directory, context=CONTEXT, sources=sources, targets='engine' if weighted else 'legal',
                            splits=splits, eval_splits=[s for s in split_games if s != 'train'])
     return RowData(directory, CONTEXT)
 
@@ -94,7 +92,7 @@ def test_rows_hold_whole_games_and_their_move_lists(tmp_path):
 
 def test_policy_rows_keep_renormalised_weights(tmp_path):
     records = [_policy_record(seed, plies=20) for seed in range(4)]
-    data = _write(tmp_path, {'train': records, 'dev': records[:1]}, sources=('leela',), policy=True)
+    data = _write(tmp_path, {'train': records, 'dev': records[:1]}, sources=('leela',), weighted=True)
     rows = np.arange(data.rows('train'))
     raw = data.build('train', rows, objective='engine').targets
     expected = []
@@ -384,12 +382,13 @@ def test_live_evaluation_is_paired_with_the_training_graph(stage1, tmp_path, obj
     from train import train
     _, directory = stage1
     output = tmp_path / 'run'
-    train(_config(directory, output, objective, max_iters=2, live_eval_depths=[2],
-                  **_recurrent('depth', eval_u_d=1)))
+    # The training graph scores 4 dev games, live decoding the first 2; the pair is the live subset.
+    train(_config(directory, output, objective, max_iters=2, eval_iters=2, live_eval_batches=1,
+                  live_eval_depths=[2], **_recurrent('depth', eval_u_d=1)))
     evaluation = [r for r in _records(output) if r['event'] == 'evaluation'][-1]
-    assert evaluation['live_J2_human_dev_loss'] == pytest.approx(evaluation['human_dev_loss'], rel=1e-4)
+    assert evaluation['live_J2_human_dev_loss'] == pytest.approx(evaluation['human_dev_live_subset_loss'], rel=1e-4)
     key = 'accuracy' if objective == 'played' else 'exact_set'
-    assert evaluation[f'live_J2_human_dev_{key}'] == pytest.approx(evaluation[f'human_dev_{key}'])
+    assert evaluation[f'live_J2_human_dev_{key}'] == pytest.approx(evaluation[f'human_dev_live_subset_{key}'])
 
 
 @pytest.mark.parametrize('overrides, message', [

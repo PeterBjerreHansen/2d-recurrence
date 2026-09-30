@@ -19,9 +19,8 @@ python-chess:
 - the played move is legal, and leads to the next record's board.
 
 Targets per position are Leela's search distribution over the legal moves
-(``probabilities``, from ~250-700 visits in test80), plus its values for the
-position and for the best and played moves, all from the side to move's view:
-``q`` is win minus loss and ``d`` the draw probability.
+(``probabilities``, from ~250-700 visits in test80). The records' values and
+visit counts are not kept; the archives can be re-read if an analysis needs them.
 """
 
 from dataclasses import dataclass
@@ -44,7 +43,6 @@ V6 = np.dtype([
     ('played_idx', '<u2'), ('best_idx', '<u2'), ('policy_kld', '<f4'), ('reserved', '<u4')])
 assert V6.itemsize == 8356
 
-VALUE_FIELDS = ('root_q', 'root_d', 'best_q', 'best_d', 'played_q', 'played_d', 'result_q', 'result_d')
 _PIECES = 'PNBRQKpnbrqk'   # planes 0-5: side to move's pieces, 6-11: the opponent's
 
 
@@ -57,8 +55,6 @@ class LeelaGame:
     plies: np.ndarray            # [n] our move ids
     legal: list                  # per position: sorted legal move ids (uint16)
     probabilities: list          # per position: Leela's search probability of each legal move (float32)
-    values: np.ndarray           # [n] structured, VALUE_FIELDS plus visits, from the side to move's view
-    adjudicated: bool
 
 
 def read_archive(path):
@@ -143,8 +139,4 @@ def convert_game(records):
             raise SkippedGame(f'record {index}: the played move is illegal')
         plies.append(MOVE_TO_ID[played.uci()])
         board.push(played)
-    values = np.zeros(len(records), dtype=[(name, '<f4') for name in VALUE_FIELDS] + [('visits', '<u4')])
-    for name in VALUE_FIELDS + ('visits',):
-        values[name] = records[name]
-    adjudicated = bool(int(records['invariance_info'][0]) >> 5 & 1)
-    return LeelaGame(np.array(plies, dtype=np.uint16), legal_sets, probabilities, values, adjudicated)
+    return LeelaGame(np.array(plies, dtype=np.uint16), legal_sets, probabilities)

@@ -38,17 +38,15 @@ def game_record(game, limit=MAX_PLIES):
     """A ``GameRecord`` of a converted Leela game, truncated at ``limit`` plies."""
     n = min(len(game.plies), limit)
     legal, probabilities = game.legal[:n], game.probabilities[:n]
-    values = np.stack([game.values['root_q'][:n], game.values['root_d'][:n]], axis=1).astype(np.float16)
     return GameRecord(0, game.plies[:n], np.array([len(moves) for moves in legal], dtype=np.uint8),
-                      np.concatenate(legal).astype(np.uint16), np.concatenate(probabilities).astype(np.float16),
-                      values, np.minimum(game.values['visits'][:n], np.iinfo(np.uint16).max).astype(np.uint16))
+                      np.concatenate(legal).astype(np.uint16), np.concatenate(probabilities).astype(np.float16))
 
 
 def convert_archive(task):
     """Convert one archive into game stores ``{stores}/{archive}/{split}``; return its statistics."""
     archive, stores, split_rule, limit = task
     archive = Path(archive)
-    writers = {split: GameStoreWriter(Path(stores) / archive.stem / split, policy=True)
+    writers = {split: GameStoreWriter(Path(stores) / archive.stem / split)
                for split in ('train', 'dev', 'test')}
     stats = dict(archive=archive.name, sha256=file_hash(archive), games=Counter(), positions=Counter(),
                  truncated=0, skipped=Counter())
@@ -110,10 +108,10 @@ def build(archives, out, *, positions, eval_games=20000, context=256, seed=0, wo
                 taken += 1
                 yield store.record(index, 0)
 
-    splits = {'train': pack(out, 'train', training_games(), context=context, sources=SOURCES, policy=True)}
+    splits = {'train': pack(out, 'train', training_games(), context=context, sources=SOURCES, weighted=True)}
     for split in ('dev', 'test'):
         splits[f'leela_{split}'] = pack(out, f'leela_{split}', evaluation_games(split), context=context,
-                                        sources=SOURCES, policy=True, one_game_per_row=True)
+                                        sources=SOURCES, weighted=True, one_game_per_row=True)
     shutil.rmtree(stores)
     try:
         commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
@@ -128,7 +126,7 @@ def build(archives, out, *, positions, eval_games=20000, context=256, seed=0, wo
                    archives=[dict(name=c['archive'], sha256=c['sha256']) for c in conversions],
                    positions=positions, eval_games=eval_games, seed=seed, available_training_positions=available,
                    truncated_at_plies=limit, games_truncated=sum(c['truncated'] for c in conversions),
-                   games_skipped=dict(skipped), values='root_q, root_d (side to move); visits',
+                   games_skipped=dict(skipped),
                    split_rule=dict(hash='sha256 of the uint16 ply ids; first 8 bytes little-endian, modulo 1000',
                                    test_per_mille=test_per_mille, dev_per_mille=dev_per_mille)))
 

@@ -1,10 +1,10 @@
 # Agent guide: `engine-policy` branch
 
-This branch retrains the recurrence architectures (transformer, temporal-only, depth-only, hybrid) on chess with **move tokens** and **move targets**: the played move, the legal set, and Leela's search distribution. Most of the repository still describes the **character-level** setup on `main`. Read this file first.
+This branch retrains the recurrence architectures (transformer, temporal-only, depth-only, hybrid) on chess with **move tokens** and two **move targets**: the legal set (stage 1, shallow), then Leela's search distribution (stage 2, deep). The question is whether the target decides which recurrence axis pays off. Most of the repository still describes the **character-level** setup on `main`. Read this file first.
 
 ## Start here
 
-- [`docs/engine_policy_plan.md`](docs/engine_policy_plan.md) is the single source of truth for this branch: the question, design, primary analyses, **Pitfalls** and the **Decisions** log.
+- [`docs/engine_policy_plan.md`](docs/engine_policy_plan.md) is the single source of truth for this branch: the question, design, analyses, deferred controls, **Pitfalls** and **Decisions**.
 - [`docs/chess_related_work.md`](docs/chess_related_work.md) covers related work.
 
 ## Which docs apply
@@ -19,10 +19,10 @@ This branch retrains the recurrence architectures (transformer, temporal-only, d
 
 1. **Say "ply", not "move",** for one side's move, in code and results. Token budgets count human plies, random plies, supervised positions and row tokens separately.
 2. **The training graph is not live execution** for temporal and hybrid models. Their gap is a result, not a bug. Never change recurrence semantics to make them agree; the correctness checks are listed in the plan's Pitfalls.
-3. **Each output head answers only its own question.** Never read legality from a value head, or move quality from a legality head.
-4. **Engine values are from the perspective of the player making the move.** Scores of the position after a move must be negated.
+3. **Each output head answers only its own question.** Never read legality from an engine head, or move quality from a legality head.
+4. **Panel values (Stockfish) are from the perspective of the player making the move.** Scores of the position after a move must be negated.
 5. **Make changes additive.** Put new code in new modules and config options, and keep the character-level path working. If a change alters shared behaviour, update the contract doc in the same commit.
-6. **Log design changes** in the plan's Decisions section, with the reason. Fold reviews into the plan instead of committing them beside it.
+6. **Log design changes** in the plan's Decisions section, with the reason, and remove decisions that no longer hold. Fold reviews into the plan instead of committing them beside it.
 7. **Git:**
    - stage explicit paths, never `git add -A`;
    - never commit data, symlinks, or anything under a `results` path. Tracked `results` symlinks once destroyed the 20B checkpoints;

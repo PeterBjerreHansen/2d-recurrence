@@ -16,6 +16,7 @@ reported metrics.
 """
 
 from dataclasses import dataclass, fields
+import math
 
 import torch
 import torch.nn.functional as F
@@ -78,26 +79,27 @@ class LegalTargets(_SparseTargets):
         legal_loss = torch.where(target, F.softplus(-z), 0).sum(-1)
         illegal_loss = torch.where(target, 0, F.softplus(z)).sum(-1)
         predicted = z > 0
-        # Exact set: the |L| highest-scoring moves are exactly the legal moves.
-        ranks = z.argsort(-1, descending=True).argsort(-1)
-        exact = ((ranks < legal_count[:, None]) == target).all(-1)
         size = z.size(-1)
-        prevalence = legal_count.float() / size
-        constant = -(prevalence * prevalence.log() + (1 - prevalence) * (1 - prevalence).log())
-        return dict(positions=float(self.count),
+        # Separation: every legal move scores above every illegal one (a ranking diagnostic; it
+        # ignores the 0.5 threshold).
+        separated = torch.where(target, z, torch.inf).amin(-1) > torch.where(target, -torch.inf, z).amax(-1)
+        return dict(positions=float(self.count), scored_moves=float(self.count * size),
                     legal_bce=float((legal_loss / legal_count).sum()),
                     illegal_bce=float((illegal_loss / (size - legal_count)).sum()),
                     bce=float(((legal_loss + illegal_loss) / size).sum()),
-                    constant_bce=float(constant.sum()),
                     true_positives=float((predicted & target).sum()),
                     predicted_positives=float(predicted.sum()),
                     legal_moves=float(target.sum()),
-                    exact_set=float(exact.sum()))
+                    exact_set=float((predicted == target).all(-1).sum()),
+                    separation=float(separated.sum()))
 
     @staticmethod
     def summary(name, sums):
         result = {f'{name}_{key}': sums[key] / sums['positions']
-                  for key in ('legal_bce', 'illegal_bce', 'constant_bce', 'exact_set')}
+                  for key in ('legal_bce', 'illegal_bce', 'exact_set', 'separation')}
+        # The best constant predictor: one legal rate for every move of every position.
+        rate = sums['legal_moves'] / sums['scored_moves']
+        result[f'{name}_constant_bce'] = -(rate * math.log(rate) + (1 - rate) * math.log(1 - rate))
         result[f'{name}_precision'] = sums['true_positives'] / max(sums['predicted_positives'], 1)
         result[f'{name}_recall'] = sums['true_positives'] / sums['legal_moves']
         return result

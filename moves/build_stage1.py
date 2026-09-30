@@ -189,12 +189,12 @@ def build(source, out, *, positions, random_fraction=0.2, eval_games=20000, cont
             for chunk in imap(_records, _chunks(games, chunk_games)):
                 yield from chunk
 
-        splits = {'train': pack(out, 'train', records(train), context=context, sources=SOURCES, policy=False)}
+        splits = {'train': pack(out, 'train', records(train), context=context, sources=SOURCES, weighted=False)}
         for split in ('dev', 'test'):
             splits[f'human_{split}'] = pack(out, f'human_{split}', records([(0, g) for g in human[split]]),
-                                            context=context, sources=SOURCES, policy=False, one_game_per_row=True)
+                                            context=context, sources=SOURCES, weighted=False, one_game_per_row=True)
             splits[f'random_{split}'] = pack(out, f'random_{split}', records([(1, g) for g in randoms[split]]),
-                                             context=context, sources=SOURCES, policy=False, one_game_per_row=True)
+                                             context=context, sources=SOURCES, weighted=False, one_game_per_row=True)
     finally:
         if pool:
             pool.close()

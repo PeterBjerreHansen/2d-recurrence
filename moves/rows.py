@@ -8,9 +8,7 @@ games with a sparse move list for every position:
 ``{split}_moves.bin``    uint16: the listed move ids, row after row, position after position
 ``{split}_rows.npy``     int64 [rows + 1]: where each row's moves start
 ``{split}_plies.npy``    int32 [rows, sources]: plies of each source in each row
-``{split}_weights.bin``  float16, per listed move (policy datasets)
-``{split}_values.bin``   float16 [rows, context, 2]: position value q (win minus loss), d (draw) (policy datasets)
-``{split}_visits.bin``   uint16 [rows, context]: search visits (policy datasets)
+``{split}_weights.bin``  float16, per listed move: the teacher's probability (engine datasets)
 
 Position ``t`` of a row is the board after token ``t``; its next-ply target is
 token ``t + 1``. Builders produce games as ``GameRecord``s; ``pack`` writes them
@@ -54,9 +52,7 @@ class GameRecord:
     plies: np.ndarray      # [n] uint16 ply ids
     legal_counts: np.ndarray   # [n] uint8 legal moves listed for the position before each ply
     moves: np.ndarray      # [sum(legal_counts)] uint16
-    weights: np.ndarray | None = None   # [sum(legal_counts)] float16
-    values: np.ndarray | None = None    # [n, 2] float16
-    visits: np.ndarray | None = None    # [n] uint16
+    weights: np.ndarray | None = None   # [sum(legal_counts)] float16 teacher probabilities (engine datasets)
 
 
 def game_hash(plies):
@@ -70,7 +66,7 @@ def split_of(plies, test_per_mille=5, dev_per_mille=5):
 
 
 class _Streams:
-    """Append-only binary files for one split, hashed on close."""
+    """Append-only binary files for one split."""
 
     def __init__(self, directory, split, names):
         self.paths = {name: Path(directory) / f'{split}_{name}.bin' for name in names}
@@ -82,17 +78,17 @@ class _Streams:
     def close(self):
         for stream in self.files.values():
             stream.close()
-        return {path.name: file_hash(path) for path in self.paths.values()}
 
 
-def pack(directory, split, games, *, context, sources, policy, one_game_per_row=False):
+def pack(directory, split, games, *, context, sources, weighted, one_game_per_row=False):
     """Pack ``games`` (GameRecords, in order) into rows; return the split's manifest entry.
 
     Games never cross rows: a game that doesn't fit starts a new row, and row
-    tails are padded. With ``one_game_per_row`` each row holds one game.
+    tails are padded. With ``one_game_per_row`` each row holds one game. ``weighted``
+    datasets also store each listed move's weight.
     """
     length = context + 1
-    names = ['tokens', 'legal_counts', 'moves'] + (['weights', 'values', 'visits'] if policy else [])
+    names = ['tokens', 'legal_counts', 'moves'] + (['weights'] if weighted else [])
     streams = _Streams(directory, split, names)
     row_offsets, row_plies = [0], []
     info = dict(games=0, positions=0, moves=0, max_plies=0)
@@ -100,8 +96,7 @@ def pack(directory, split, games, *, context, sources, policy, one_game_per_row=
 
     def new_row():
         state.update(tokens=np.full(length, PAD, dtype=np.uint16), legal_counts=np.zeros(context, dtype=np.uint8),
-                     plies=np.zeros(len(sources), dtype=np.int32), start=0, moves=[], weights=[],
-                     values=np.zeros((context, 2), dtype=np.float16), visits=np.zeros(context, dtype=np.uint16))
+                     plies=np.zeros(len(sources), dtype=np.int32), start=0, moves=[], weights=[])
 
     def flush():
         if state['start'] == 0:
@@ -110,10 +105,8 @@ def pack(directory, split, games, *, context, sources, policy, one_game_per_row=
         streams.write('legal_counts', state['legal_counts'])
         moves = np.concatenate(state['moves']) if state['moves'] else np.zeros(0, dtype=np.uint16)
         streams.write('moves', moves)
-        if policy:
+        if weighted:
             streams.write('weights', np.concatenate(state['weights']))
-            streams.write('values', state['values'])
-            streams.write('visits', state['visits'])
         row_offsets.append(row_offsets[-1] + len(moves))
         row_plies.append(state['plies'])
         new_row()
@@ -125,8 +118,8 @@ def pack(directory, split, games, *, context, sources, policy, one_game_per_row=
             raise ValueError(f'A game must have between 1 and {min(MAX_PLIES, context)} plies, not {n}')
         if len(game.legal_counts) != n or int(game.legal_counts.sum()) != len(game.moves):
             raise ValueError('A game needs one move count per ply and exactly that many moves')
-        if policy and (game.weights is None or game.values is None or game.visits is None):
-            raise ValueError('Policy datasets need weights, values and visits for every game')
+        if weighted and game.weights is None:
+            raise ValueError('Weighted datasets need weights for every game')
         if n + 1 > length - state['start']:
             flush()
         start = state['start']
@@ -134,10 +127,8 @@ def pack(directory, split, games, *, context, sources, policy, one_game_per_row=
         state['tokens'][start + 1:start + 1 + n] = game.plies
         state['legal_counts'][start:start + n] = game.legal_counts
         state['moves'].append(np.asarray(game.moves, dtype=np.uint16))
-        if policy:
+        if weighted:
             state['weights'].append(np.asarray(game.weights, dtype=np.float16))
-            state['values'][start:start + n] = game.values
-            state['visits'][start:start + n] = game.visits
         state['plies'][game.source] += n
         state['start'] = start + n + 1
         info['games'] += 1
@@ -147,12 +138,12 @@ def pack(directory, split, games, *, context, sources, policy, one_game_per_row=
         if one_game_per_row:
             flush()
     flush()
-    hashes = streams.close()
+    streams.close()
     np.save(Path(directory) / f'{split}_rows.npy', np.asarray(row_offsets, dtype=np.int64))
     np.save(Path(directory) / f'{split}_plies.npy',
             np.asarray(row_plies, dtype=np.int32).reshape(-1, len(sources)))
-    for name in ('rows', 'plies'):
-        hashes[f'{split}_{name}.npy'] = file_hash(Path(directory) / f'{split}_{name}.npy')
+    paths = list(streams.paths.values()) + [Path(directory) / f'{split}_{name}.npy' for name in ('rows', 'plies')]
+    hashes = {path.name: file_hash(path) for path in paths}
     return dict(rows=len(row_offsets) - 1, one_game_per_row=one_game_per_row, sha256=hashes, **info)
 
 
@@ -168,24 +159,20 @@ def write_dataset_manifest(directory, *, context, sources, targets, splits, eval
 
 
 class GameStoreWriter:
-    """Game-major storage of ``GameRecord``s, for data that must be converted before it can be packed."""
+    """Temporary game-major storage of weighted ``GameRecord``s (Leela games), converted per archive
+    and shuffled before packing."""
 
-    def __init__(self, directory, policy):
+    def __init__(self, directory):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.policy = policy
-        names = ['plies', 'legal_counts', 'moves'] + (['weights', 'values', 'visits'] if policy else [])
-        self.streams = _Streams(self.directory, 'store', names)
+        self.streams = _Streams(self.directory, 'store', ['plies', 'legal_counts', 'moves', 'weights'])
         self.game_offsets, self.move_offsets = [0], [0]
 
     def append(self, game):
         self.streams.write('plies', np.asarray(game.plies, dtype=np.uint16))
         self.streams.write('legal_counts', np.asarray(game.legal_counts, dtype=np.uint8))
         self.streams.write('moves', np.asarray(game.moves, dtype=np.uint16))
-        if self.policy:
-            self.streams.write('weights', np.asarray(game.weights, dtype=np.float16))
-            self.streams.write('values', np.asarray(game.values, dtype=np.float16))
-            self.streams.write('visits', np.asarray(game.visits, dtype=np.uint16))
+        self.streams.write('weights', np.asarray(game.weights, dtype=np.float16))
         self.game_offsets.append(self.game_offsets[-1] + len(game.plies))
         self.move_offsets.append(self.move_offsets[-1] + len(game.moves))
 
@@ -206,16 +193,12 @@ class GameStore:
 
     def __init__(self, directory):
         directory = Path(directory)
-        self.policy = (directory / 'store_weights.bin').exists()
         self.games = np.load(directory / 'store_games.npy')
         self.move_offsets = np.load(directory / 'store_move_offsets.npy')
         self.plies = _memmap(directory / 'store_plies.bin', np.uint16)
         self.legal_counts = _memmap(directory / 'store_legal_counts.bin', np.uint8)
         self.moves = _memmap(directory / 'store_moves.bin', np.uint16)
-        if self.policy:
-            self.weights = _memmap(directory / 'store_weights.bin', np.float16)
-            self.values = _memmap(directory / 'store_values.bin', np.float16).reshape(-1, 2)
-            self.visits = _memmap(directory / 'store_visits.bin', np.uint16)
+        self.weights = _memmap(directory / 'store_weights.bin', np.float16)
 
     def __len__(self):
         return len(self.games) - 1
@@ -223,10 +206,8 @@ class GameStore:
     def record(self, index, source):
         a, b = self.games[index], self.games[index + 1]
         m, n = self.move_offsets[index], self.move_offsets[index + 1]
-        if not self.policy:
-            return GameRecord(source, np.array(self.plies[a:b]), np.array(self.legal_counts[a:b]), np.array(self.moves[m:n]))
         return GameRecord(source, np.array(self.plies[a:b]), np.array(self.legal_counts[a:b]), np.array(self.moves[m:n]),
-                          np.array(self.weights[m:n]), np.array(self.values[a:b]), np.array(self.visits[a:b]))
+                          np.array(self.weights[m:n]))
 
 
 class RowData:
@@ -268,9 +249,7 @@ class RowData:
                           moves=np.memmap(d / f'{split}_moves.bin', dtype=np.uint16, mode='r'),
                           offsets=np.load(d / f'{split}_rows.npy'), plies=np.load(d / f'{split}_plies.npy'))
             if self.targets == 'engine':
-                arrays.update(
-                    weights=np.memmap(d / f'{split}_weights.bin', dtype=np.float16, mode='r'),
-                    visits=np.memmap(d / f'{split}_visits.bin', dtype=np.uint16, mode='r').reshape(-1, t))
+                arrays['weights'] = np.memmap(d / f'{split}_weights.bin', dtype=np.float16, mode='r')
             self._arrays[split] = arrays
         return self._arrays[split]
 

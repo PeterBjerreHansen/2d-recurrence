@@ -109,7 +109,6 @@ def test_games_convert_to_move_tokens_with_their_distributions():
                 next(uci for uci, i in MOVE_TO_ID.items() if i == token)), board)]
         board.push(move)
     assert game.probabilities[0].sum() == pytest.approx(1, abs=1e-5)
-    assert game.values['visits'].tolist() == [400] * len(moves)
 
 
 def _tampered(change):

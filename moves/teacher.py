@@ -19,9 +19,6 @@ move is worth at most 0.5, since the opponent would claim when winning is out
 of reach.
 """
 
-import hashlib
-import importlib.metadata
-
 import chess
 import chess.engine
 import numpy as np
@@ -33,22 +30,6 @@ SEARCH, CHECKMATE, RULE_DRAW = 0, 1, 2
 EXACT, LOWER_BOUND, UPPER_BOUND = 0, 1, 2
 LABEL_DTYPE = np.dtype([('q', '<f4'), ('cp', '<i4'), ('mate', '<i2'), ('kind', 'u1'), ('bound', 'u1'),
                         ('claimable', 'u1'), ('depth', '<u2'), ('nodes', '<u4')])
-
-
-def history_key(board):
-    """Cache key for a position's labels: its FEN and every position since the last irreversible ply.
-
-    Earlier history cannot affect repetitions or the 50-move count, so two
-    boards with the same key get the same labels from a deterministic engine.
-    """
-    board = board.copy()
-    key = [board.fen()]
-    while board.move_stack:
-        move = board.pop()
-        if board.is_irreversible(move):
-            break
-        key.append(board.epd())
-    return tuple(key)
 
 
 class Teacher:
@@ -106,13 +87,3 @@ class Teacher:
             q = min(q, 0.5)
         return q, cp, mate or 0, SEARCH, bound, claimable, info.get('depth', 0), info.get('nodes', 0)
 
-
-def engine_metadata(path, teacher, hash_mb):
-    digest = hashlib.sha256()
-    with open(path, 'rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return dict(name=teacher.engine.id.get('name'), path=str(path), sha256=digest.hexdigest(),
-                threads=1, hash_mb=hash_mb, tablebases=None, nodes=teacher.nodes,
-                search='one search per legal move, new game before each',
-                python_chess=importlib.metadata.version('chess'))

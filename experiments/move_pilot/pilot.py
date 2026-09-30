@@ -3,13 +3,13 @@
     uv run python -m experiments.move_pilot.pilot list
     uv run python -m experiments.move_pilot.pilot run lr_legal_3e-4
     uv run python -m experiments.move_pilot.pilot run legal_hybrid
-    uv run python -m experiments.move_pilot.pilot run engine_hybrid_from_legal
+    uv run python -m experiments.move_pilot.pilot run engine_hybrid
 
 Runs:
-- ``{played,legal}_{arm}``: stage 1 from scratch, one pass over the stage-1 dataset;
+- ``legal_{arm}``: stage 1 from scratch, one pass over the stage-1 dataset;
   ``legal_hybrid_seed2`` repeats one arm with another initialisation.
-- ``engine_{arm}_from_{played,legal}``: stage 2, continued from that stage-1 run on
-  ``STAGE2_POSITIONS`` Leela positions, with a fresh output layer.
+- ``engine_{arm}``: stage 2, continued from ``legal_{arm}`` on ``STAGE2_POSITIONS``
+  Leela positions, with a fresh output layer.
 - ``lr_{objective}_{rate}``: the learning-rate check on the transformer, a fifth of
   a run's length (the engine check continues from ``legal_transformer``).
 
@@ -74,10 +74,8 @@ ARCHITECTURES = {
 
 
 def run_names():
-    names = [f'{objective}_{arm}' for objective in ('played', 'legal') for arm in ARMS]
-    names.append('legal_hybrid_seed2')
-    names += [f'engine_{arm}_from_{objective}' for objective in ('legal', 'played') for arm in ARMS]
-    names += [f'lr_{objective}_{rate}' for objective in ('played', 'legal', 'engine') for rate in LR_CHECK_RATES]
+    names = [f'legal_{arm}' for arm in ARMS] + ['legal_hybrid_seed2'] + [f'engine_{arm}' for arm in ARMS]
+    names += [f'lr_{objective}_{rate}' for objective in ('legal', 'engine') for rate in LR_CHECK_RATES]
     return names
 
 
@@ -140,9 +138,9 @@ def run_config(name):
         return _config('transformer', objective, STAGE1, round(LR_CHECK_FRACTION * updates_for(STAGE1)), out_dir,
                        learning_rate=float(rate))
     if parts[0] == 'engine':
-        arm, source = parts[1], parts[3]
+        arm = parts[1]
         config = _config(arm, 'engine', LEELA, updates_for(LEELA, STAGE2_POSITIONS), out_dir, curriculum=False)
-        config.update(init_from='continue', continue_from=str(ROOT / f'{source}_{arm}' / 'ckpt.pt'))
+        config.update(init_from='continue', continue_from=str(ROOT / f'legal_{arm}' / 'ckpt.pt'))
         return config
     objective, arm = parts[0], parts[1]
     seed = SEEDS[1] if name.endswith('_seed2') else SEEDS[0]

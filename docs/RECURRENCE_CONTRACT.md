@@ -120,7 +120,7 @@ After the final pass, compute logits through $C(S(h_B))$, final normalization, a
 The defaults above are the character-model contract and are unchanged: tied embedding and unembedding weights, and final-output cross entropy over the vocabulary. Two optional settings serve move-token models ([move-target plan](engine_policy_plan.md)):
 
 - **Untied readout of its own width.** `output_size` sets the head's width; `None` means `vocab_size`. `tie_weights=False` unties the head from the embedding, and a width other than `vocab_size` requires it. Move models read 1,970 tokens (1,968 moves, game start, padding) and score the 1,968 moves.
-- **Targets that supply their own loss.** The final readout computes logits at every position. It applies cross entropy when the targets are a tensor of next-token ids (-1 for no target), and otherwise calls the targets' `loss(logits)`, as the sparse legality and value targets in `moves/objectives.py` do.
+- **Targets that supply their own loss.** The final readout computes logits at every position. It applies cross entropy when the targets are a tensor of next-token ids (-1 for no target), and otherwise calls the targets' `loss(logits)`, as the sparse legality and engine (policy) targets in `moves/objectives.py` do.
 
 Everything else in this contract holds unchanged. The loss is still computed only after the final pass, through the complete trajectory, and intermediate losses exist only under deep supervision.
 
