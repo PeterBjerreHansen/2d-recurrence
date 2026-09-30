@@ -123,7 +123,7 @@ def build(archives, out, *, positions, eval_games=20000, context=256, seed=0, wo
     for conversion in conversions:
         skipped.update(conversion['skipped'])
     return write_dataset_manifest(
-        out, context=context, sources=SOURCES, targets='policy', splits=splits, eval_splits=['leela_dev'],
+        out, context=context, sources=SOURCES, targets='engine', splits=splits, eval_splits=['leela_dev'],
         build=dict(script='moves/build_leela.py', script_sha256=file_hash(__file__), commit=commit,
                    archives=[dict(name=c['archive'], sha256=c['sha256']) for c in conversions],
                    positions=positions, eval_games=eval_games, seed=seed, available_training_positions=available,

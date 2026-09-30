@@ -57,9 +57,9 @@ def test_the_update_mixture_is_gap_free_broad_and_deepens(datasets):
 
 
 def test_stage2_continues_from_the_matching_stage1_run(datasets):
-    config = pilot.run_config('engine_depth_from_human')
+    config = pilot.run_config('engine_depth_from_played')
     assert config['init_from'] == 'continue' and config['objective'] == 'engine'
-    assert config['continue_from'] == str(datasets / 'results' / 'human_depth' / 'ckpt.pt')
+    assert config['continue_from'] == str(datasets / 'results' / 'played_depth' / 'ckpt.pt')
 
 
 def test_temporal_warm_starts_only_in_the_decay(datasets, monkeypatch):
@@ -86,7 +86,7 @@ def test_pilot_configs_train_with_two_updates_in_the_support(stage1, tmp_path, a
     _, directory = stage1
     config = pilot._config(arm, 'legal', directory, 20, tmp_path / arm)
     config.update(block_size=CONTEXT, n_head=2, n_embd=16, batch_size=2, gradient_accumulation_steps=2,
-                  eval_interval=10, eval_iters=1, log_interval=1, live_eval_iters=1, checkpoint_interval=0,
+                  eval_interval=10, eval_iters=1, log_interval=1, live_eval_batches=1, checkpoint_interval=0,
                   device='cpu', dtype='float32', num_threads=1)
     pilot.train(config)
     records = [json.loads(line) for line in (tmp_path / arm / 'metrics.jsonl').read_text().splitlines()]

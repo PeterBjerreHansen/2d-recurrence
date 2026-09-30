@@ -6,9 +6,9 @@
     uv run python -m experiments.move_pilot.pilot run engine_hybrid_from_legal
 
 Runs:
-- ``{human,legal}_{arm}``: stage 1 from scratch, one pass over the stage-1 dataset;
+- ``{played,legal}_{arm}``: stage 1 from scratch, one pass over the stage-1 dataset;
   ``legal_hybrid_seed2`` repeats one arm with another initialisation.
-- ``engine_{arm}_from_{human,legal}``: stage 2, continued from that stage-1 run on
+- ``engine_{arm}_from_{played,legal}``: stage 2, continued from that stage-1 run on
   ``STAGE2_POSITIONS`` Leela positions, with a fresh output layer.
 - ``lr_{objective}_{rate}``: the learning-rate check on the transformer, a fifth of
   a run's length (the engine check continues from ``legal_transformer``).
@@ -74,10 +74,10 @@ ARCHITECTURES = {
 
 
 def run_names():
-    names = [f'{objective}_{arm}' for objective in ('human', 'legal') for arm in ARMS]
+    names = [f'{objective}_{arm}' for objective in ('played', 'legal') for arm in ARMS]
     names.append('legal_hybrid_seed2')
-    names += [f'engine_{arm}_from_{objective}' for objective in ('legal', 'human') for arm in ARMS]
-    names += [f'lr_{objective}_{rate}' for objective in ('human', 'legal', 'engine') for rate in LR_CHECK_RATES]
+    names += [f'engine_{arm}_from_{objective}' for objective in ('legal', 'played') for arm in ARMS]
+    names += [f'lr_{objective}_{rate}' for objective in ('played', 'legal', 'engine') for rate in LR_CHECK_RATES]
     return names
 
 
@@ -104,8 +104,11 @@ def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curricu
                   lr_schedule='wsd', warmup_iters=max(1, round(WARMUP_FRACTION * updates)),
                   lr_decay_start=decay_start, lr_decay_iters=updates,
                   device='cuda', dtype='bfloat16', compile=False,
-                  eval_interval=500, eval_iters=50, log_interval=10, live_eval_iters=5,
-                  checkpoint_interval=500, keep_checkpoints=True, checkpoint_steps=[decay_start, updates])
+                  # Measured on MPS: evaluation every 200 updates takes 1-3% of training time; the
+                  # evaluation events log their seconds so this can be checked on the GPU. Every
+                  # evaluation also saves the recovery checkpoint.
+                  eval_interval=200, eval_iters=50, log_interval=10, live_eval_batches=5,
+                  keep_checkpoints=True, checkpoint_steps=[decay_start, updates])
     mode = config.get('recurrence_mode')
     if config['architecture'] == 'recurrent':
         config.update(update_support=list(UPDATE_SUPPORT), temporal_memory_gate_init=TEMPORAL_GATE_INIT)

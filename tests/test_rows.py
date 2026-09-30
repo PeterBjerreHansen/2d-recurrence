@@ -32,7 +32,7 @@ def _policy_record(seed, plies):
     record = _legal_record(0, seed, plies)
     rng = np.random.default_rng(seed)
     weights = []
-    for count in record.counts:
+    for count in record.legal_counts:
         w = rng.random(count) ** 4
         weights.append(w / w.sum())
     record.weights = np.concatenate(weights).astype(np.float16)
@@ -44,7 +44,7 @@ def _policy_record(seed, plies):
 def _write(directory, split_games, *, sources=('human', 'random'), policy=False):
     splits = {split: pack(directory, split, games, context=CONTEXT, sources=sources, policy=policy,
                           one_game_per_row=split != 'train') for split, games in split_games.items()}
-    write_dataset_manifest(directory, context=CONTEXT, sources=sources, targets='policy' if policy else 'legal',
+    write_dataset_manifest(directory, context=CONTEXT, sources=sources, targets='engine' if policy else 'legal',
                            splits=splits, eval_splits=[s for s in split_games if s != 'train'])
     return RowData(directory, CONTEXT)
 
@@ -83,11 +83,11 @@ def test_rows_hold_whole_games_and_their_move_lists(tmp_path):
     assert sorted(boards) == targets.positions.tolist()
     for owner, position in enumerate(targets.positions.tolist()):
         assert targets.moves[targets.owner == owner].tolist() == legal_ids(boards[position])
-    assert batch.counts['human_plies'] == sum(len(r.plies) for r in records if r.source == 0)
-    assert batch.counts['random_plies'] == sum(len(r.plies) for r in records if r.source == 1)
-    assert batch.counts['supervised_positions'] == sum(len(r.plies) for r in records)
-    human = data.build('train', np.arange(total), objective='human')
-    assert int((human.targets >= 0).sum()) == targets.count
+    assert batch.volume['human_plies'] == sum(len(r.plies) for r in records if r.source == 0)
+    assert batch.volume['random_plies'] == sum(len(r.plies) for r in records if r.source == 1)
+    assert batch.volume['supervised_positions'] == sum(len(r.plies) for r in records)
+    played = data.build('train', np.arange(total), objective='played')
+    assert int((played.targets >= 0).sum()) == targets.count
     dev = np.asarray(data._split('dev')['tokens'])
     assert all((row == GAME_START).sum() == 1 and row[0] == GAME_START for row in dev)
 
@@ -100,7 +100,7 @@ def test_policy_rows_keep_renormalised_weights(tmp_path):
     expected = []
     for record in records:
         weights, start = record.weights.astype(np.float32), 0
-        for count in record.counts.astype(int):
+        for count in record.legal_counts.astype(int):
             expected.append(weights[start:start + count] / weights[start:start + count].sum())
             start += count
     np.testing.assert_allclose(raw.weights.numpy(), np.concatenate(expected), rtol=1e-6)   # stored, renormalised
@@ -136,7 +136,7 @@ def test_the_policy_loss_is_cross_entropy_of_a_softmax_over_legal_moves():
         logits.zero_()
         logits[0, 0, 1] = 3.0          # agrees with the teacher's top move (1)
         logits[0, 2, 2] = 3.0          # teacher tie 0/2: the lowest id (0) is its top move, so no agreement
-    assert targets.metrics(logits)['top_move'] == 1
+    assert targets.metrics(logits)['top_move_agreement'] == 1
 
 
 # --- the stage-1 builder ---
@@ -153,8 +153,8 @@ def test_stage1_mixes_sources_and_lists_every_legal_move(stage1):
     build = manifest['build']
     assert build['human_training_positions'] >= 1500 and build['random_training_positions'] >= 500
     batch = data.build('train', np.arange(data.rows('train')), objective='legal')
-    assert batch.counts['human_plies'] == build['human_training_positions']
-    assert batch.counts['random_plies'] == build['random_training_positions']
+    assert batch.volume['human_plies'] == build['human_training_positions']
+    assert batch.volume['random_plies'] == build['random_training_positions']
     tokens = np.asarray(data._split('train')['tokens'])
     for owner, position in enumerate(batch.targets.positions.tolist()[:400]):
         row, t = divmod(position, CONTEXT)
@@ -291,7 +291,7 @@ def _records(output):
     return [json.loads(line) for line in (output / 'metrics.jsonl').read_text().splitlines()]
 
 
-@pytest.mark.parametrize('objective, architecture', [('legal', {}), ('human', _recurrent('temporal')),
+@pytest.mark.parametrize('objective, architecture', [('legal', {}), ('played', _recurrent('temporal')),
                                                      ('legal', _recurrent('hybrid'))])
 def test_stage1_rows_train_with_counters_and_live_evaluation(stage1, tmp_path, objective, architecture):
     from train import train
@@ -320,7 +320,7 @@ def test_row_training_resumes_exactly(stage1, tmp_path):
     a, b = (torch.load(path, weights_only=False) for path in (full, resumed))
     for key in a['model']:
         torch.testing.assert_close(a['model'][key], b['model'][key], rtol=0, atol=0)
-    assert a['move_counts'] == b['move_counts']
+    assert a['volume'] == b['volume']
 
 
 def test_stage2_continues_a_stage1_trunk_on_leela_rows(stage1, leela, tmp_path):
@@ -334,7 +334,7 @@ def test_stage2_continues_a_stage1_trunk_on_leela_rows(stage1, leela, tmp_path):
                            init_from='continue', continue_from=str(legal),
                            **_recurrent('hybrid')))
     evaluation = [r for r in _records(tmp_path / 'engine') if r['event'] == 'evaluation'][-1]
-    assert {'leela_dev_kl', 'leela_dev_top_move', 'live_J4_leela_dev_top_move'} <= set(evaluation)
+    assert {'leela_dev_kl', 'leela_dev_top_move_agreement', 'live_J4_leela_dev_top_move_agreement'} <= set(evaluation)
     last = [r for r in _records(tmp_path / 'engine') if r['event'] == 'train'][-1]
     assert last['leela_plies'] == last['supervised_positions'] > 0
     assert torch.load(engine, weights_only=False)['continued_from']['objective'] == 'legal'
@@ -378,7 +378,7 @@ def test_continuing_copies_the_trunk_and_reinitialises_the_readout(stage1, leela
             torch.testing.assert_close(value, result['model'][key], rtol=0, atol=0)
 
 
-@pytest.mark.parametrize('objective', ['human', 'legal'])
+@pytest.mark.parametrize('objective', ['played', 'legal'])
 def test_live_evaluation_is_paired_with_the_training_graph(stage1, tmp_path, objective):
     # A depth-only model with depth_specialized caches runs live exactly as its training cell (0, J-1).
     from train import train
@@ -388,7 +388,7 @@ def test_live_evaluation_is_paired_with_the_training_graph(stage1, tmp_path, obj
                   **_recurrent('depth', eval_u_d=1)))
     evaluation = [r for r in _records(output) if r['event'] == 'evaluation'][-1]
     assert evaluation['live_J2_human_dev_loss'] == pytest.approx(evaluation['human_dev_loss'], rel=1e-4)
-    key = 'accuracy' if objective == 'human' else 'exact_set'
+    key = 'accuracy' if objective == 'played' else 'exact_set'
     assert evaluation[f'live_J2_human_dev_{key}'] == pytest.approx(evaluation[f'human_dev_{key}'])
 
 

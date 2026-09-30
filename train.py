@@ -53,13 +53,14 @@ DEFAULTS = dict(
     # temporal memory with gradient-free passes, then trains its sampled schedule from it.
     warm_start_fraction=0.0, warm_start_max_passes=64, warm_start_tolerance=0.01,
     # Move tokens (docs/engine_policy_plan.md): data_format='moves' reads a fixed move-row dataset
-    # (moves.build_stage1, moves.build_leela) in its fixed order and trains one objective: 'human'
+    # (moves.build_stage1, moves.build_leela) in its fixed order and trains one objective: 'played'
     # (next ply), 'legal' or 'engine'. init_from='continue' starts from the weights of continue_from
     # with a fresh output layer, optimizer and step count.
     data_format='characters', objective='next_token', continue_from='',
-    # Live (cached, token-by-token) evaluation of recurrent move runs on dev games, at these core
-    # iteration counts; None means [1] for temporal and [1, 2, 4] for depth and hybrid.
-    live_eval_iters=1, live_eval_depths=None,
+    # Live (cached, token-by-token) evaluation of recurrent move runs on live_eval_batches batches
+    # of dev games, at these core iteration counts; None means [1] for temporal and [1, 2, 4] for
+    # depth and hybrid.
+    live_eval_batches=1, live_eval_depths=None,
 )
 
 
@@ -167,7 +168,7 @@ def train(config):
                       config['live_eval_depths'] is not None):
         raise ValueError('Objectives, continued runs and live evaluation need move data')
     live_depths = []
-    if moves and recurrent and config['live_eval_iters']:
+    if moves and recurrent and config['live_eval_batches']:
         mode = config['recurrence_mode']
         live_depths = (list(config['live_eval_depths']) if config['live_eval_depths'] is not None
                        else [1] if mode == 'temporal' else [1, 2, 4])
@@ -181,8 +182,8 @@ def train(config):
             raise ValueError(f'objective must be one of {OBJECTIVES} for move data')
         if config['eval_panel_path']:
             raise ValueError('Evaluation panels are defined for character data only')
-        if type(config['live_eval_iters']) is not int or config['live_eval_iters'] < 0:
-            raise ValueError('live_eval_iters must be a nonnegative integer')
+        if type(config['live_eval_batches']) is not int or config['live_eval_batches'] < 0:
+            raise ValueError('live_eval_batches must be a nonnegative integer')
         # A resumed continuation keeps continue_from as provenance; resume checks it matches.
         if (config['init_from'] == 'continue' and not config['continue_from'] or
                 config['init_from'] == 'scratch' and config['continue_from']):
@@ -276,7 +277,7 @@ def train(config):
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
     training_seconds = 0.0
-    move_counts = dict.fromkeys(data.count_keys, 0) if moves else {}
+    volume = dict.fromkeys(data.volume_keys, 0) if moves else {}
     continued = None
     if config['init_from'] == 'resume':
         checkpoint = torch.load(out / 'ckpt.pt', map_location='cpu', weights_only=False)
@@ -295,7 +296,7 @@ def train(config):
         mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'checkpoint_interval', 'eval_panel_path',
                    # A warm start changes how batches are processed, not the model or optimizer state.
                    'warm_start_fraction', 'warm_start_max_passes', 'warm_start_tolerance',
-                   'live_eval_iters', 'live_eval_depths'}
+                   'live_eval_batches', 'live_eval_depths'}
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:
@@ -304,7 +305,7 @@ def train(config):
         step, best_val = checkpoint['iter_num'], checkpoint['best_val_loss']
         last_eval_step = checkpoint['last_eval_step']
         training_seconds = checkpoint.get('training_seconds', 0.0)
-        move_counts = checkpoint.get('move_counts', move_counts)
+        volume = checkpoint.get('volume', volume)
         continued = checkpoint.get('continued_from')
     model = (Recurrent2DGPT(RecurrentGPTConfig(**model_args)) if recurrent
              else GPT(GPTConfig(**model_args))).to(device)
@@ -385,17 +386,17 @@ def train(config):
         """Pooled loss and objective metrics over (logits, loss, batch) triples, consumed one at a time."""
         loss_sum, positions, sums = 0.0, 0, {}
         for logits, loss, batch in batches:
-            count = batch.counts['supervised_positions']
+            count = batch.volume['supervised_positions']
             loss_sum += loss.item() * count
             positions += count
-            if config['objective'] == 'human':
+            if config['objective'] == 'played':
                 valid = batch.targets >= 0
                 sums['correct'] = sums.get('correct', 0) + (logits.argmax(-1)[valid] == batch.targets[valid]).sum().item()
             else:
                 for key, value in batch.targets.metrics(logits).items():
                     sums[key] = sums.get(key, 0.0) + value
         result = {name + '_loss': loss_sum / positions}
-        if config['objective'] == 'human':
+        if config['objective'] == 'played':
             result[name + '_accuracy'] = sums['correct'] / positions
         else:
             result.update(type(batch.targets).summary(name, sums))
@@ -431,14 +432,19 @@ def train(config):
                     logits = live_logits(batch.x, depth_steps)
                 yield logits, objective_loss(logits, batch.targets), batch
 
+        started = time.perf_counter()
         for number, (split, chunks) in enumerate(sets):
             schedule_rng = random.Random(config['recurrence_seed'] + 10000 * (number + 1))
             result.update(move_metrics(split, training_graph(split, chunks, schedule_rng)))
+        result['evaluation_seconds'] = time.perf_counter() - started
+        started = time.perf_counter()
         first = data.eval_splits[0]
         # The first rows of the training-graph evaluation split, so the two are paired.
-        live_chunks = row_chunks(np.arange(min(config['live_eval_iters'] * config['batch_size'], data.rows(first))))
+        live_chunks = row_chunks(np.arange(min(config['live_eval_batches'] * config['batch_size'], data.rows(first))))
         for depth_steps in live_depths:
             result.update(move_metrics(f'live_J{depth_steps}_{first}', live(first, live_chunks, depth_steps)))
+        if live_depths:
+            result['live_evaluation_seconds'] = time.perf_counter() - started
         return result
 
     @torch.no_grad()
@@ -488,7 +494,7 @@ def train(config):
                              eval_panel_row_indices=panel['row_indices'] if panel else None,
                              recurrence_sampler=sampler.state_dict() if sampler else None)
             if moves:
-                payload.update(move_counts=dict(move_counts), continued_from=continued)
+                payload.update(volume=dict(volume), continued_from=continued)
             atomic_save(payload, out / 'ckpt.pt')
             if (retain and config['keep_checkpoints'] and
                     (config['checkpoint_steps'] is None or step in config['checkpoint_steps'])):
@@ -545,7 +551,7 @@ def train(config):
         schedules = []
         probabilities = update_probabilities_at_step(config, step) if recurrent else None
         warm_microbatches = round(config['warm_start_fraction'] * accumulation)
-        update_counts = dict.fromkeys(move_counts, 0)
+        update_volume = dict.fromkeys(volume, 0)
         for micro_step in range(accumulation):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1
@@ -554,8 +560,8 @@ def train(config):
                 first = ((step * accumulation + micro_step) * world_size + rank) * config['batch_size']
                 batch = row_batch('train', data.training_rows(first, config['batch_size']))
                 x, y = batch.x, batch.targets
-                for key, value in batch.counts.items():
-                    update_counts[key] += value
+                for key, value in batch.volume.items():
+                    update_volume[key] += value
             else:
                 x, y = data.batch('train', config['batch_size'], device, train_rng)
             kwargs = {}
@@ -591,11 +597,11 @@ def train(config):
         gradient_stats = aggregate_gradient_stats(model, scaler, optimizer, config['grad_clip'], step)
         if moves:
             if ddp:
-                totals = torch.tensor(list(update_counts.values()), dtype=torch.float64, device=device)
+                totals = torch.tensor(list(update_volume.values()), dtype=torch.float64, device=device)
                 dist.all_reduce(totals)
-                update_counts = dict(zip(update_counts, (int(value) for value in totals.tolist())))
-            for key, value in update_counts.items():
-                move_counts[key] += value
+                update_volume = dict(zip(update_volume, (int(value) for value in totals.tolist())))
+            for key, value in update_volume.items():
+                volume[key] += value
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
@@ -617,12 +623,12 @@ def train(config):
         if master and (step % config['log_interval'] == 0 or step == 1):
             print(f'step {step}: loss {loss_sum:.4f}, {elapsed:.3f}s', flush=True)
             if moves:
-                volume = dict(**move_counts, **{key + '_this_update': value for key, value in update_counts.items()},
-                              row_tokens_per_second=update_counts['row_tokens'] / elapsed)
+                logged_volume = dict(**volume, **{key + '_this_update': value for key, value in update_volume.items()},
+                                     row_tokens_per_second=update_volume['row_tokens'] / elapsed)
             else:
-                volume = dict(characters_processed=step * effective_batch * config['block_size'],
-                              characters_this_update=effective_batch * config['block_size'],
-                              characters_per_second=effective_batch * config['block_size'] / elapsed)
+                logged_volume = dict(characters_processed=step * effective_batch * config['block_size'],
+                                     characters_this_update=effective_batch * config['block_size'],
+                                     characters_per_second=effective_batch * config['block_size'] / elapsed)
             append_json(out / 'metrics.jsonl', dict(event='train', step=step, nll=loss_sum, lr=lr,
                                                    final_nll=final_loss_sum,
                                                    intermediate_nll=(intermediate_loss_sum / intermediate_weight
@@ -630,7 +636,7 @@ def train(config):
                                                    deep_supervision=config['deep_supervision'],
                                                    deep_supervision_lambda=config['deep_supervision_lambda'],
                                                    seconds=elapsed, training_seconds=training_seconds, statistics='accumulated_update',
-                                                   **gradient_stats, **volume,
+                                                   **gradient_stats, **logged_volume,
                                                    schedules=schedules, microbatch_schedules=schedules))
     if ddp:
         dist.destroy_process_group()

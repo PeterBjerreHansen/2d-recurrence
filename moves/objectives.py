@@ -126,8 +126,8 @@ class PolicyTargets(_SparseTargets):
         entropy = -_per_position_sum(torch.where(w > 0, w * w.clamp_min(1e-12).log(), 0), self.owner, self.count)
         agree = _top_move(log_p, self.moves, self.owner, self.count) == _top_move(w, self.moves, self.owner, self.count)
         return dict(positions=float(self.count), cross_entropy=float(cross_entropy.sum()),
-                    kl=float((cross_entropy - entropy).sum()), top_move=float(agree.sum()))
+                    kl=float((cross_entropy - entropy).sum()), top_move_agreement=float(agree.sum()))
 
     @staticmethod
     def summary(name, sums):
-        return {f'{name}_{key}': sums[key] / sums['positions'] for key in ('kl', 'top_move')}
+        return {f'{name}_{key}': sums[key] / sums['positions'] for key in ('kl', 'top_move_agreement')}

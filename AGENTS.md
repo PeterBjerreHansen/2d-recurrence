@@ -1,6 +1,6 @@
 # Agent guide: `engine-policy` branch
 
-This branch retrains the recurrence architectures (transformer, temporal-only, depth-only, hybrid) on chess with **move tokens** and **move targets**: the human move, the legal set, and engine values. Most of the repository still describes the **character-level** setup on `main`. Read this file first.
+This branch retrains the recurrence architectures (transformer, temporal-only, depth-only, hybrid) on chess with **move tokens** and **move targets**: the played move, the legal set, and Leela's search distribution. Most of the repository still describes the **character-level** setup on `main`. Read this file first.
 
 ## Start here
 
@@ -38,7 +38,7 @@ This branch retrains the recurrence architectures (transformer, temporal-only, d
   - the stage-1 builder (`build_stage1.py`);
   - Leela archives: reading (`leela.py`, `leela_policy.py`) and the stage-2 builder (`build_leela.py`);
   - Stockfish labelling for the deferred evaluation panel (`teacher.py`, `values.py`).
-- **Trainer:** `train.py` trains on a move dataset with `data_format='moves'` and `objective='human' | 'legal' | 'engine'`. `init_from='continue'` starts stage 2 from an earlier run's trunk.
+- **Trainer:** `train.py` trains on a move dataset with `data_format='moves'` and `objective='played' | 'legal' | 'engine'`. `init_from='continue'` starts stage 2 from an earlier run's trunk.
 - **Pilot runner:** `experiments/move_pilot/pilot.py` resolves and runs every pilot run by name.
 - **Tests:** `tests/test_moves.py`, `tests/test_move_models.py`, `tests/test_rows.py`, `tests/test_leela.py` and `tests/test_move_pilot.py`. The Stockfish tests are skipped unless `stockfish` is on the PATH or `STOCKFISH_PATH` is set. The real-archive tests are skipped unless `LEELA_ARCHIVE` points to a downloaded Leela archive.
 
