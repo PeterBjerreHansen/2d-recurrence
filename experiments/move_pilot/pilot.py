@@ -2,8 +2,17 @@
 
     uv run python -m experiments.move_pilot.pilot list
     uv run python -m experiments.move_pilot.pilot run lr_legal_3e-4
-    uv run python -m experiments.move_pilot.pilot run legal_hybrid
-    uv run python -m experiments.move_pilot.pilot run engine_hybrid
+    uv run python -m experiments.move_pilot.pilot queue legal_transformer legal_temporal legal_depth \
+        legal_hybrid legal_hybrid_seed2 --slots 4 --threads 3
+    uv run python -m experiments.move_pilot.pilot bench legal_transformer legal_temporal legal_depth \
+        legal_hybrid --micro-batches 20 50 100 --updates 40 --threads 3
+
+``queue`` runs several pilot runs side by side on one GPU, starting the next as a
+slot frees up; each run logs to ``results/<name>/console.log``. ``bench`` runs the
+given runs side by side for a few updates at each micro-batch size, with stage 1's
+final (deepest) update mixture and no live evaluation, and prints seconds per update
+and peak memory. The micro-batch size only trades speed for memory: every update is
+400 rows either way.
 
 Runs:
 - ``legal_{arm}``: stage 1 from scratch, one pass over the stage-1 dataset;
@@ -22,6 +31,10 @@ from copy import deepcopy
 import json
 import math
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
 
 import torch
 
@@ -37,10 +50,12 @@ ARMS = ('transformer', 'temporal', 'depth', 'hybrid')
 SEEDS = (1337, 2024)
 
 # 400 rows of 256 tokens per update (~100k tokens, as the 20B study's 100 x 1,023 characters),
-# in micro-batches of 20 rows (~5k tokens, the 20B micro-batch).
-BATCH_SIZE = 20
-ACCUMULATION = 20
-ROWS_PER_UPDATE = BATCH_SIZE * ACCUMULATION
+# accumulated over micro-batches whose size only affects speed and memory.
+ROWS_PER_UPDATE = 400
+MICRO_BATCH = 20
+# Evaluation populations, in dev games, whatever the micro-batch size.
+EVAL_GAMES = 1000
+LIVE_GAMES = 100
 
 MODEL = dict(n_layer=8, n_head=8, n_embd=512, bias=False, dropout=0.0,
              n_prelude=1, n_buffer=1, n_core=4, n_source=1, n_coda=1)
@@ -91,13 +106,19 @@ def _matrix(mode, probabilities):
                                            HYBRID_DIAGONAL_MASS if mode == 'hybrid' else None)
 
 
-def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curriculum=True, learning_rate=LEARNING_RATE):
+def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curriculum=True, learning_rate=LEARNING_RATE,
+            micro_batch=MICRO_BATCH):
+    if ROWS_PER_UPDATE % micro_batch:
+        raise ValueError(f'The micro-batch size must divide {ROWS_PER_UPDATE}')
+    accumulation = ROWS_PER_UPDATE // micro_batch
+    if arm == 'temporal' and (WARM_START['warm_start_fraction'] * accumulation) % 1:
+        raise ValueError(f'Temporal warm starts use a quarter of the micro-batches: {accumulation} is not divisible by 4')
     config = deepcopy(DEFAULTS)
     decay_start = updates - round(DECAY_FRACTION * updates)
     config.update(**MODEL, **ARCHITECTURES[arm],
                   data_format='moves', objective=objective, dataset=str(dataset), block_size=256,
                   out_dir=str(out_dir), init_from='scratch', seed=seed,
-                  batch_size=BATCH_SIZE, gradient_accumulation_steps=ACCUMULATION,
+                  batch_size=micro_batch, gradient_accumulation_steps=accumulation,
                   max_iters=updates, learning_rate=learning_rate, min_lr=MIN_LEARNING_RATE * learning_rate / LEARNING_RATE,
                   lr_schedule='wsd', warmup_iters=max(1, round(WARMUP_FRACTION * updates)),
                   lr_decay_start=decay_start, lr_decay_iters=updates,
@@ -105,7 +126,8 @@ def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curricu
                   # Measured on MPS: evaluation every 200 updates takes 1-3% of training time; the
                   # evaluation events log their seconds so this can be checked on the GPU. Every
                   # evaluation also saves the recovery checkpoint.
-                  eval_interval=200, eval_iters=50, log_interval=10, live_eval_batches=5,
+                  eval_interval=200, eval_iters=math.ceil(EVAL_GAMES / micro_batch), log_interval=10,
+                  live_eval_batches=math.ceil(LIVE_GAMES / micro_batch),
                   keep_checkpoints=True, checkpoint_steps=[decay_start, updates])
     mode = config.get('recurrence_mode')
     if config['architecture'] == 'recurrent':
@@ -121,7 +143,7 @@ def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curricu
     return config
 
 
-def run_config(name):
+def run_config(name, micro_batch=MICRO_BATCH):
     """The resolved training configuration of one pilot run."""
     if name not in run_names():
         raise ValueError(f'Unknown pilot run: {name}')
@@ -132,24 +154,25 @@ def run_config(name):
         if objective == 'engine':
             config = _config('transformer', 'engine', LEELA,
                              round(LR_CHECK_FRACTION * updates_for(LEELA, STAGE2_POSITIONS)), out_dir,
-                             curriculum=False, learning_rate=float(rate))
+                             curriculum=False, learning_rate=float(rate), micro_batch=micro_batch)
             config.update(init_from='continue', continue_from=str(ROOT / 'legal_transformer' / 'ckpt.pt'))
             return config
         return _config('transformer', objective, STAGE1, round(LR_CHECK_FRACTION * updates_for(STAGE1)), out_dir,
-                       learning_rate=float(rate))
+                       learning_rate=float(rate), micro_batch=micro_batch)
     if parts[0] == 'engine':
         arm = parts[1]
-        config = _config(arm, 'engine', LEELA, updates_for(LEELA, STAGE2_POSITIONS), out_dir, curriculum=False)
+        config = _config(arm, 'engine', LEELA, updates_for(LEELA, STAGE2_POSITIONS), out_dir, curriculum=False,
+                         micro_batch=micro_batch)
         config.update(init_from='continue', continue_from=str(ROOT / f'legal_{arm}' / 'ckpt.pt'))
         return config
     objective, arm = parts[0], parts[1]
     seed = SEEDS[1] if name.endswith('_seed2') else SEEDS[0]
-    return _config(arm, objective, STAGE1, updates_for(STAGE1), out_dir, seed=seed)
+    return _config(arm, objective, STAGE1, updates_for(STAGE1), out_dir, seed=seed, micro_batch=micro_batch)
 
 
-def run(name, **overrides):
+def run(name, micro_batch=MICRO_BATCH, **overrides):
     """Train one pilot run, resuming it if it has a checkpoint."""
-    config = {**run_config(name), **overrides}
+    config = {**run_config(name, micro_batch), **overrides}
     checkpoint = Path(config['out_dir']) / 'ckpt.pt'
     step = 0
     if checkpoint.exists():
@@ -164,17 +187,141 @@ def run(name, **overrides):
     return train(config)
 
 
+def bench_config(name, updates, micro_batch, out_dir):
+    """A short copy of a run for timing: the deepest stage-1 mixture throughout, no live evaluation."""
+    config = run_config(name, micro_batch)
+    config.update(out_dir=str(out_dir), max_iters=updates, warmup_iters=1, lr_decay_start=updates - 2,
+                  lr_decay_iters=updates, eval_interval=10**9, eval_iters=1, live_eval_batches=0, log_interval=1,
+                  keep_checkpoints=False)
+    if config['architecture'] == 'recurrent':
+        config.update(update_probabilities=_matrix(config['recurrence_mode'], CURRICULUM[-1][1]),
+                      update_probability_schedule=None)
+    return config
+
+
+def bench_one(name, updates, micro_batch, out_dir, **overrides):
+    train({**bench_config(name, updates, micro_batch, out_dir), **overrides})
+    peak = torch.cuda.max_memory_allocated() / 2**30 if torch.cuda.is_available() else None
+    (Path(out_dir) / 'peak_memory.json').write_text(json.dumps(dict(peak_memory_gb=peak)))
+
+
+def bench_summary(out_dir, skip=3):
+    """Median seconds per update after the first ``skip`` updates, and peak memory, of one bench run."""
+    records = [json.loads(line) for line in (Path(out_dir) / 'metrics.jsonl').read_text().splitlines()]
+    seconds = sorted(r['seconds'] for r in records if r['event'] == 'train' and r['step'] > skip)
+    memory = json.loads((Path(out_dir) / 'peak_memory.json').read_text())['peak_memory_gb']
+    return dict(seconds_per_update=seconds[len(seconds) // 2], peak_memory_gb=memory)
+
+
+def _command(*arguments):
+    return [sys.executable, '-m', 'experiments.move_pilot.pilot', *map(str, arguments)]
+
+
+def _options(threads, device):
+    return (['--threads', threads] if threads else []) + (['--device', device] if device else [])
+
+
+def queue(names, slots, micro_batch=MICRO_BATCH, threads=None, device=None, poll_seconds=10):
+    """Run ``names`` side by side, at most ``slots`` at a time; return each run's exit code."""
+    pending, running, codes = list(names), {}, {}
+    while pending or running:
+        while pending and len(running) < slots:
+            name = pending.pop(0)
+            (ROOT / name).mkdir(parents=True, exist_ok=True)
+            log = open(ROOT / name / 'console.log', 'a')
+            command = _command('run', name, '--micro-batch', micro_batch, *_options(threads, device))
+            running[name] = (subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT), log)
+            print(f'{time.strftime("%H:%M:%S")} started {name}', flush=True)
+        for name, (process, log) in list(running.items()):
+            if process.poll() is not None:
+                log.close()
+                codes[name] = process.returncode
+                del running[name]
+                print(f'{time.strftime("%H:%M:%S")} {name} finished with exit code {process.returncode}', flush=True)
+        if running:
+            time.sleep(poll_seconds)
+    return codes
+
+
+def bench(names, micro_batches, updates, threads=None, device=None):
+    """Time ``names`` running side by side at each micro-batch size; print and return the results."""
+    results = []
+    for micro_batch in micro_batches:
+        directories = {name: ROOT / 'bench' / f'micro{micro_batch}' / name for name in names}
+        processes = {}
+        for name, directory in directories.items():
+            shutil.rmtree(directory, ignore_errors=True)
+            directory.mkdir(parents=True)
+            log = open(directory / 'console.log', 'w')
+            command = _command('bench-one', name, '--updates', updates, '--micro-batch', micro_batch,
+                               '--out-dir', directory, *_options(threads, device))
+            processes[name] = (subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT), log)
+        for name, (process, log) in processes.items():
+            process.wait()
+            log.close()
+            if process.returncode:
+                results.append(dict(name=name, micro_batch=micro_batch, error=f'exit code {process.returncode}'))
+                continue
+            results.append(dict(name=name, micro_batch=micro_batch, **bench_summary(directories[name])))
+    print(f'{len(names)} runs side by side; hours per stage-1 pilot run are at the deepest mixture')
+    print(f"{'run':<22}{'micro':>6}{'s/update':>10}{'h/run':>8}{'peak GB':>9}")
+    for result in results:
+        if 'error' in result:
+            print(f"{result['name']:<22}{result['micro_batch']:>6}  {result['error']}")
+            continue
+        hours = result['seconds_per_update'] * updates_for(STAGE1) / 3600
+        memory = f"{result['peak_memory_gb']:.1f}" if result['peak_memory_gb'] is not None else '-'
+        print(f"{result['name']:<22}{result['micro_batch']:>6}{result['seconds_per_update']:>10.2f}{hours:>8.2f}{memory:>9}")
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list')
+
+    def common(command):
+        command.add_argument('--threads', type=int, help='CPU threads per run (default: the trainer default, 4)')
+        command.add_argument('--device', help='Default: cuda')
+
     runner = commands.add_parser('run')
     runner.add_argument('name', choices=run_names())
+    runner.add_argument('--micro-batch', type=int, default=MICRO_BATCH)
+    common(runner)
+    queuer = commands.add_parser('queue')
+    queuer.add_argument('names', nargs='+', choices=run_names())
+    queuer.add_argument('--slots', type=int, required=True, help='Runs at once')
+    queuer.add_argument('--micro-batch', type=int, default=MICRO_BATCH)
+    common(queuer)
+    bencher = commands.add_parser('bench')
+    bencher.add_argument('names', nargs='+', choices=run_names())
+    bencher.add_argument('--micro-batches', type=int, nargs='+', default=[20, 50, 100])
+    bencher.add_argument('--updates', type=int, default=40)
+    common(bencher)
+    single = commands.add_parser('bench-one')
+    single.add_argument('name', choices=run_names())
+    single.add_argument('--updates', type=int, required=True)
+    single.add_argument('--micro-batch', type=int, required=True)
+    single.add_argument('--out-dir', required=True)
+    common(single)
     arguments = parser.parse_args()
+    overrides = {}
+    if getattr(arguments, 'threads', None):
+        overrides['num_threads'] = arguments.threads
+    if getattr(arguments, 'device', None):
+        overrides['device'] = arguments.device
+        overrides['dtype'] = 'bfloat16' if arguments.device == 'cuda' else 'float32'
     if arguments.command == 'list':
         print('\n'.join(run_names()))
+    elif arguments.command == 'run':
+        print(run(arguments.name, arguments.micro_batch, **overrides))
+    elif arguments.command == 'queue':
+        codes = queue(arguments.names, arguments.slots, arguments.micro_batch, arguments.threads, arguments.device)
+        raise SystemExit(max(codes.values(), default=0))
+    elif arguments.command == 'bench':
+        bench(arguments.names, arguments.micro_batches, arguments.updates, arguments.threads, arguments.device)
     else:
-        print(run(arguments.name))
+        bench_one(arguments.name, arguments.updates, arguments.micro_batch, arguments.out_dir, **overrides)
 
 
 if __name__ == '__main__':

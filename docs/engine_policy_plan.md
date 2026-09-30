@@ -76,7 +76,7 @@ All losses apply at positions with a target, on the final pass only.
 
 ### Training protocol
 
-- **Updates:** 400 rows of 256 tokens (~100k tokens, as the 20B study's 100 × 1,023 characters), in 20 micro-batches of 20 rows.
+- **Updates:** 400 rows of 256 tokens (~100k tokens, as the 20B study's 100 × 1,023 characters). The micro-batch size (20 by default) only trades speed for memory; evaluation always covers 1,000 dev games, 100 of them live.
 - **Optimiser:** the 20B settings (AdamW 3e-4 to 3e-5, warmup–stable–decay: 3% warmup, the last 10% decaying). The learning rate is checked on the transformer per stage (1e-4, 3e-4, 1e-3) and applied to every arm.
 - **Update support {0, 1, 2, 3}, gap-free and broad throughout; deepen by moving the centre, never by concentrating the mass** (20B report). The probabilities of max(U_T, U_D) = 0, 1, 2, 3 are (0.25, 0.35, 0.25, 0.15), then (0.15, 0.30, 0.30, 0.25) from 25% of the run, then (0.10, 0.25, 0.35, 0.30) from 50%. Hybrid puts 80% of each count on the diagonal. Stage 2 keeps the final mixture.
 - **Temporal-only gets warm-start batches** (a quarter of each update's micro-batches) in the decay phase, as the 20B report recommends. This is a recipe difference, stated as one.
@@ -157,6 +157,7 @@ Margins and thresholds are set on the development sets before the main runs.
 ## Pilot
 
 - **Runs** (`experiments/move_pilot/pilot.py list`): the learning-rate check (`lr_legal_*`, `lr_engine_*`); `legal_{arm}` for all four arms, one pass over the 500M-position dataset (5,944 updates) each, plus `legal_hybrid_seed2`; `engine_{arm}`, about 50M Leela positions continued from `legal_{arm}`.
+- **On one GPU:** `pilot.py queue <runs> --slots K` runs several side by side and resumes any run from its last checkpoint (every 200 updates) when started again; `pilot.py bench <runs> --micro-batches …` times them side by side first, to choose K and the micro-batch size.
 - **Pass criteria** (none requires an arm to win): all tests pass; build and training costs are measured; the dev sets have room to improve (otherwise harder sets or a smaller scale, declared in advance); learning curves and seed variance are measured.
 
 ## Steps

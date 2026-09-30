@@ -92,3 +92,58 @@ def test_pilot_configs_train_with_two_updates_in_the_support(stage1, tmp_path, a
     records = [json.loads(line) for line in (tmp_path / arm / 'metrics.jsonl').read_text().splitlines()]
     counts = {max(s['u_t'], s['u_d']) for r in records if r['event'] == 'train' for s in r['schedules']}
     assert counts == {0, 1, 2, 3}
+
+
+def test_the_micro_batch_changes_speed_not_the_update_or_the_evaluation(datasets):
+    small, large = pilot.run_config('legal_hybrid'), pilot.run_config('legal_hybrid', micro_batch=100)
+    for config in (small, large):
+        assert config['batch_size'] * config['gradient_accumulation_steps'] == 400
+        assert config['eval_iters'] * config['batch_size'] == 1000
+        assert config['live_eval_batches'] * config['batch_size'] == 100
+    assert {key: value for key, value in small.items() if key not in ('batch_size', 'gradient_accumulation_steps',
+                                                                     'eval_iters', 'live_eval_batches')} == \
+        {key: value for key, value in large.items() if key not in ('batch_size', 'gradient_accumulation_steps',
+                                                                   'eval_iters', 'live_eval_batches')}
+    assert pilot.run_config('legal_temporal', micro_batch=50)['gradient_accumulation_steps'] == 8
+    with pytest.raises(ValueError, match='quarter'):
+        pilot.run_config('legal_temporal', micro_batch=80)
+    with pytest.raises(ValueError, match='divide'):
+        pilot.run_config('legal_depth', micro_batch=30)
+
+
+def test_bench_times_the_deepest_mixture_without_live_evaluation(datasets, tmp_path):
+    config = pilot.bench_config('legal_depth', 30, 50, tmp_path / 'bench')
+    assert config['max_iters'] == 30 and config['live_eval_batches'] == 0 and config['batch_size'] == 50
+    assert config['update_probability_schedule'] is None
+    assert _max_count_mass(config, 0) == pytest.approx(dict(enumerate(pilot.CURRICULUM[-1][1])))
+    directory = tmp_path / 'summary'
+    directory.mkdir()
+    (directory / 'metrics.jsonl').write_text('\n'.join(json.dumps(dict(event='train', step=step, seconds=seconds))
+                                                       for step, seconds in enumerate([9, 9, 9, 9, 1, 3, 2], 1)))
+    (directory / 'peak_memory.json').write_text(json.dumps(dict(peak_memory_gb=5.5)))
+    assert pilot.bench_summary(directory) == dict(seconds_per_update=3, peak_memory_gb=5.5)
+
+
+def test_the_queue_keeps_at_most_its_slots_running(datasets, monkeypatch):
+    running, peak, commands = set(), [0], []
+
+    class Process:
+        def __init__(self, command, stdout, stderr):
+            self.name, self.polls = command[4], 0
+            commands.append(command)
+            running.add(self.name)
+            peak[0] = max(peak[0], len(running))
+
+        def poll(self):
+            self.polls += 1
+            if self.polls < 2:
+                return None
+            running.discard(self.name)
+            self.returncode = 0
+            return 0
+
+    monkeypatch.setattr(pilot.subprocess, 'Popen', Process)
+    codes = pilot.queue(['legal_transformer', 'legal_temporal', 'legal_depth'], slots=2, threads=3, poll_seconds=0)
+    assert codes == dict.fromkeys(['legal_transformer', 'legal_temporal', 'legal_depth'], 0) and peak[0] == 2
+    assert commands[0][3:] == ['run', 'legal_transformer', '--micro-batch', '20', '--threads', '3']
+    assert (datasets / 'results' / 'legal_depth' / 'console.log').exists()
