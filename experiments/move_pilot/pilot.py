@@ -59,11 +59,13 @@ LIVE_GAMES = 100
 
 MODEL = dict(n_layer=8, n_head=8, n_embd=512, bias=False, dropout=0.0,
              n_prelude=1, n_buffer=1, n_core=4, n_source=1, n_coda=1)
-LEARNING_RATE = 3e-4
-MIN_LEARNING_RATE = 3e-5
+# From the stage-1 check on the transformer (1e-4, 3e-4, 1e-3, 3e-3): 1e-3 was best. The engine stage uses
+# it until its own check says otherwise. The minimum is a tenth of the peak, as in the 20B study.
+LEARNING_RATE = 1e-3
+MIN_LEARNING_RATE = 1e-4
 WARMUP_FRACTION = 0.03
 DECAY_FRACTION = 0.10      # the last tenth of updates decays linearly, as in the 20B study
-LR_CHECK_RATES = ('1e-4', '3e-4', '1e-3')
+LR_CHECK_RATES = ('1e-4', '3e-4', '1e-3', '3e-3')
 LR_CHECK_FRACTION = 0.2
 
 # Gap-free and broad throughout; deepen by moving the centre, never by concentrating the mass

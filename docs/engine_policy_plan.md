@@ -77,7 +77,7 @@ All losses apply at positions with a target, on the final pass only.
 ### Training protocol
 
 - **Updates:** 400 rows of 256 tokens (~100k tokens, as the 20B study's 100 × 1,023 characters). The micro-batch size (50 by default, measured) only trades speed for memory; evaluation always covers 1,000 dev games, 100 of them live.
-- **Optimiser:** the 20B settings (AdamW 3e-4 to 3e-5, warmup–stable–decay: 3% warmup, the last 10% decaying). The learning rate is checked on the transformer per stage (1e-4, 3e-4, 1e-3) and applied to every arm.
+- **Optimiser:** AdamW as in the 20B study, warmup–stable–decay (3% warmup, the last 10% decaying to a tenth of the peak). The peak learning rate is checked on the transformer per stage and applied to every arm: **1e-3 for stage 1**.
 - **Update support {0, 1, 2, 3}, gap-free and broad throughout; deepen by moving the centre, never by concentrating the mass** (20B report). The probabilities of max(U_T, U_D) = 0, 1, 2, 3 are (0.25, 0.35, 0.25, 0.15), then (0.15, 0.30, 0.30, 0.25) from 25% of the run, then (0.10, 0.25, 0.35, 0.30) from 50%. Hybrid puts 80% of each count on the diagonal. Stage 2 keeps the final mixture.
 - **Temporal-only gets warm-start batches** (a quarter of each update's micro-batches) in the decay phase, as the 20B report recommends. This is a recipe difference, stated as one.
 - **Evaluation every 200 updates,** including live decoding. Measured on MPS at 1–3% of training time; evaluations log their seconds, and GPU time spent evaluating stays under 5%.
@@ -174,7 +174,7 @@ Margins and thresholds are set on the development sets before the main runs.
 
 ## Decisions
 
-**Open until the pilot:** learning rate per stage; update count and schedule; the Leela archive range; the learning-speed thresholds.
+**Open until the pilot:** the engine stage's learning rate; update count and schedule; the Leela archive range; the learning-speed thresholds.
 **Open until the development panel:** panel size and node budgets; practical margins.
 
 **In force** (date — decision — reason):
@@ -184,6 +184,7 @@ Margins and thresholds are set on the development sets before the main runs.
 - **2026-09-30 — The evaluation panel waits until a model plays chess.** The pilot judges stage 1 by legality and stage 2 by agreement with Leela.
 - **2026-09-30 — Stage 1 is the legal target only; the played condition is a control.** The question is shallow vs deep targets; comparability with the 20B run is not a goal.
 - **2026-09-30 — Pilot defaults** as in [Training protocol](#training-protocol): the 20B recipe where it worked, and the 20B report's recommendations (a broad, gap-free support; warm starts in the decay) where it didn't.
+- **2026-09-30 — Stage-1 learning rate 1e-3.** Transformer, a fifth of a run (1,189 updates), dev legal loss / exact set: 1e-4 0.0185 / 0.12; 3e-4 0.0086 / 0.28; 1e-3 0.0058 / 0.37; 3e-3 0.0068 / 0.33. No instability at 1e-3. Applied to every arm; the recurrent runs are watched for loss spikes early.
 - **2026-09-30 — Exact set is thresholded.** The earlier version picked the true number of top moves, so it measured ranking; that is now `separation`. The constant baseline uses one legal rate, not each position's count.
 
 ## Cost
