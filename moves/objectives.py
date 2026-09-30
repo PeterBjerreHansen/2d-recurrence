@@ -1,27 +1,41 @@
 """Sparse per-move targets and their losses (see docs/engine_policy_plan.md, Losses).
 
 The human condition uses ordinary next-token targets: a ``[batch, time]`` tensor
-of ply ids with -1 where no next ply exists. The legal and engine conditions use
-the classes below. Both hold, for each supervised position, the flat index
+of ply ids with -1 where no next ply exists. The other conditions use the
+classes below. Each holds, for every supervised position, the flat index
 ``batch * time + position`` into the logits, and a list of (owner, move) pairs:
-the legal moves of that position. Only supervised positions enter any loss.
+the moves listed for that position. Only supervised positions enter any loss.
 
-Both losses average per position first, then over positions.
+- ``LegalTargets``: sigmoid per move, 1 for the listed (legal) moves, 0 otherwise.
+- ``PolicyTargets``: softmax over the listed (legal) moves against a teacher's
+  distribution, such as Leela's search probabilities.
+
+Losses average per position first, then over positions. ``metrics`` returns sums
+over positions, so batches can be pooled; ``summary`` turns pooled sums into the
+reported metrics.
 """
-
-# Best-move agreement counts a chosen move within this much Q of the best as agreeing.
-NEAR_TIE = 0.01
 
 from dataclasses import dataclass, fields
 
 import torch
 import torch.nn.functional as F
 
+_NO_MOVE = torch.iinfo(torch.long).max
 
-def _per_position_mean(values, owner, count):
-    totals = torch.zeros(count, device=values.device, dtype=values.dtype).index_add_(0, owner, values)
-    sizes = torch.bincount(owner, minlength=count).to(values.dtype)
-    return totals / sizes
+
+def _per_position_sum(values, owner, count):
+    return torch.zeros(count, device=values.device, dtype=values.dtype).index_add_(0, owner, values)
+
+
+def _per_position_max(values, owner, count):
+    return torch.full((count,), -torch.inf, device=values.device).scatter_reduce(0, owner, values, 'amax')
+
+
+def _top_move(scores, moves, owner, count):
+    """The highest-scoring move of each position; ties go to the lowest move id."""
+    top = _per_position_max(scores, owner, count)
+    candidates = torch.where(scores == top[owner], moves, _NO_MOVE)
+    return torch.full((count,), _NO_MOVE, device=moves.device).scatter_reduce(0, owner, candidates, 'amin')
 
 
 @dataclass
@@ -52,12 +66,11 @@ class LegalTargets(_SparseTargets):
     def loss(self, logits):
         z = self._logits(logits)
         # sum_a BCE(z_a, t_a) = sum_a softplus(z_a) - sum_{a legal} z_a
-        legal = torch.zeros(self.count, device=z.device).index_add_(0, self.owner, z[self.owner, self.moves])
+        legal = _per_position_sum(z[self.owner, self.moves], self.owner, self.count)
         return ((F.softplus(z).sum(-1) - legal) / z.size(-1)).mean()
 
     @torch.no_grad()
     def metrics(self, logits):
-        """Sums over positions, so batches can be pooled; divide by ``positions``."""
         z = self._logits(logits)
         target = torch.zeros_like(z, dtype=torch.bool)
         target[self.owner, self.moves] = True
@@ -81,35 +94,40 @@ class LegalTargets(_SparseTargets):
                     legal_moves=float(target.sum()),
                     exact_set=float(exact.sum()))
 
+    @staticmethod
+    def summary(name, sums):
+        result = {f'{name}_{key}': sums[key] / sums['positions']
+                  for key in ('legal_bce', 'illegal_bce', 'constant_bce', 'exact_set')}
+        result[f'{name}_precision'] = sums['true_positives'] / max(sums['predicted_positives'], 1)
+        result[f'{name}_recall'] = sums['true_positives'] / sums['legal_moves']
+        return result
+
 
 @dataclass
-class ValueTargets(_SparseTargets):
-    """Engine values: binary cross-entropy against Q as a soft label, on legal moves only."""
-    values: torch.Tensor     # [M] Q of each (owner, move), from the mover's perspective
+class PolicyTargets(_SparseTargets):
+    """A teacher's distribution over the legal moves: softmax over those moves, cross-entropy."""
+    weights: torch.Tensor    # [M] teacher probability of each (owner, move); sums to one per position
+
+    def _log_probabilities(self, logits):
+        z = self._logits(logits)[self.owner, self.moves]
+        top = _per_position_max(z, self.owner, self.count)
+        log_total = _per_position_sum(torch.exp(z - top[self.owner]), self.owner, self.count).log() + top
+        return z - log_total[self.owner]
 
     def loss(self, logits):
-        z = self._logits(logits)[self.owner, self.moves]
-        bce = F.softplus(z) - self.values * z
-        return _per_position_mean(bce, self.owner, self.count).mean()
+        cross_entropy = -_per_position_sum(self.weights * self._log_probabilities(logits), self.owner, self.count)
+        return cross_entropy.mean()
 
     @torch.no_grad()
     def metrics(self, logits):
-        """Sums over positions, so batches can be pooled; divide by ``positions``."""
-        z = self._logits(logits)[self.owner, self.moves]
-        q = self.values
-        bce = F.softplus(z) - q * z
-        entropy = -(q * q.clamp_min(1e-12).log() + (1 - q) * (1 - q).clamp_min(1e-12).log())
-        best_q = torch.full((self.count,), -1.0, device=q.device).scatter_reduce(
-            0, self.owner, q, 'amax')
-        top_z = torch.full((self.count,), -torch.inf, device=q.device).scatter_reduce(
-            0, self.owner, z, 'amax')
-        # The chosen move: highest predicted value; ties go to the lowest move id.
-        chosen = torch.full((self.count,), torch.iinfo(torch.long).max, device=q.device).scatter_reduce(
-            0, self.owner, torch.where(z == top_z[self.owner], self.moves, torch.iinfo(torch.long).max), 'amin')
-        chosen_q = torch.zeros(self.count, device=q.device).index_add_(
-            0, self.owner, torch.where(self.moves == chosen[self.owner], q, 0))
-        return dict(positions=float(self.count),
-                    bce=float(_per_position_mean(bce, self.owner, self.count).sum()),
-                    label_entropy=float(_per_position_mean(entropy, self.owner, self.count).sum()),
-                    regret=float((best_q - chosen_q).sum()),
-                    best_move=float((best_q - chosen_q <= NEAR_TIE).sum()))
+        log_p = self._log_probabilities(logits)
+        w = self.weights
+        cross_entropy = -_per_position_sum(w * log_p, self.owner, self.count)
+        entropy = -_per_position_sum(torch.where(w > 0, w * w.clamp_min(1e-12).log(), 0), self.owner, self.count)
+        agree = _top_move(log_p, self.moves, self.owner, self.count) == _top_move(w, self.moves, self.owner, self.count)
+        return dict(positions=float(self.count), cross_entropy=float(cross_entropy.sum()),
+                    kl=float((cross_entropy - entropy).sum()), top_move=float(agree.sum()))
+
+    @staticmethod
+    def summary(name, sums):
+        return {f'{name}_{key}': sums[key] / sums['positions'] for key in ('kl', 'top_move')}

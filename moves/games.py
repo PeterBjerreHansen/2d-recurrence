@@ -42,29 +42,6 @@ def parse_row(text):
     return games, failures
 
 
-def san_plies(text):
-    """The complete SAN plies of each game in a row, as written (for round-trip checks)."""
-    segments = text.split(';')[1:]
-    games = []
-    for index, segment in enumerate(segments):
-        tokens = segment.split(' ')
-        if index == len(segments) - 1:
-            tokens = tokens[:-1]
-        plies = [_MOVE_NUMBER.sub('', token) for token in tokens]
-        games.append([ply for ply in plies if ply])
-    return [game for game in games if game]
-
-
-def to_san(game):
-    """SAN of each ply of a game given as ply ids."""
-    board, plies = chess.Board(), []
-    for token in game:
-        move = id_move(token)
-        plies.append(board.san(move))
-        board.push(move)
-    return plies
-
-
 def positions(game):
     """The board before each ply, then the final board (``len(game) + 1`` boards).
 

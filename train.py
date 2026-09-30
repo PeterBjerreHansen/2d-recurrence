@@ -23,7 +23,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from data_loader import ChessData, file_hash
 from inference.live import create_live_state, decode_live_step, validate_live_inference_spec
 from model import GPT, GPTConfig
-from moves.data import OBJECTIVES, MoveData, training_batches
+from moves.rows import OBJECTIVES, RowData
 from moves.vocab import PAD
 from models.recurrent_2d import (Recurrent2DGPT, RecurrentGPTConfig,
                                  validate_recurrence_counts, validate_update_probability_distribution,
@@ -52,18 +52,14 @@ DEFAULTS = dict(
     # Warm start (temporal mode): this fraction of each update's microbatches first settles the
     # temporal memory with gradient-free passes, then trains its sampled schedule from it.
     warm_start_fraction=0.0, warm_start_max_passes=64, warm_start_tolerance=0.01,
-    # Move tokens (docs/engine_policy_plan.md): data_format='moves' reads a moves.prepare dataset
-    # and trains one objective: 'human' (next ply), 'legal' or 'engine'. Rows come from random
-    # games with probability random_game_fraction. init_from='continue' starts from the weights
-    # of continue_from with a fresh output layer, optimizer and step count.
-    data_format='characters', objective='next_token', random_game_fraction=0.0,
-    value_budget='deep', continue_from='',
+    # Move tokens (docs/engine_policy_plan.md): data_format='moves' reads a fixed move-row dataset
+    # (moves.build_stage1, moves.build_leela) in its fixed order and trains one objective: 'human'
+    # (next ply), 'legal' or 'engine'. init_from='continue' starts from the weights of continue_from
+    # with a fresh output layer, optimizer and step count.
+    data_format='characters', objective='next_token', continue_from='',
     # Live (cached, token-by-token) evaluation of recurrent move runs on dev games, at these core
     # iteration counts; None means [1] for temporal and [1, 2, 4] for depth and hybrid.
     live_eval_iters=1, live_eval_depths=None,
-    # Processes building move training batches ahead of the training loop (0: build in-process).
-    # Batches depend only on seed, rank and index, so this never changes what is trained on.
-    loader_workers=0,
 )
 
 
@@ -164,14 +160,12 @@ def train(config):
         raise ValueError('warm_start_tolerance must be nonnegative')
     if config['init_from'] not in ['scratch', 'resume', 'continue']:
         raise ValueError('init_from must be scratch, resume or continue')
-    moves = config['data_format'] == 'moves'
     if config['data_format'] not in ['characters', 'moves']:
         raise ValueError("data_format must be 'characters' or 'moves'")
-    if not moves and (config['objective'] != 'next_token' or config['random_game_fraction'] or
-                      config['init_from'] == 'continue' or config['live_eval_depths'] is not None or
-                      config['loader_workers']):
-        raise ValueError('Objectives, random games, continued runs, live evaluation and loader workers '
-                         'need data_format=moves')
+    moves = config['data_format'] == 'moves'
+    if not moves and (config['objective'] != 'next_token' or config['init_from'] == 'continue' or
+                      config['live_eval_depths'] is not None):
+        raise ValueError('Objectives, continued runs and live evaluation need move data')
     live_depths = []
     if moves and recurrent and config['live_eval_iters']:
         mode = config['recurrence_mode']
@@ -185,18 +179,10 @@ def train(config):
     if moves:
         if config['objective'] not in OBJECTIVES:
             raise ValueError(f'objective must be one of {OBJECTIVES} for move data')
-        random_fraction = config['random_game_fraction']
-        if (isinstance(random_fraction, bool) or not isinstance(random_fraction, (int, float)) or
-                not 0 <= random_fraction <= 1):
-            raise ValueError('random_game_fraction must be between zero and one')
-        if config['objective'] == 'engine' and random_fraction:
-            raise ValueError('The engine objective trains on engine-labelled human games only')
         if config['eval_panel_path']:
             raise ValueError('Evaluation panels are defined for character data only')
         if type(config['live_eval_iters']) is not int or config['live_eval_iters'] < 0:
             raise ValueError('live_eval_iters must be a nonnegative integer')
-        if type(config['loader_workers']) is not int or config['loader_workers'] < 0:
-            raise ValueError('loader_workers must be a nonnegative integer')
         # A resumed continuation keeps continue_from as provenance; resume checks it matches.
         if (config['init_from'] == 'continue' and not config['continue_from'] or
                 config['init_from'] == 'scratch' and config['continue_from']):
@@ -266,8 +252,7 @@ def train(config):
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     if moves:
-        data = MoveData(Path('data') / config['dataset'], config['block_size'],
-                        value_budget=config['value_budget'] if config['objective'] == 'engine' else None)
+        data = RowData(Path('data') / config['dataset'], config['block_size'])
     else:
         data = ChessData(Path('data') / config['dataset'], config['block_size'])
     panel = None
@@ -291,7 +276,7 @@ def train(config):
     checkpoint = None
     step, best_val, last_eval_step = 0, float('inf'), -1
     training_seconds = 0.0
-    move_counts = dict(human_plies=0, random_plies=0, supervised_positions=0, row_tokens=0)
+    move_counts = dict.fromkeys(data.count_keys, 0) if moves else {}
     continued = None
     if config['init_from'] == 'resume':
         checkpoint = torch.load(out / 'ckpt.pt', map_location='cpu', weights_only=False)
@@ -310,7 +295,7 @@ def train(config):
         mutable = {'out_dir', 'max_iters', 'init_from', 'eval_only', 'eval_interval', 'eval_iters', 'log_interval', 'keep_checkpoints', 'checkpoint_steps', 'checkpoint_interval', 'eval_panel_path',
                    # A warm start changes how batches are processed, not the model or optimizer state.
                    'warm_start_fraction', 'warm_start_max_passes', 'warm_start_tolerance',
-                   'live_eval_iters', 'live_eval_depths', 'loader_workers'}
+                   'live_eval_iters', 'live_eval_depths'}
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:
@@ -382,10 +367,6 @@ def train(config):
             return torch.autocast('cuda', dtype=getattr(torch, config['dtype']))
         return nullcontext()
 
-    def move_batch(split, generator, random_fraction, one_game_per_row=False):
-        return data.batch(split, config['batch_size'], device, generator, objective=config['objective'],
-                          random_fraction=random_fraction, one_game_per_row=one_game_per_row)
-
     def live_logits(x, depth_steps):
         """Cached token-by-token live execution: the deployed model, not the training graph."""
         spec = validate_live_inference_spec(raw_model.config, depth_steps, live_strategy)
@@ -401,7 +382,7 @@ def train(config):
         return targets.loss(logits)
 
     def move_metrics(name, batches):
-        """Pooled loss and objective metrics over (logits, loss, batch) triples."""
+        """Pooled loss and objective metrics over (logits, loss, batch) triples, consumed one at a time."""
         loss_sum, positions, sums = 0.0, 0, {}
         for logits, loss, batch in batches:
             count = batch.counts['supervised_positions']
@@ -416,46 +397,48 @@ def train(config):
         result = {name + '_loss': loss_sum / positions}
         if config['objective'] == 'human':
             result[name + '_accuracy'] = sums['correct'] / positions
-        elif config['objective'] == 'legal':
-            result.update({f'{name}_{key}': sums[key] / sums['positions']
-                           for key in ('legal_bce', 'illegal_bce', 'constant_bce', 'exact_set')})
-            result[name + '_precision'] = sums['true_positives'] / max(sums['predicted_positives'], 1)
-            result[name + '_recall'] = sums['true_positives'] / sums['legal_moves']
         else:
-            result.update({f'{name}_{key}': sums[key] / sums['positions'] for key in ('regret', 'best_move')})
+            result.update(type(batch.targets).summary(name, sums))
         return result
+
+    def row_batch(split, row_indices):
+        return data.batch(split, row_indices, device, objective=config['objective'])
+
+    def row_chunks(indices):
+        return [indices[start:start + config['batch_size']] for start in range(0, len(indices), config['batch_size'])]
 
     @torch.no_grad()
     def evaluate_moves():
-        """Training-graph metrics on training rows, dev games and random games; live metrics on dev games.
-
-        Dev and random games are evaluated one game per row, so no game reads another's state.
-        """
+        """Training-graph metrics on the first training rows and on every evaluation split; live metrics
+        on the first evaluation split. Evaluation splits hold one game per row."""
         result = {}
-        sets = [('train', 'train', config['random_game_fraction'], False, 10000), ('val', 'dev', 0.0, True, 20000)]
-        if config['objective'] != 'engine':
-            sets.append(('random', 'dev', 1.0, True, 30000))
-        for name, split, random_fraction, alone, offset in sets:
-            generator = torch.Generator().manual_seed(config['seed'] + offset)
-            schedule_rng = random.Random(config['recurrence_seed'] + offset)
-            scored = []
-            for _ in range(config['eval_iters']):
-                batch = move_batch(split, generator, random_fraction, alone)
+        size = config['eval_iters'] * config['batch_size']
+        sets = [('train', row_chunks(data.training_rows(0, size)))]
+        sets += [(split, row_chunks(np.arange(min(size, data.rows(split))))) for split in data.eval_splits]
+
+        def training_graph(split, chunks, schedule_rng):
+            for chunk in chunks:
+                batch = row_batch(split, chunk)
                 kwargs = dict(schedule=sample_schedule(config['eval_u_t'], config['eval_u_d'], schedule_rng)) if recurrent else {}
                 with context():
                     logits, loss = raw_model(batch.x, batch.targets, **kwargs)
-                scored.append((logits, loss, batch))
-            result.update(move_metrics(name, scored))
-        for depth_steps in live_depths:
-            # The same dev games as the training-graph 'val' metrics, so the two are paired.
-            generator = torch.Generator().manual_seed(config['seed'] + 20000)
-            scored = []
-            for _ in range(config['live_eval_iters']):
-                batch = move_batch('dev', generator, 0.0, True)
+                yield logits, loss, batch
+
+        def live(split, chunks, depth_steps):
+            for chunk in chunks:
+                batch = row_batch(split, chunk)
                 with context():
                     logits = live_logits(batch.x, depth_steps)
-                scored.append((logits, objective_loss(logits, batch.targets), batch))
-            result.update(move_metrics(f'live_J{depth_steps}_val', scored))
+                yield logits, objective_loss(logits, batch.targets), batch
+
+        for number, (split, chunks) in enumerate(sets):
+            schedule_rng = random.Random(config['recurrence_seed'] + 10000 * (number + 1))
+            result.update(move_metrics(split, training_graph(split, chunks, schedule_rng)))
+        first = data.eval_splits[0]
+        # The first rows of the training-graph evaluation split, so the two are paired.
+        live_chunks = row_chunks(np.arange(min(config['live_eval_iters'] * config['batch_size'], data.rows(first))))
+        for depth_steps in live_depths:
+            result.update(move_metrics(f'live_J{depth_steps}_{first}', live(first, live_chunks, depth_steps)))
         return result
 
     @torch.no_grad()
@@ -518,18 +501,14 @@ def train(config):
             dist.broadcast_object_list(selected, src=0)
         return selected[0]
 
-    if moves and not config['eval_only']:
-        # Batch i of this rank is the same whatever the step it's built at, so resume just skips ahead.
-        train_batches = training_batches(data, config['batch_size'], objective=config['objective'],
-                                         random_fraction=config['random_game_fraction'], seed=config['seed'],
-                                         rank=rank, start=step * accumulation, workers=config['loader_workers'])
+    selection_key = f'{data.eval_splits[0]}_loss' if moves else 'val_nll'
     model.train()
     while True:
         exhausted = bool(budget and training_seconds >= budget)
         if config['eval_only'] or ((step % config['eval_interval'] == 0 or step == config['max_iters'] or exhausted) and step != last_eval_step):
             # All ranks participate; raw-model evaluation avoids DDP synchronization asymmetry.
             metrics = evaluate()
-            best_val = min(best_val, metrics['val_loss' if moves else 'val_nll'])
+            best_val = min(best_val, metrics[selection_key])
             last_eval_step = step
             if master:
                 if moves:
@@ -571,7 +550,9 @@ def train(config):
             if ddp:
                 model.require_backward_grad_sync = micro_step == accumulation - 1
             if moves:
-                batch = next(train_batches).to(device)
+                # Rows are read in the dataset's fixed order: micro-batch m takes the next batch_size rows.
+                first = ((step * accumulation + micro_step) * world_size + rank) * config['batch_size']
+                batch = row_batch('train', data.training_rows(first, config['batch_size']))
                 x, y = batch.x, batch.targets
                 for key, value in batch.counts.items():
                     update_counts[key] += value

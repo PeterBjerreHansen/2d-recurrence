@@ -32,13 +32,14 @@ This branch retrains the recurrence architectures (transformer, temporal-only, d
 
 - **`moves/`:**
   - the vocabulary (`vocab.py`);
-  - game parsing and random games (`games.py`);
-  - the character-to-move conversion (`prepare.py`);
-  - packed batches and targets (`data.py`, `objectives.py`);
-  - engine values and the teacher (`values.py`, `teacher.py`, `annotate.py`).
-- **Planned replacement:** the current loader builds batches on the fly. It is being replaced by fixed, prebuilt datasets read by one row-indexed loader (plan, "Datasets"); the engine stage moves to Leela's self-play data. Until then, the on-the-fly code is the fallback, not the target design.
-- **Trainer:** `train.py` trains on move data with `data_format='moves'` and `objective='human' | 'legal' | 'engine'`. `init_from='continue'` starts the engine stage from an earlier run's trunk.
-- **Tests:** `tests/test_moves.py` and `tests/test_moves_training.py`. The Stockfish tests are skipped unless `stockfish` is on the PATH or `STOCKFISH_PATH` is set.
+  - parsing games and random games (`games.py`);
+  - legal and policy targets (`objectives.py`);
+  - the dataset format, packer and loader (`rows.py`);
+  - the stage-1 builder (`build_stage1.py`);
+  - Leela archives: reading (`leela.py`, `leela_policy.py`) and the stage-2 builder (`build_leela.py`);
+  - Stockfish labelling for the deferred evaluation panel (`teacher.py`, `values.py`).
+- **Trainer:** `train.py` trains on a move dataset with `data_format='moves'` and `objective='human' | 'legal' | 'engine'`. `init_from='continue'` starts stage 2 from an earlier run's trunk.
+- **Tests:** `tests/test_moves.py`, `tests/test_move_models.py`, `tests/test_rows.py` and `tests/test_leela.py`. The Stockfish tests are skipped unless `stockfish` is on the PATH or `STOCKFISH_PATH` is set. The real-archive tests are skipped unless `LEELA_ARCHIVE` points to a downloaded Leela archive.
 
 ## State of data and checkpoints
 

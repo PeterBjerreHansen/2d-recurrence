@@ -1,6 +1,6 @@
 # Move-target training: plan
 
-> **Status:** steps 1–2 are implemented for an on-the-fly data pipeline (`moves/`, trainer options, tests). The fixed-dataset pipeline in [Datasets](#datasets) replaces it and isn't built yet. No pilot has run.
+> **Status:** steps 1–3 are implemented: the dataset builders and loader (`moves/build_stage1.py`, `moves/build_leela.py`, `moves/rows.py`) and training on them (`data_format='moves'`). No dataset has been built at full size, and no pilot has run.
 >
 > This document is the single source of truth for the `engine-policy` branch. Read [Pitfalls](#pitfalls) before implementing anything. Record every decision that changes the design under [Decisions](#decisions), with its reason; don't edit frozen items silently.
 
@@ -117,7 +117,7 @@ The 20B study trained a transformer, a temporal-only, a depth-only and a hybrid 
    - translate castling;
    - truncate at 255 plies;
    - keep each position's legal moves with Leela's probabilities, the position value and the visit count.
-3. **Store the probabilities raw.** Removing the one-visit floor or filtering by visit count is a training option, decided in the pilot.
+3. **Train on the probabilities raw,** as Leela's own training does. Visit counts are stored, so filtering can be added later if play shows it is needed.
 4. **Split, shuffle and pack** as in stage 1.
 5. **Evaluation files:** Leela dev and test.
 6. **Sizes:** **100M positions for the pilot** (~18 archives, ~13 GB), **400M for the main runs** (~72 archives, ~52 GB).
@@ -135,7 +135,7 @@ All losses apply at positions with a target, on the final pass only.
   - Average over the 1,968 moves per position, then over positions.
   - Report the loss on legal and on illegal moves separately, against a constant-rate baseline: about 1.8% of moves are legal, so a constant predictor already scores about 0.089 nats.
 - **Engine:** softmax over the legal moves only, with cross-entropy against Leela's probabilities.
-- **Weighting and target processing** (such as floor removal or a minimum visit count) need a pilot result showing they help. They are frozen before the main runs.
+- **Loss weighting** needs a pilot result showing it helps, and is frozen before the main runs.
 
 ### Evaluation teacher
 
@@ -183,7 +183,7 @@ Each metric is used only where it means something.
 
 | | Human | Legal | Engine |
 | --- | --- | --- | --- |
-| Legality: probability on legal moves (human), precision and recall at 0.5 (legal), exact-set accuracy | ✓ | ✓ | — the head only saw legal moves |
+| Legality: probability on legal moves and legality of the top move (human); precision and recall at 0.5 and exact-set accuracy (legal) | ✓ | ✓ | — the head only saw legal moves |
 | Errors on **almost-legal moves**: illegal only because of a pin, a check or a blocked line | ✓ | ✓ | — |
 | Regret of the top-scoring legal move on the panel, $\max_{a'}Q - Q(\hat a)$ | ✓ | — every legal move scores alike in an ideal head | ✓ |
 | Best-move agreement on the panel (near-ties count) | ✓ | — | ✓ |
@@ -203,21 +203,26 @@ Each metric is used only where it means something.
 
 Declared now; margins and thresholds are set on the development sets before the main runs.
 
-1. **Learning speed (stage 1):** tokens seen until each arm reaches a fixed exact-set accuracy, in the human and legal conditions, with board probes as a separate diagnostic.
+1. **Learning speed (stage 1):** tokens seen until each arm reaches a fixed threshold on its own condition's metric: exact-set accuracy for legal, next-ply loss for human. Arms are compared within a condition.
+   - Exact-set accuracy is not read from human heads: they score unpopular legal moves low whatever they know about the board.
+   - Whether legality targets teach the board faster than imitation is judged by board probes only.
    - Legality on human games will likely saturate near 100% for every arm, as board state does in [Chess-World-Model](https://arxiv.org/abs/2605.30100).
    - So speed, the almost-legal moves and the unseen generator carry the comparison, not final in-distribution accuracy.
 2. **Target × loops (the central test):** for depth and hybrid, the regret reduction from J=1 to J=4 in the engine continuation, minus the same reduction in the human-trained model, on the same panel positions.
    - Also whether it is larger on high-disagreement positions than on low ones.
    - Both are tested as interactions, not as two separate significance tests, and reported separately for Leela and human positions.
+   - **This compares recipes.** The engine model has had a second stage, a fresh head and a softmax over the legal moves; the human model has not. So the result is recipe × loops.
+   - **Matched human continuation** (decided after the pilot): continue the human trunks on Lichess games for the same stage-2 budget, with a fresh head and a softmax over the legal moves. Then only the target and its games differ, and the claim can be about the target.
 3. **Arms in the engine stage,** at matched data:
    - hybrid vs temporal at J=1, which matches block applications;
    - hybrid vs depth at J=4, which also matches;
    - hybrid J=4 vs temporal, reported with measured latency, prefill and cache bytes. This is not matched compute.
 
 **Statistics:**
+- **the estimate** is the mean over seeds of each seed's paired contrast (the same seed index and panel positions in both conditions);
 - effects for each seed shown individually;
-- intervals from bootstrapping games, with each game's positions resampled together;
-- a result counts only if it exceeds the practical margin, not merely if its interval excludes zero.
+- intervals within a seed from bootstrapping games, with each game's positions resampled together. They are conditional on the trained checkpoints and say nothing about seed variation;
+- a result counts only if all three seeds agree in sign and the mean exceeds the practical margin, not merely if an interval excludes zero.
 
 **Diagnostic, not primary:** an engine stage continued from legal-stage checkpoints matched on exact-set accuracy, with the matching rule fixed in advance.
 
@@ -225,8 +230,8 @@ Declared now; margins and thresholds are set on the development sets before the 
 
 **Can show:**
 - how whole training recipes compare, at matched data;
-- whether engine targets increase the benefit of loops relative to human targets;
-- whether legality targets teach the board faster.
+- whether the engine recipe increases the benefit of loops relative to the human recipe; attributing it to the target needs the matched human continuation;
+- whether legality targets teach the board faster, by board probes.
 
 **Cannot show, without more evidence:**
 - compute-optimality: temporal-only has no 20-block configuration;
@@ -274,21 +279,19 @@ For anyone implementing or analysing on this branch:
 2. dataset builds and training throughput are adequate, with their cost measured;
 3. development sets have room to improve. If every arm sits at the ceiling, use harder sets or a smaller scale, both declared in advance;
 4. learning curves and seed variance are measured;
-5. the packing-order effect is measured;
-6. the Leela target options are compared: raw, floor removed, minimum visits;
-7. panel labels are reproducible, and Stockfish throughput at both budgets is known.
+5. the packing-order effect is measured.
 
 ## Steps
 
-1. ✅ **Tokenizer, conversion, teacher and tests** (on-the-fly pipeline).
+1. ✅ **Tokenizer, parsing, teacher and tests.**
 2. ✅ **Model and trainer:** vocabulary and context from the config, untied output layers, the human and legal losses, live evaluation, continued runs.
-3. **Fixed datasets and one loader:**
+3. ✅ **Fixed datasets and one loader:**
    - the stage-1 builder (games, random games, packing, legal moves);
    - the Leela converter (verified replay, castling, truncation);
    - the engine loss;
    - one row-indexed loader for both stages.
-4. **Evaluation panel:** pin Stockfish and label panel positions.
-5. **Pilot**, then fix every open decision below.
+4. **Pilot** without the evaluation panel, then fix the training decisions below.
+5. **Evaluation panel** (deferred until a trained model plays chess): pin Stockfish; label a development panel and set node budgets and practical margins on it; check that labels reproduce. The test panel is labelled only for the frozen analysis.
 6. **Stage 1:** 4 arms × 3 seeds, human and legal.
 7. **Stage 2:** both continuations, 4 arms × 3 seeds each.
 8. **Report** next to the scripts.
@@ -298,11 +301,14 @@ For anyone implementing or analysing on this branch:
 **Open until the pilot:**
 - batch size and update count;
 - learning rate for each objective;
-- loss weighting, and the Leela target options;
+- loss weighting;
 - the Leela archive range;
+- the learning-speed thresholds;
+- whether to run the matched human continuation.
+
+**Open until the development panel:**
 - panel size and node budgets;
-- practical margins;
-- the exact-set threshold for learning speed.
+- practical margins.
 
 **Log:** (date — decision — reason)
 
@@ -318,13 +324,13 @@ For anyone implementing or analysing on this branch:
   - Reason: the opponent claims when that beats their own prospects. This is what makes the teacher's values depend on history.
 - **2026-09-30 — A new game before every per-move search, not just every position.**
   - Reason: otherwise the hash from earlier moves' searches gives later moves more work, and labels depend on move order.
-- **2026-09-30 — Label cache.**
+- **2026-09-30 — Label cache** *(its code was deleted with the old annotation script; reimplement with the panel)*.
   - Labels of positions up to 16 plies deep are cached by their history key: the FEN plus the positions since the last capture or pawn move.
   - Reason: openings repeat across games, and the key captures everything that can change a deterministic engine's labels.
 - **2026-09-30 — Score bounds are kept, not rejected.**
   - Each label records whether the engine reported an exact score or a bound, flipped to the mover's side. The dataset manifest counts bounded labels per budget.
   - Reason: with a node limit the final score is normally exact; the counts show whether bounds matter before deciding to drop them.
-- **2026-09-30 — Best-move agreement tolerance.**
+- **2026-09-30 — Best-move agreement tolerance** *(its metric was deleted with the Stockfish-value target; reimplement with the panel)*.
   - The chosen move agrees if its $Q$ is within 0.01 of the best (`NEAR_TIE`).
   - Reason: the plan counts near-ties as agreement; 0.01 is one percentage point of win probability.
 - **2026-09-30 — Evaluation during training.**
@@ -336,7 +342,7 @@ For anyone implementing or analysing on this branch:
   - no parse failures;
   - longest game in that 40,000-row sample: 187 plies (119,000 games);
   - legal-move targets are built at about 28,000 positions/s per process.
-- **2026-09-30 — Training batches built by worker processes, depending only on (seed, rank, batch index)** *(superseded as the default by the fixed datasets; kept as the fallback if they prove too slow or large)*.
+- **2026-09-30 — Training batches built by worker processes, depending only on (seed, rank, batch index)** *(superseded by the fixed datasets; code deleted)*.
   - Measured with legal targets and 20% random rows: 30,000 supervised positions/s in-process, 114,000 with 4 workers, 230,000 with 8.
 - **2026-09-30 — The engine stage uses Leela's test80 self-play data, as search-policy distillation.**
   - Reason: a dense target from a strong search, free and open. The alternatives were weaker; see [Why these choices](#why-these-choices).
@@ -354,6 +360,37 @@ For anyone implementing or analysing on this branch:
   - Human and random games may share a row.
   - Sizes: stage 1 at 0.5B positions first, then the full ~1.9B; stage 2 at 100M positions for the pilot and 400M for the main runs.
   - Reason: identical data for every run, a simple loader with no CPU bottleneck, and the same format for every dataset.
+- **2026-09-30 — How the fixed datasets are built and read** (step 3).
+  - Builders turn each source into a stream of games with a move list per position, and one packer writes any such stream into rows. Stage 1 packs straight from memory. Leela games are first converted per archive into game stores, then shuffled and packed; the stores are deleted afterwards.
+  - Games longer than the context are truncated, in both builders (at most 255 plies). Random games are generated up to that length.
+  - Training order: pass 0 reads rows in stored order (shuffled at build time); pass *k* uses a fixed permutation seeded by *k*. Micro-batch *m* takes the next `batch_size` rows. So every run reads the same rows, and exact resume needs only the step count.
+  - Evaluation during training reads the first rows of each evaluation split, one game per row. Live evaluation uses the first rows of the first evaluation split, so it is paired with the training-graph numbers.
+  - Engine target options *(deleted, below)*: `policy_floor` dropped moves with at most ~one visit, and `policy_min_visits` dropped positions with smaller searches.
+  - Reason: one format and one loader for both stages, with all chess code at build time.
+- **2026-09-30 — The evaluation panel is deferred until a trained model plays chess.**
+  - The pilot judges stage 1 by the legality metrics, and stage 2 by top-move agreement with Leela and KL divergence.
+  - Regret, best-move agreement against Stockfish, and the shallow–deep strata wait for the panel. So does the central target × loops test, which is scored on it.
+  - Reason: labelling a panel is not worth the effort before a model plays well enough for regret to mean something.
+- **2026-09-30 — First fixed-dataset build on real data** (2M training positions, 2,000 games per evaluation file, 6 workers):
+  - 85 s end to end, about 59 bytes per position on disk (so ~30 GB for the 0.5B version);
+  - no parse failures and no truncated Lichess games; random games average 238 plies; rows are 82% full;
+  - reading legal targets back: 25M positions/s in one process, against 30,000/s computed on the fly. The loader needs no workers.
+- **2026-09-30 — The on-the-fly pipeline is deleted.**
+  - Deleted: the on-the-fly loader and conversion (`moves/data.py`, `moves/prepare.py`); the trainer's options for it (`random_game_fraction`, `loader_workers`, `value_budget`); the Stockfish-value dataset and target (`moves/annotate.py`, `ValueTargets`); the archive `fetch` helper (a `curl` range replaces it).
+  - Kept: `moves/teacher.py` and `moves/values.py`, the tested Stockfish labelling protocol, for the panel.
+  - The only move format is the fixed dataset, so `data_format='moves'` now means it.
+  - Reason: the fixed datasets are measured to be fast and affordable, so keeping the old pipeline "as a fallback" only added code and trainer branches. It stays in git history.
+- **2026-09-30 — Leela conversion speed.**
+  - Measured: about 2,100 positions/s per process, so about 1.7 hours per 100M positions on 8 cores.
+  - Most of the time goes to decoding every listed move through python-chess. Lookup tables could make it two- to three-fold faster if the 400M build needs it.
+- **2026-09-30 — Pre-commit review of step 3.**
+  - **Leela targets are used raw; the target options are deleted.** Dropping one-visit moves took legal moves out of the softmax, so the model could choose them at no cost; dropping positions broke the loss pooling and could empty a batch; and dev metrics were measured against the modified targets. Leela trains on the raw targets itself, and the pilot couldn't judge the options without the panel.
+  - **Learning speed uses each condition's own metric,** and board-learning claims rest on probes. Reading exact-set accuracy from a human head breaks Pitfall 2.
+  - **The central test is recipe × loops** until a matched human continuation is run.
+  - **Panel budgets and margins are set on a development panel,** not in the training pilot.
+  - **Seed-level inference:** the mean of paired per-seed contrasts, with sign agreement across seeds.
+  - Evaluation during training runs batch by batch; it had sent `eval_iters × batch_size` training rows through one forward pass. The Leela converter skips records with no probability mass or an out-of-range played move, and empty game stores load.
+
 
 ## Cost
 

@@ -3,7 +3,6 @@
 import chess
 import chess.engine
 
-from moves.teacher import Teacher
 
 PIECE_VALUES = {chess.PAWN: 100, chess.KNIGHT: 300, chess.BISHOP: 300, chess.ROOK: 500, chess.QUEEN: 900}
 
@@ -27,9 +26,3 @@ class MaterialEngine:
     def quit(self):
         pass
 
-
-class MaterialTeachers:
-    """Two budgets of the material engine, as ``moves.annotate`` expects from a factory."""
-
-    def __call__(self):
-        return {'shallow': Teacher(MaterialEngine(), 1), 'deep': Teacher(MaterialEngine(), 2)}
