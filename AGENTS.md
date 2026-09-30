@@ -36,6 +36,7 @@ This branch retrains the recurrence architectures (transformer, temporal-only, d
   - the character-to-move conversion (`prepare.py`);
   - packed batches and targets (`data.py`, `objectives.py`);
   - engine values and the teacher (`values.py`, `teacher.py`, `annotate.py`).
+- **Planned replacement:** the current loader builds batches on the fly. It is being replaced by fixed, prebuilt datasets read by one row-indexed loader (plan, "Datasets"); the engine stage moves to Leela's self-play data. Until then, the on-the-fly code is the fallback, not the target design.
 - **Trainer:** `train.py` trains on move data with `data_format='moves'` and `objective='human' | 'legal' | 'engine'`. `init_from='continue'` starts the engine stage from an earlier run's trunk.
 - **Tests:** `tests/test_moves.py` and `tests/test_moves_training.py`. The Stockfish tests are skipped unless `stockfish` is on the PATH or `STOCKFISH_PATH` is set.
 
