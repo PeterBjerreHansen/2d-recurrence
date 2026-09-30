@@ -1,0 +1,45 @@
+{
+  "train": {
+    "rows": 2377406,
+    "games": 6849348,
+    "positions": 500000224
+  },
+  "human_dev": {
+    "rows": 20000,
+    "games": 20000,
+    "positions": 1197924
+  },
+  "random_dev": {
+    "rows": 20000,
+    "games": 20000,
+    "positions": 4762245
+  },
+  "human_test": {
+    "rows": 20000,
+    "games": 20000,
+    "positions": 1260438
+  },
+  "random_test": {
+    "rows": 20000,
+    "games": 20000,
+    "positions": 4769997
+  }
+}
+     3270.36 real     24134.03 user       124.99 sys
+          4306157568  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             1271741  page reclaims
+               12883  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   1  messages sent
+                   1  messages received
+                   1  signals received
+              948133  voluntary context switches
+            10528420  involuntary context switches
+           127266265  instructions retired
+            53084443  cycles elapsed
+            12026408  peak memory footprint
