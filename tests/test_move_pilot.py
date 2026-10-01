@@ -10,12 +10,14 @@ from tests.test_rows import CONTEXT, stage1  # noqa: F401 (fixture)
 
 @pytest.fixture
 def datasets(tmp_path, monkeypatch):
-    for name, rows, positions in (('stage1', 2_400_000, 500_000_000), ('leela', 500_000, 100_000_000)):
+    for name, rows, positions in (('stage1', 2_400_000, 500_000_000), ('leela', 500_000, 100_000_000),
+                                  ('stage1_full', 9_600_000, 2_000_000_000)):
         (tmp_path / name).mkdir()
         (tmp_path / name / 'dataset.json').write_text(
             json.dumps(dict(splits=dict(train=dict(rows=rows, positions=positions)))))
     monkeypatch.setattr(pilot, 'STAGE1', tmp_path / 'stage1')
     monkeypatch.setattr(pilot, 'LEELA', tmp_path / 'leela')
+    monkeypatch.setattr(pilot, 'STAGE1_FULL', tmp_path / 'stage1_full')
     monkeypatch.setattr(pilot, 'ROOT', tmp_path / 'results')
     return tmp_path
 
@@ -164,3 +166,30 @@ def test_each_arm_trains_at_its_own_rate_in_both_stages(datasets):
             config = pilot.run_config(name)
             assert config['learning_rate'] == rate and config['min_lr'] == pytest.approx(rate / 10)
     assert pilot.run_config('lr_legal_depth_1e-3')['learning_rate'] == 1e-3
+
+
+def test_full_runs_start_shallower_end_deeper_and_keep_few_checkpoints(datasets):
+    pilot_hybrid, full = pilot.run_config('legal_hybrid'), pilot.run_config('full_legal_hybrid')
+    updates = full['max_iters']
+    assert updates == 24000 and full['dataset'] == str(datasets / 'stage1_full')
+    assert full['update_support'] == [0, 1, 2, 3, 4] and full['eval_u_t'] == full['eval_u_d'] == 4
+    mean = lambda config, step: sum(count * p for count, p in _max_count_mass(config, step).items())
+    assert mean(full, 0) < mean(pilot_hybrid, 0) and mean(full, updates - 1) > mean(pilot_hybrid, pilot_hybrid['max_iters'] - 1)
+    assert [mean(full, round(f * updates)) for f in (0, 0.25, 0.5, 0.75)] == sorted(mean(full, round(f * updates)) for f in (0, 0.25, 0.5, 0.75))
+    assert full['eval_interval'] == 1000 and full['checkpoint_interval'] == 500
+    assert full['checkpoint_steps'] == [full['lr_decay_start']] and full['live_eval_depths'] == [1, 2, 4, 5]
+    temporal = pilot.run_config('full_legal_temporal')
+    assert temporal['eval_u_t'] == 4 and temporal['eval_u_d'] == 0 and temporal['live_eval_depths'] is None
+
+
+def test_the_full_schedule_trains_up_to_five_passes_and_decodes_them_live(stage1, tmp_path):  # noqa: F811
+    _, directory = stage1
+    config = pilot._config('hybrid', 'legal', directory, 20, tmp_path / 'full', schedule=pilot.FULL_SCHEDULE)
+    config.update(block_size=CONTEXT, n_head=2, n_embd=16, batch_size=2, gradient_accumulation_steps=2,
+                  eval_interval=10, eval_iters=1, log_interval=1, live_eval_batches=1, live_eval_depths=[1, 5],
+                  checkpoint_interval=0, device='cpu', dtype='float32', num_threads=1)
+    pilot.train(config)
+    records = [json.loads(line) for line in (tmp_path / 'full' / 'metrics.jsonl').read_text().splitlines()]
+    counts = {max(s['u_t'], s['u_d']) for r in records if r['event'] == 'train' for s in r['schedules']}
+    assert 4 in counts and counts <= {0, 1, 2, 3, 4}
+    assert 'live_J5_human_dev_exact_set' in [r for r in records if r['event'] == 'evaluation'][-1]

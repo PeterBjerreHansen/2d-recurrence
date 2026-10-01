@@ -47,6 +47,7 @@ from train import DEFAULTS, train
 ROOT = Path('experiments/move_pilot/results')
 # Dataset names, under data/ (as the trainer resolves them).
 STAGE1 = 'stage1_v1'
+STAGE1_FULL = 'stage1_full_v1'
 LEELA = 'leela_v1'
 STAGE2_POSITIONS = 50_000_000
 ENGINE_LONG_PASSES = 2
@@ -80,6 +81,15 @@ UPDATE_SUPPORT = [0, 1, 2, 3]
 CURRICULUM = ((0.00, (0.25, 0.35, 0.25, 0.15)),
               (0.25, (0.15, 0.30, 0.30, 0.25)),
               (0.50, (0.10, 0.25, 0.35, 0.30)))
+PILOT_SCHEDULE = (UPDATE_SUPPORT, CURRICULUM)
+# Full stage-1 runs start shallower and end deeper than the pilot, up to five passes. The pilot's
+# recurrent arms left the early plateau late, possibly from unrolling 3-4 passes from the first update.
+# Phases are fractions of the run, so the longer run also deepens later in updates. Over the run, the
+# mean number of extra passes is about the pilot's.
+FULL_SCHEDULE = ([0, 1, 2, 3, 4], ((0.00, (0.50, 0.35, 0.15, 0.00, 0.00)),
+                                   (0.25, (0.20, 0.35, 0.30, 0.15, 0.00)),
+                                   (0.50, (0.10, 0.20, 0.30, 0.25, 0.15)),
+                                   (0.75, (0.05, 0.10, 0.20, 0.30, 0.35))))
 HYBRID_DIAGONAL_MASS = 0.80
 TEMPORAL_GATE_INIT = 0.10
 # Temporal only, in the decay phase: a quarter of each update's micro-batches start from settled
@@ -89,15 +99,16 @@ WARM_START = dict(warm_start_fraction=0.25, warm_start_max_passes=64, warm_start
 ARCHITECTURES = {
     'transformer': dict(architecture='baseline', update_support=[], update_probabilities=[],
                         eval_u_t=0, eval_u_d=0),
-    'temporal': dict(architecture='recurrent', recurrence_mode='temporal', eval_u_t=3, eval_u_d=0),
-    'depth': dict(architecture='recurrent', recurrence_mode='depth', eval_u_t=0, eval_u_d=3),
-    'hybrid': dict(architecture='recurrent', recurrence_mode='hybrid', eval_u_t=3, eval_u_d=3),
+    # Recurrent arms are evaluated in the training graph at the schedule's largest update count.
+    'temporal': dict(architecture='recurrent', recurrence_mode='temporal'),
+    'depth': dict(architecture='recurrent', recurrence_mode='depth'),
+    'hybrid': dict(architecture='recurrent', recurrence_mode='hybrid'),
 }
 
 
 def run_names():
     names = [f'legal_{arm}' for arm in ARMS] + ['legal_hybrid_seed2'] + [f'engine_{arm}' for arm in ARMS]
-    names += [f'engine_long_{arm}' for arm in ARMS]
+    names += [f'engine_long_{arm}' for arm in ARMS] + [f'full_legal_{arm}' for arm in ARMS]
     names += [f'lr_{objective}_{rate}' for objective in ('legal', 'engine') for rate in LR_CHECK_RATES]
     names += [f'lr_legal_{arm}_{rate}' for arm in ARMS[1:] for rate in LR_CHECK_RATES]
     return names
@@ -110,13 +121,13 @@ def updates_for(dataset, positions=None):
     return math.ceil(rows / ROWS_PER_UPDATE)
 
 
-def _matrix(mode, probabilities):
-    return build_update_probability_matrix(UPDATE_SUPPORT, mode, probabilities,
+def _matrix(mode, probabilities, support=UPDATE_SUPPORT):
+    return build_update_probability_matrix(support, mode, probabilities,
                                            HYBRID_DIAGONAL_MASS if mode == 'hybrid' else None)
 
 
 def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curriculum=True, learning_rate=None,
-            micro_batch=MICRO_BATCH):
+            micro_batch=MICRO_BATCH, schedule=PILOT_SCHEDULE):
     if ROWS_PER_UPDATE % micro_batch:
         raise ValueError(f'The micro-batch size must divide {ROWS_PER_UPDATE}')
     accumulation = ROWS_PER_UPDATE // micro_batch
@@ -141,15 +152,17 @@ def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curricu
                   keep_checkpoints=True, checkpoint_steps=[decay_start, updates])
     mode = config.get('recurrence_mode')
     if config['architecture'] == 'recurrent':
-        config.update(update_support=list(UPDATE_SUPPORT), temporal_memory_gate_init=TEMPORAL_GATE_INIT)
+        support, phases = schedule
+        config.update(update_support=list(support), temporal_memory_gate_init=TEMPORAL_GATE_INIT,
+                      eval_u_t=max(support) if mode != 'depth' else 0, eval_u_d=max(support) if mode != 'temporal' else 0)
         if curriculum:
             config.update(update_probabilities=[], update_probability_schedule=dict(
                 type='piecewise_constant',
-                phases=[dict(start_step=round(fraction * updates), update_probabilities=_matrix(mode, probabilities))
-                        for fraction, probabilities in CURRICULUM]))
+                phases=[dict(start_step=round(fraction * updates), update_probabilities=_matrix(mode, probabilities, support))
+                        for fraction, probabilities in phases]))
         else:
             # A continuation keeps the final mixture of stage 1 throughout.
-            config.update(update_probabilities=_matrix(mode, CURRICULUM[-1][1]), update_probability_schedule=None)
+            config.update(update_probabilities=_matrix(mode, phases[-1][1], support), update_probability_schedule=None)
     return config
 
 
@@ -173,6 +186,16 @@ def run_config(name, micro_batch=MICRO_BATCH):
             return config
         return _config('transformer', objective, STAGE1, round(LR_CHECK_FRACTION * updates_for(STAGE1)), out_dir,
                        learning_rate=float(rate), micro_batch=micro_batch)
+    if parts[0] == 'full':
+        arm = parts[2]
+        updates = updates_for(STAGE1_FULL)
+        config = _config(arm, 'legal', STAGE1_FULL, updates, out_dir, micro_batch=micro_batch, schedule=FULL_SCHEDULE)
+        # Evaluation every 1,000 updates; a recovery checkpoint every 500, and the pre-decay checkpoint kept
+        # (a stage-2 run may continue from it). Live decoding covers the schedule's deepest count (J=5).
+        config.update(eval_interval=1000, checkpoint_interval=500, checkpoint_steps=[config['lr_decay_start']])
+        if arm in ('depth', 'hybrid'):
+            config['live_eval_depths'] = [1, 2, 4, 5]
+        return config
     if parts[0] == 'engine' and parts[1] == 'long':
         arm = parts[2]
         config = _config(arm, 'engine', LEELA, ENGINE_LONG_PASSES * updates_for(LEELA), out_dir, curriculum=False,
@@ -213,9 +236,9 @@ def bench_config(name, updates, micro_batch, out_dir):
     config.update(out_dir=str(out_dir), max_iters=updates, warmup_iters=1, lr_decay_start=updates - 2,
                   lr_decay_iters=updates, eval_interval=10**9, eval_iters=1, live_eval_batches=0, log_interval=1,
                   keep_checkpoints=False)
-    if config['architecture'] == 'recurrent':
-        config.update(update_probabilities=_matrix(config['recurrence_mode'], CURRICULUM[-1][1]),
-                      update_probability_schedule=None)
+    if config['architecture'] == 'recurrent' and config['update_probability_schedule']:
+        phases = config['update_probability_schedule']['phases']
+        config.update(update_probabilities=phases[-1]['update_probabilities'], update_probability_schedule=None)
     return config
 
 
