@@ -77,7 +77,7 @@ All losses apply at positions with a target, on the final pass only.
 ### Training protocol
 
 - **Updates:** 400 rows of 256 tokens (~100k tokens, as the 20B study's 100 × 1,023 characters). The micro-batch size (50 by default, measured) only trades speed for memory; evaluation always covers 1,000 dev games, 100 of them live.
-- **Optimiser:** AdamW as in the 20B study, warmup–stable–decay (3% warmup, the last 10% decaying to a tenth of the peak). The peak learning rate is checked on the transformer per stage and applied to every arm: **1e-3 for stage 1**.
+- **Optimiser:** AdamW as in the 20B study, warmup–stable–decay (3% warmup, the last 10% decaying to a tenth of the peak). Each arm trains at its own best peak learning rate from a short check (a fifth of a run): **transformer 1e-3, temporal 3e-4, depth 3e-4, hybrid 1e-3**; the engine stage uses the same rates.
 - **Update support {0, 1, 2, 3}, gap-free and broad throughout; deepen by moving the centre, never by concentrating the mass** (20B report). The probabilities of max(U_T, U_D) = 0, 1, 2, 3 are (0.25, 0.35, 0.25, 0.15), then (0.15, 0.30, 0.30, 0.25) from 25% of the run, then (0.10, 0.25, 0.35, 0.30) from 50%. Hybrid puts 80% of each count on the diagonal. Stage 2 keeps the final mixture.
 - **Temporal-only gets warm-start batches** (a quarter of each update's micro-batches) in the decay phase, as the 20B report recommends. This is a recipe difference, stated as one.
 - **Evaluation every 200 updates,** including live decoding. Measured on MPS at 1–3% of training time; evaluations log their seconds, and GPU time spent evaluating stays under 5%.
@@ -184,7 +184,8 @@ Margins and thresholds are set on the development sets before the main runs.
 - **2026-09-30 — The evaluation panel waits until a model plays chess.** The pilot judges stage 1 by legality and stage 2 by agreement with Leela.
 - **2026-09-30 — Stage 1 is the legal target only; the played condition is a control.** The question is shallow vs deep targets; comparability with the 20B run is not a goal.
 - **2026-09-30 — Pilot defaults** as in [Training protocol](#training-protocol): the 20B recipe where it worked, and the 20B report's recommendations (a broad, gap-free support; warm starts in the decay) where it didn't.
-- **2026-09-30 — Stage-1 learning rate 1e-3.** Transformer, a fifth of a run (1,189 updates), dev legal loss / exact set: 1e-4 0.0185 / 0.12; 3e-4 0.0086 / 0.28; 1e-3 0.0058 / 0.37; 3e-3 0.0068 / 0.33. No instability at 1e-3. Applied to every arm; the recurrent runs are watched for loss spikes early.
+- **2026-10-01 — Seed variance is large at pilot scale.** Two hybrid seeds at the same settings ended at 0.890 / 0.926 human and 0.512 / 0.648 random exact set: as large as the gaps between arms. Orderings need several seeds; random-game exact set is the noisiest measure.
+- **2026-10-01 — Each arm at its own learning rate.** Checked at a fifth of a run (1,189 updates), dev legal loss: transformer 0.0185 / 0.0086 / **0.0058** / 0.0068 at 1e-4 / 3e-4 / 1e-3 / 3e-3; temporal **0.0195** at 3e-4, 0.0306 at 1e-3; depth 0.0191 / **0.0161** / 0.0270 at 1e-4 / 3e-4 / 1e-3; hybrid 0.0384 at 3e-4, **0.0349** at 1e-3. The transformer's rate is wrong for depth and temporal, whose shared core weights collect gradient from every pass. Hybrid's margin is small. The first stage-1 runs of temporal and depth at 1e-3 are kept as records (`_lr1e-3`).
 - **2026-09-30 — Exact set is thresholded.** The earlier version picked the true number of top moves, so it measured ranking; that is now `separation`. The constant baseline uses one legal rate, not each position's count.
 
 ## Cost

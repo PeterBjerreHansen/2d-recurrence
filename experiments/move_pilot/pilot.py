@@ -20,7 +20,9 @@ Runs:
 - ``engine_{arm}``: stage 2, continued from ``legal_{arm}`` on ``STAGE2_POSITIONS``
   Leela positions, with a fresh output layer.
 - ``lr_{objective}_{rate}``: the learning-rate check on the transformer, a fifth of
-  a run's length (the engine check continues from ``legal_transformer``).
+  a run's length (the engine check continues from ``legal_transformer``);
+  ``lr_legal_{arm}_{rate}`` checks a recurrent arm, whose shared core weights may
+  want a different rate.
 
 Every run reads the same rows in the same order; seeds change only the initial
 weights. A run resumes from its ``ckpt.pt`` when one exists.
@@ -59,10 +61,11 @@ LIVE_GAMES = 100
 
 MODEL = dict(n_layer=8, n_head=8, n_embd=512, bias=False, dropout=0.0,
              n_prelude=1, n_buffer=1, n_core=4, n_source=1, n_coda=1)
-# From the stage-1 check on the transformer (1e-4, 3e-4, 1e-3, 3e-3): 1e-3 was best. The engine stage uses
-# it until its own check says otherwise. The minimum is a tenth of the peak, as in the 20B study.
-LEARNING_RATE = 1e-3
-MIN_LEARNING_RATE = 1e-4
+# Each arm trains at its own best peak rate, from the stage-1 learning-rate checks (a fifth of a run;
+# docs/engine_policy_plan.md, Decisions); the engine stage uses the same rates. The rate decays to a
+# tenth of the peak, as in the 20B study.
+LEARNING_RATES = {'transformer': 1e-3, 'temporal': 3e-4, 'depth': 3e-4, 'hybrid': 1e-3}
+MIN_RATE_FRACTION = 0.1
 WARMUP_FRACTION = 0.03
 DECAY_FRACTION = 0.10      # the last tenth of updates decays linearly, as in the 20B study
 LR_CHECK_RATES = ('1e-4', '3e-4', '1e-3', '3e-3')
@@ -93,6 +96,7 @@ ARCHITECTURES = {
 def run_names():
     names = [f'legal_{arm}' for arm in ARMS] + ['legal_hybrid_seed2'] + [f'engine_{arm}' for arm in ARMS]
     names += [f'lr_{objective}_{rate}' for objective in ('legal', 'engine') for rate in LR_CHECK_RATES]
+    names += [f'lr_legal_{arm}_{rate}' for arm in ARMS[1:] for rate in LR_CHECK_RATES]
     return names
 
 
@@ -108,20 +112,21 @@ def _matrix(mode, probabilities):
                                            HYBRID_DIAGONAL_MASS if mode == 'hybrid' else None)
 
 
-def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curriculum=True, learning_rate=LEARNING_RATE,
+def _config(arm, objective, dataset, updates, out_dir, *, seed=SEEDS[0], curriculum=True, learning_rate=None,
             micro_batch=MICRO_BATCH):
     if ROWS_PER_UPDATE % micro_batch:
         raise ValueError(f'The micro-batch size must divide {ROWS_PER_UPDATE}')
     accumulation = ROWS_PER_UPDATE // micro_batch
     if arm == 'temporal' and (WARM_START['warm_start_fraction'] * accumulation) % 1:
         raise ValueError(f'Temporal warm starts use a quarter of the micro-batches: {accumulation} is not divisible by 4')
+    learning_rate = LEARNING_RATES[arm] if learning_rate is None else learning_rate
     config = deepcopy(DEFAULTS)
     decay_start = updates - round(DECAY_FRACTION * updates)
     config.update(**MODEL, **ARCHITECTURES[arm],
                   data_format='moves', objective=objective, dataset=str(dataset), block_size=256,
                   out_dir=str(out_dir), init_from='scratch', seed=seed,
                   batch_size=micro_batch, gradient_accumulation_steps=accumulation,
-                  max_iters=updates, learning_rate=learning_rate, min_lr=MIN_LEARNING_RATE * learning_rate / LEARNING_RATE,
+                  max_iters=updates, learning_rate=learning_rate, min_lr=MIN_RATE_FRACTION * learning_rate,
                   lr_schedule='wsd', warmup_iters=max(1, round(WARMUP_FRACTION * updates)),
                   lr_decay_start=decay_start, lr_decay_iters=updates,
                   device='cuda', dtype='bfloat16', compile=False,
@@ -151,6 +156,10 @@ def run_config(name, micro_batch=MICRO_BATCH):
         raise ValueError(f'Unknown pilot run: {name}')
     out_dir = ROOT / name
     parts = name.split('_')
+    if parts[0] == 'lr' and len(parts) == 4:
+        arm, rate = parts[2], parts[3]
+        return _config(arm, 'legal', STAGE1, round(LR_CHECK_FRACTION * updates_for(STAGE1)), out_dir,
+                       learning_rate=float(rate), micro_batch=micro_batch)
     if parts[0] == 'lr':
         objective, rate = parts[1], parts[2]
         if objective == 'engine':

@@ -36,6 +36,9 @@ def test_every_pilot_run_resolves(datasets):
     assert pilot.run_config('legal_hybrid')['max_iters'] == 6000
     assert pilot.run_config('engine_hybrid')['max_iters'] == 625
     assert pilot.run_config('lr_legal_1e-3')['max_iters'] == 1200
+    check = pilot.run_config('lr_legal_depth_3e-4')
+    assert check['max_iters'] == 1200 and check['recurrence_mode'] == 'depth' and check['learning_rate'] == 3e-4
+    assert check['min_lr'] == pytest.approx(3e-5) and check['update_probability_schedule'] is not None
     seeds = {pilot.run_config(name)['seed'] for name in ('legal_hybrid', 'legal_hybrid_seed2')}
     assert len(seeds) == 2
 
@@ -147,3 +150,11 @@ def test_the_queue_keeps_at_most_its_slots_running(datasets, monkeypatch):
     assert codes == dict.fromkeys(['legal_transformer', 'legal_temporal', 'legal_depth'], 0) and peak[0] == 2
     assert commands[0][3:] == ['run', 'legal_transformer', '--micro-batch', '50', '--threads', '3']
     assert (datasets / 'results' / 'legal_depth' / 'console.log').exists()
+
+
+def test_each_arm_trains_at_its_own_rate_in_both_stages(datasets):
+    for arm, rate in pilot.LEARNING_RATES.items():
+        for name in (f'legal_{arm}', f'engine_{arm}'):
+            config = pilot.run_config(name)
+            assert config['learning_rate'] == rate and config['min_lr'] == pytest.approx(rate / 10)
+    assert pilot.run_config('lr_legal_depth_1e-3')['learning_rate'] == 1e-3
