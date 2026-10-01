@@ -82,14 +82,14 @@ CURRICULUM = ((0.00, (0.25, 0.35, 0.25, 0.15)),
               (0.25, (0.15, 0.30, 0.30, 0.25)),
               (0.50, (0.10, 0.25, 0.35, 0.30)))
 PILOT_SCHEDULE = (UPDATE_SUPPORT, CURRICULUM)
-# Full stage-1 runs start shallower and end deeper than the pilot, up to five passes. The pilot's
-# recurrent arms left the early plateau late, possibly from unrolling 3-4 passes from the first update.
-# Phases are fractions of the run, so the longer run also deepens later in updates. Over the run, the
-# mean number of extra passes is about the pilot's.
+# Full stage-1 runs start shallower and end deeper than the pilot, up to update count 4 (five passes),
+# and stop sampling U=0 after the first quarter: these are multi-pass models. The pilot's recurrent arms
+# left the early plateau late, possibly from unrolling 3-4 passes from the first update. Phases are
+# fractions of the run, so the longer run also deepens later in updates.
 FULL_SCHEDULE = ([0, 1, 2, 3, 4], ((0.00, (0.50, 0.35, 0.15, 0.00, 0.00)),
-                                   (0.25, (0.20, 0.35, 0.30, 0.15, 0.00)),
-                                   (0.50, (0.10, 0.20, 0.30, 0.25, 0.15)),
-                                   (0.75, (0.05, 0.10, 0.20, 0.30, 0.35))))
+                                   (0.25, (0.00, 0.55, 0.30, 0.15, 0.00)),
+                                   (0.50, (0.00, 0.30, 0.30, 0.25, 0.15)),
+                                   (0.75, (0.00, 0.15, 0.20, 0.30, 0.35))))
 HYBRID_DIAGONAL_MASS = 0.80
 TEMPORAL_GATE_INIT = 0.10
 # Temporal only, in the decay phase: a quarter of each update's micro-batches start from settled

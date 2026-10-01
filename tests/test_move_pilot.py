@@ -176,6 +176,7 @@ def test_full_runs_start_shallower_end_deeper_and_keep_few_checkpoints(datasets)
     mean = lambda config, step: sum(count * p for count, p in _max_count_mass(config, step).items())
     assert mean(full, 0) < mean(pilot_hybrid, 0) and mean(full, updates - 1) > mean(pilot_hybrid, pilot_hybrid['max_iters'] - 1)
     assert [mean(full, round(f * updates)) for f in (0, 0.25, 0.5, 0.75)] == sorted(mean(full, round(f * updates)) for f in (0, 0.25, 0.5, 0.75))
+    assert all(_max_count_mass(full, round(f * updates)).get(0, 0) == 0 for f in (0.25, 0.5, 0.75, 1))
     assert full['eval_interval'] == 1000 and full['checkpoint_interval'] == 500
     assert full['checkpoint_steps'] == [full['lr_decay_start']] and full['live_eval_depths'] == [1, 2, 4, 5]
     temporal = pilot.run_config('full_legal_temporal')
