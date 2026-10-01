@@ -18,7 +18,8 @@ Runs:
 - ``legal_{arm}``: stage 1 from scratch, one pass over the stage-1 dataset;
   ``legal_hybrid_seed2`` repeats one arm with another initialisation.
 - ``engine_{arm}``: stage 2, continued from ``legal_{arm}`` on ``STAGE2_POSITIONS``
-  Leela positions, with a fresh output layer.
+  Leela positions, with a fresh output layer; ``engine_long_{arm}`` runs
+  ``ENGINE_LONG_PASSES`` passes over the whole Leela dataset, evaluating every 400 updates.
 - ``lr_{objective}_{rate}``: the learning-rate check on the transformer, a fifth of
   a run's length (the engine check continues from ``legal_transformer``);
   ``lr_legal_{arm}_{rate}`` checks a recurrent arm, whose shared core weights may
@@ -48,6 +49,7 @@ ROOT = Path('experiments/move_pilot/results')
 STAGE1 = 'stage1_v1'
 LEELA = 'leela_v1'
 STAGE2_POSITIONS = 50_000_000
+ENGINE_LONG_PASSES = 2
 ARMS = ('transformer', 'temporal', 'depth', 'hybrid')
 SEEDS = (1337, 2024)
 
@@ -61,10 +63,10 @@ LIVE_GAMES = 100
 
 MODEL = dict(n_layer=8, n_head=8, n_embd=512, bias=False, dropout=0.0,
              n_prelude=1, n_buffer=1, n_core=4, n_source=1, n_coda=1)
-# Each arm trains at its own best peak rate, from the stage-1 learning-rate checks (a fifth of a run;
-# docs/engine_policy_plan.md, Decisions); the engine stage uses the same rates. The rate decays to a
-# tenth of the peak, as in the 20B study.
-LEARNING_RATES = {'transformer': 1e-3, 'temporal': 3e-4, 'depth': 3e-4, 'hybrid': 1e-3}
+# Every arm trains at 1e-3 in both stages: best for the transformer in the short checks, and better than
+# 3e-4 over full stage-1 runs of temporal and depth, although the short checks favoured 3e-4 for them
+# (docs/engine_policy_plan.md, Decisions). The rate decays to a tenth of the peak, as in the 20B study.
+LEARNING_RATES = dict.fromkeys(ARMS, 1e-3)
 MIN_RATE_FRACTION = 0.1
 WARMUP_FRACTION = 0.03
 DECAY_FRACTION = 0.10      # the last tenth of updates decays linearly, as in the 20B study
@@ -95,6 +97,7 @@ ARCHITECTURES = {
 
 def run_names():
     names = [f'legal_{arm}' for arm in ARMS] + ['legal_hybrid_seed2'] + [f'engine_{arm}' for arm in ARMS]
+    names += [f'engine_long_{arm}' for arm in ARMS]
     names += [f'lr_{objective}_{rate}' for objective in ('legal', 'engine') for rate in LR_CHECK_RATES]
     names += [f'lr_legal_{arm}_{rate}' for arm in ARMS[1:] for rate in LR_CHECK_RATES]
     return names
@@ -170,6 +173,12 @@ def run_config(name, micro_batch=MICRO_BATCH):
             return config
         return _config('transformer', objective, STAGE1, round(LR_CHECK_FRACTION * updates_for(STAGE1)), out_dir,
                        learning_rate=float(rate), micro_batch=micro_batch)
+    if parts[0] == 'engine' and parts[1] == 'long':
+        arm = parts[2]
+        config = _config(arm, 'engine', LEELA, ENGINE_LONG_PASSES * updates_for(LEELA), out_dir, curriculum=False,
+                         micro_batch=micro_batch)
+        config.update(init_from='continue', continue_from=str(ROOT / f'legal_{arm}' / 'ckpt.pt'), eval_interval=400)
+        return config
     if parts[0] == 'engine':
         arm = parts[1]
         config = _config(arm, 'engine', LEELA, updates_for(LEELA, STAGE2_POSITIONS), out_dir, curriculum=False,

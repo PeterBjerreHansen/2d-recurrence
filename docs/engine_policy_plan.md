@@ -77,7 +77,7 @@ All losses apply at positions with a target, on the final pass only.
 ### Training protocol
 
 - **Updates:** 400 rows of 256 tokens (~100k tokens, as the 20B study's 100 × 1,023 characters). The micro-batch size (50 by default, measured) only trades speed for memory; evaluation always covers 1,000 dev games, 100 of them live.
-- **Optimiser:** AdamW as in the 20B study, warmup–stable–decay (3% warmup, the last 10% decaying to a tenth of the peak). Each arm trains at its own best peak learning rate from a short check (a fifth of a run): **transformer 1e-3, temporal 3e-4, depth 3e-4, hybrid 1e-3**; the engine stage uses the same rates.
+- **Optimiser:** AdamW as in the 20B study, warmup–stable–decay (3% warmup, the last 10% decaying to a tenth of the peak). Every arm trains at a peak learning rate of **1e-3** in both stages (see Decisions: short checks misjudged the recurrent arms).
 - **Update support {0, 1, 2, 3}, gap-free and broad throughout; deepen by moving the centre, never by concentrating the mass** (20B report). The probabilities of max(U_T, U_D) = 0, 1, 2, 3 are (0.25, 0.35, 0.25, 0.15), then (0.15, 0.30, 0.30, 0.25) from 25% of the run, then (0.10, 0.25, 0.35, 0.30) from 50%. Hybrid puts 80% of each count on the diagonal. Stage 2 keeps the final mixture.
 - **Temporal-only gets warm-start batches** (a quarter of each update's micro-batches) in the decay phase, as the 20B report recommends. This is a recipe difference, stated as one.
 - **Evaluation every 200 updates,** including live decoding. Measured on MPS at 1–3% of training time; evaluations log their seconds, and GPU time spent evaluating stays under 5%.
@@ -156,7 +156,7 @@ Margins and thresholds are set on the development sets before the main runs.
 
 ## Pilot
 
-- **Runs** (`experiments/move_pilot/pilot.py list`): the learning-rate check (`lr_legal_*`, `lr_engine_*`); `legal_{arm}` for all four arms, one pass over the 500M-position dataset (5,944 updates) each, plus `legal_hybrid_seed2`; `engine_{arm}`, about 50M Leela positions continued from `legal_{arm}`.
+- **Runs** (`experiments/move_pilot/pilot.py list`): the learning-rate check (`lr_legal_*`, `lr_engine_*`); `legal_{arm}` for all four arms, one pass over the 500M-position dataset (5,944 updates) each, plus `legal_hybrid_seed2`; `engine_{arm}`, about 50M Leela positions continued from `legal_{arm}`; then `engine_long_{arm}`, two passes over the 100M-position Leela dataset, to look for a signal at the deep end before the main runs.
 - **On one GPU:** `pilot.py queue <runs> --slots K` runs several side by side and resumes any run from its last checkpoint (every 200 updates) when started again; `pilot.py bench <runs> --micro-batches …` times them side by side first, to choose K and the micro-batch size.
 - **Pass criteria** (none requires an arm to win): all tests pass; build and training costs are measured; the dev sets have room to improve (otherwise harder sets or a smaller scale, declared in advance); learning curves and seed variance are measured.
 
@@ -185,7 +185,7 @@ Margins and thresholds are set on the development sets before the main runs.
 - **2026-09-30 — Stage 1 is the legal target only; the played condition is a control.** The question is shallow vs deep targets; comparability with the 20B run is not a goal.
 - **2026-09-30 — Pilot defaults** as in [Training protocol](#training-protocol): the 20B recipe where it worked, and the 20B report's recommendations (a broad, gap-free support; warm starts in the decay) where it didn't.
 - **2026-10-01 — Seed variance is large at pilot scale.** Two hybrid seeds at the same settings ended at 0.890 / 0.926 human and 0.512 / 0.648 random exact set: as large as the gaps between arms. Orderings need several seeds; random-game exact set is the noisiest measure.
-- **2026-10-01 — Each arm at its own learning rate.** Checked at a fifth of a run (1,189 updates), dev legal loss: transformer 0.0185 / 0.0086 / **0.0058** / 0.0068 at 1e-4 / 3e-4 / 1e-3 / 3e-3; temporal **0.0195** at 3e-4, 0.0306 at 1e-3; depth 0.0191 / **0.0161** / 0.0270 at 1e-4 / 3e-4 / 1e-3; hybrid 0.0384 at 3e-4, **0.0349** at 1e-3. The transformer's rate is wrong for depth and temporal, whose shared core weights collect gradient from every pass. Hybrid's margin is small. The first stage-1 runs of temporal and depth at 1e-3 are kept as records (`_lr1e-3`).
+- **2026-10-01 — Every arm at 1e-3; short learning-rate checks misjudge the recurrent arms.** Checks at a fifth of a run (1,189 updates), dev legal loss: transformer 0.0185 / 0.0086 / **0.0058** / 0.0068 at 1e-4 / 3e-4 / 1e-3 / 3e-3; temporal 0.0197 / **0.0195** / 0.0306 at 1e-4 / 3e-4 / 1e-3; depth 0.0191 / **0.0161** / 0.0270; hybrid 0.0384 at 3e-4, **0.0349** at 1e-3. But full stage-1 runs reversed the recurrent result: temporal ended at 0.931 / 0.637 (human / random exact set) at 1e-3 against 0.834 / 0.347 at 3e-4, and depth at 0.866 / 0.435 against 0.852 / 0.398. At a fifth of a run the recurrent arms have barely left the early plateau, so the check measures how fast they leave it, not where they end. The 3e-4 runs are kept as records (`_lr3e-4`).
 - **2026-09-30 — Exact set is thresholded.** The earlier version picked the true number of top moves, so it measured ranking; that is now `separation`. The constant baseline uses one legal rate, not each position's count.
 
 ## Cost

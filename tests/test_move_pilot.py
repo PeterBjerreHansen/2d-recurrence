@@ -59,6 +59,12 @@ def test_the_update_mixture_is_gap_free_broad_and_deepens(datasets):
         assert _max_count_mass(engine, 0) == pytest.approx(_max_count_mass(config, config['max_iters']))
 
 
+def test_the_long_engine_stage_runs_two_passes_from_the_stage1_run(datasets):
+    config = pilot.run_config('engine_long_hybrid')
+    assert config['max_iters'] == 2 * 1250 and config['eval_interval'] == 400 and config['objective'] == 'engine'
+    assert config['continue_from'] == str(datasets / 'results' / 'legal_hybrid' / 'ckpt.pt')
+
+
 def test_stage2_continues_from_the_matching_stage1_run(datasets):
     config = pilot.run_config('engine_depth')
     assert config['init_from'] == 'continue' and config['objective'] == 'engine'
