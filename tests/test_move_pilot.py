@@ -11,13 +11,14 @@ from tests.test_rows import CONTEXT, stage1  # noqa: F401 (fixture)
 @pytest.fixture
 def datasets(tmp_path, monkeypatch):
     for name, rows, positions in (('stage1', 2_400_000, 500_000_000), ('leela', 500_000, 100_000_000),
-                                  ('stage1_full', 9_600_000, 2_000_000_000)):
+                                  ('stage1_full', 9_600_000, 2_000_000_000), ('leela_full', 2_000_000, 400_000_000)):
         (tmp_path / name).mkdir()
         (tmp_path / name / 'dataset.json').write_text(
             json.dumps(dict(splits=dict(train=dict(rows=rows, positions=positions)))))
     monkeypatch.setattr(pilot, 'STAGE1', tmp_path / 'stage1')
     monkeypatch.setattr(pilot, 'LEELA', tmp_path / 'leela')
     monkeypatch.setattr(pilot, 'STAGE1_FULL', tmp_path / 'stage1_full')
+    monkeypatch.setattr(pilot, 'LEELA_FULL', tmp_path / 'leela_full')
     monkeypatch.setattr(pilot, 'ROOT', tmp_path / 'results')
     return tmp_path
 
@@ -194,3 +195,12 @@ def test_the_full_schedule_trains_up_to_five_passes_and_decodes_them_live(stage1
     counts = {max(s['u_t'], s['u_d']) for r in records if r['event'] == 'train' for s in r['schedules']}
     assert 4 in counts and counts <= {0, 1, 2, 3, 4}
     assert 'live_J5_human_dev_exact_set' in [r for r in records if r['event'] == 'evaluation'][-1]
+
+
+def test_full_stage2_continues_the_final_stage1_model_at_its_final_mixture(datasets):
+    stage1, stage2 = pilot.run_config('full_legal_hybrid'), pilot.run_config('full_engine_hybrid')
+    assert stage2['objective'] == 'engine' and stage2['max_iters'] == 5000 and stage2['init_from'] == 'continue'
+    assert stage2['continue_from'] == str(datasets / 'results' / 'full_legal_hybrid' / 'ckpt.pt')
+    assert stage2['update_probability_schedule'] is None
+    assert _max_count_mass(stage2, 0) == pytest.approx(_max_count_mass(stage1, stage1['max_iters'] - 1))
+    assert stage2['eval_interval'] == 500 and stage2['learning_rate'] == 1e-3 and stage2['live_eval_depths'] == [1, 2, 4, 5]

@@ -20,6 +20,8 @@ Runs:
 - ``engine_{arm}``: stage 2, continued from ``legal_{arm}`` on ``STAGE2_POSITIONS``
   Leela positions, with a fresh output layer; ``engine_long_{arm}`` runs
   ``ENGINE_LONG_PASSES`` passes over the whole Leela dataset, evaluating every 400 updates.
+- ``full_legal_{arm}``, ``full_engine_{arm}``: the full stage-1 run on ``STAGE1_FULL``, then stage 2,
+  one pass over ``LEELA_FULL`` continued from its final model.
 - ``lr_{objective}_{rate}``: the learning-rate check on the transformer, a fifth of
   a run's length (the engine check continues from ``legal_transformer``);
   ``lr_legal_{arm}_{rate}`` checks a recurrent arm, whose shared core weights may
@@ -49,6 +51,7 @@ ROOT = Path('experiments/move_pilot/results')
 STAGE1 = 'stage1_v1'
 STAGE1_FULL = 'stage1_full_v1'
 LEELA = 'leela_v1'
+LEELA_FULL = 'leela_full_v1'
 STAGE2_POSITIONS = 50_000_000
 ENGINE_LONG_PASSES = 2
 ARMS = ('transformer', 'temporal', 'depth', 'hybrid')
@@ -109,6 +112,7 @@ ARCHITECTURES = {
 def run_names():
     names = [f'legal_{arm}' for arm in ARMS] + ['legal_hybrid_seed2'] + [f'engine_{arm}' for arm in ARMS]
     names += [f'engine_long_{arm}' for arm in ARMS] + [f'full_legal_{arm}' for arm in ARMS]
+    names += [f'full_engine_{arm}' for arm in ARMS]
     names += [f'lr_{objective}_{rate}' for objective in ('legal', 'engine') for rate in LR_CHECK_RATES]
     names += [f'lr_legal_{arm}_{rate}' for arm in ARMS[1:] for rate in LR_CHECK_RATES]
     return names
@@ -186,6 +190,17 @@ def run_config(name, micro_batch=MICRO_BATCH):
             return config
         return _config('transformer', objective, STAGE1, round(LR_CHECK_FRACTION * updates_for(STAGE1)), out_dir,
                        learning_rate=float(rate), micro_batch=micro_batch)
+    if parts[0] == 'full' and parts[1] == 'engine':
+        # Stage 2: one pass over the 400M-position Leela dataset, continued from the final full stage-1
+        # model with a fresh output layer, at stage 1's final update mixture throughout.
+        arm = parts[2]
+        config = _config(arm, 'engine', LEELA_FULL, updates_for(LEELA_FULL), out_dir, curriculum=False,
+                         micro_batch=micro_batch, schedule=FULL_SCHEDULE)
+        config.update(init_from='continue', continue_from=str(ROOT / f'full_legal_{arm}' / 'ckpt.pt'),
+                      eval_interval=500, checkpoint_interval=500, checkpoint_steps=[config['lr_decay_start']])
+        if arm in ('depth', 'hybrid'):
+            config['live_eval_depths'] = [1, 2, 4, 5]
+        return config
     if parts[0] == 'full':
         arm = parts[2]
         updates = updates_for(STAGE1_FULL)
