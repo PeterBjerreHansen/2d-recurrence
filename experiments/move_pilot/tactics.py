@@ -6,6 +6,8 @@
     uv run python -m experiments.move_pilot.tactics label --scan tactics/scan.npz --games tactics/games.npz \
         --out tactics/panel.npz --stockfish /usr/games/stockfish --nodes 200000 --workers 90           # CPU instance
     uv run python -m experiments.move_pilot.tactics score --panel tactics/panel.npz                    # laptop
+    uv run python -m experiments.move_pilot.tactics compare --panel tactics/panel.npz \
+        --scores final=tactics/panel_scores_full_engine_ckpt.npz ... --average decayed=final,...         # laptop
 
 1. ``export``: the plies of the first human dev games of the full stage-1 dataset.
 2. ``scan``: every position is searched by Stockfish twice: at depth 1 (essentially the static
@@ -17,8 +19,11 @@
    move), with the game's history plus the line so far. Controls are positions where both searches agree.
    Every step gets the teacher's labels (``moves.teacher``): one deep search per legal move, from the
    mover's side, with history. The labels don't depend on any model.
-4. ``score``: each final stage-2 model (``full_engine_{arm}``; depth and hybrid at J = 1, 2, 4, 5)
-   picks its top legal move at every step; reports agreement with the deep move and regret.
+4. ``score``: each stage-2 model (``--run``, ``--checkpoint``; depth and hybrid at J = 1, 2, 4, 5) picks its
+   top legal move at every step; reports agreement with the deep move and regret, and saves both with the
+   probability given to the deep move (``p_best``).
+5. ``compare``: each arm minus the transformer across scored checkpoints, averaged over chosen checkpoints,
+   with a bootstrap over tactics.
 
 Q is from the mover's perspective throughout (``moves.values``).
 """
@@ -261,7 +266,7 @@ def score(arguments):
     from experiments.move_pilot.stratify_stage2 import CELLS, load
     from moves.objectives import LegalTargets
     from recurrence.schedule import sample_schedule
-    z = np.load(arguments.panel)
+    z = dict(np.load(arguments.panel))  # read each array once; indexing the npz file re-reads it every time
     n = len(z['kind'])
     histories = [z['history'][a:b] for a, b in zip(z['history_offsets'][:-1], z['history_offsets'][1:])]
     legal = [(z['ids'][a:b], z['q'][a:b]) for a, b in zip(z['label_offsets'][:-1], z['label_offsets'][1:])]
@@ -319,6 +324,40 @@ def score(arguments):
             print(f'{group:<26}{mask.sum():>7}' + ''.join(f'{results[c][metric][mask].mean():>16.4f}' for c in columns))
 
 
+def compare(arguments):
+    """Each arm minus the baseline arm, per scored checkpoint and averaged over groups of checkpoints, with 95%
+    intervals from a bootstrap over tactics (the steps of one tactic are resampled together)."""
+    z = dict(np.load(arguments.panel))
+    scores = dict(item.split('=', 1) for item in arguments.scores)
+    scores = {label: np.load(path) for label, path in scores.items()}
+    averages = {name: labels.split(',') for name, labels in (item.split('=', 1) for item in arguments.average)}
+    tactic = z['kind'] == 'tactic'
+    groups = {'tactic step 0': tactic & (z['step'] == 0), 'tactic steps 1-2': tactic & (z['step'] >= 1),
+              'controls': z['kind'] == 'control'}
+    rng = np.random.default_rng(arguments.seed)
+    for metric in ('p_best', 'agree', 'regret'):
+        for group, mask in groups.items():
+            print(f'\n{metric}, {group} (n={mask.sum()}): arm minus {arguments.baseline}')
+            print(f"{'checkpoint':<14}" + ''.join(f'{a:>16}' for a in arguments.arms) + f'{arguments.baseline:>16}')
+            diff = {label: {a: s[f'{a}__{metric}'][mask].astype(float) - s[f'{arguments.baseline}__{metric}'][mask]
+                            for a in arguments.arms} for label, s in scores.items()}
+            for label, s in scores.items():
+                base = s[f'{arguments.baseline}__{metric}'][mask].astype(float).mean()
+                print(f'{label:<14}' + ''.join(f'{diff[label][a].mean():>+16.4f}' for a in arguments.arms) + f'{base:>16.4f}')
+            _, cluster = np.unique(z['source'][mask], return_inverse=True)
+            size = np.bincount(cluster)
+            weights = np.stack([np.bincount(rng.integers(0, len(size), len(size)), minlength=len(size))
+                                for _ in range(arguments.resamples)])
+            for name, labels in averages.items():
+                cells = []
+                for a in arguments.arms:
+                    d = np.mean([diff[label][a] for label in labels], axis=0)
+                    boot = weights @ np.bincount(cluster, weights=d) / (weights @ size)
+                    low, high = np.percentile(boot, [2.5, 97.5])
+                    cells.append(f"{d.mean():+.4f} [{low:+.4f}, {high:+.4f}]{'*' if low > 0 or high < 0 else ''}")
+                print(f'{name} mean: ' + ' | '.join(f'{a} {c}' for a, c in zip(arguments.arms, cells)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -358,8 +397,17 @@ def main():
     sc.add_argument('--checkpoint', default='ckpt.pt')
     sc.add_argument('--batch-size', type=int, default=64)
     sc.add_argument('--device', default='mps')
+    cmp = commands.add_parser('compare')
+    cmp.add_argument('--panel', required=True)
+    cmp.add_argument('--scores', nargs='+', required=True, help='LABEL=panel_scores_*.npz, one per checkpoint')
+    cmp.add_argument('--average', nargs='*', default=[], help='NAME=LABEL,LABEL,...: checkpoints to average')
+    cmp.add_argument('--baseline', default='transformer_J1')
+    cmp.add_argument('--arms', nargs='+', default=['temporal_J1', 'depth_J2', 'depth_J4', 'hybrid_J2', 'hybrid_J4'])
+    cmp.add_argument('--resamples', type=int, default=1000)
+    cmp.add_argument('--seed', type=int, default=0)
     arguments = parser.parse_args()
-    dict(export=export, scan=scan, label=label, assemble=assemble, score=score)[arguments.command](arguments)
+    dict(export=export, scan=scan, label=label, assemble=assemble, score=score,
+         compare=compare)[arguments.command](arguments)
 
 
 if __name__ == '__main__':
