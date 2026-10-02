@@ -359,6 +359,24 @@ def test_a_continued_run_resumes_exactly(stage1, leela, tmp_path):
         train({**part, 'init_from': 'resume', 'continue_from': str(tmp_path / 'other.pt')})
 
 
+def test_a_wsd_run_can_be_extended_only_before_its_decay(stage1, tmp_path):
+    from train import train
+    _, directory = stage1
+    schedule = dict(lr_schedule='wsd', warmup_iters=1, lr_decay_start=4, lr_decay_iters=6)
+    longer = dict(lr_schedule='wsd', warmup_iters=1, lr_decay_start=8, lr_decay_iters=10, max_iters=10)
+    extended = train(_config(directory, tmp_path / 'extended', 'legal', **longer))
+    part = _config(directory, tmp_path / 'part', 'legal', **schedule)
+    train({**part, 'max_iters': 2})
+    resumed = train({**part, **longer, 'init_from': 'resume'})
+    a, b = (torch.load(path, weights_only=False) for path in (extended, resumed))
+    for key in a['model']:
+        torch.testing.assert_close(a['model'][key], b['model'][key], rtol=0, atol=0)
+    late = _config(directory, tmp_path / 'late', 'legal', **schedule)
+    train({**late, 'max_iters': 5})
+    with pytest.raises(ValueError, match='Resume changes lr_decay_(start|iters)'):
+        train({**late, **longer, 'init_from': 'resume'})
+
+
 def test_continuing_copies_the_trunk_and_reinitialises_the_readout(stage1, leela, tmp_path):
     from train import train
     _, directory = stage1

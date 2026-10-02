@@ -204,3 +204,20 @@ def test_full_stage2_continues_the_final_stage1_model_at_its_final_mixture(datas
     assert stage2['update_probability_schedule'] is None
     assert _max_count_mass(stage2, 0) == pytest.approx(_max_count_mass(stage1, stage1['max_iters'] - 1))
     assert stage2['eval_interval'] == 500 and stage2['learning_rate'] == 1e-3 and stage2['live_eval_depths'] == [1, 2, 4, 5]
+
+
+def test_the_long_stage2_resumes_the_original_run_before_its_decay(datasets, monkeypatch):
+    original, long = pilot.run_config('full_engine_hybrid'), pilot.run_config('full_engine_long_hybrid')
+    assert long['max_iters'] == 3 * original['max_iters'] and long['lr_decay_iters'] == long['max_iters']
+    assert long['lr_decay_start'] == long['max_iters'] - round(0.1 * long['max_iters'])
+    assert {k: v for k, v in long.items() if k not in ('out_dir', 'max_iters', 'lr_decay_start', 'lr_decay_iters', 'checkpoint_steps')} == \
+        {k: v for k, v in original.items() if k not in ('out_dir', 'max_iters', 'lr_decay_start', 'lr_decay_iters', 'checkpoint_steps')}
+    assert long['checkpoint_steps'][0] == 6000 and long['checkpoint_steps'][-1] == long['max_iters']
+    source = datasets / 'results' / 'full_engine_hybrid' / f"ckpt-step{original['lr_decay_start']:06d}.pt"
+    source.parent.mkdir(parents=True)
+    torch.save(dict(iter_num=original['lr_decay_start']), source)
+    calls = []
+    monkeypatch.setattr(pilot, 'train', lambda config: calls.append(config))
+    pilot.run('full_engine_long_hybrid')
+    assert calls[0]['init_from'] == 'resume'
+    assert torch.load(datasets / 'results' / 'full_engine_long_hybrid' / 'ckpt.pt')['iter_num'] == original['lr_decay_start']

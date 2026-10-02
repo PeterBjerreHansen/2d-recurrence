@@ -297,6 +297,11 @@ def train(config):
                    # A warm start changes how batches are processed, not the model or optimizer state.
                    'warm_start_fraction', 'warm_start_max_passes', 'warm_start_tolerance',
                    'live_eval_batches', 'live_eval_depths'}
+        # Extending a warmup-stable-decay run: before either schedule's decay starts, the learning rate so far
+        # depended only on the warmup and the peak, so the decay may move later without changing the run so far.
+        if (config.get('lr_schedule') == saved_config.get('lr_schedule') == 'wsd' and
+                checkpoint['iter_num'] <= min(config['lr_decay_start'], saved_config['lr_decay_start'])):
+            mutable = mutable | {'lr_decay_start', 'lr_decay_iters'}
         # Layout equivalence was checked from model_args, including legacy omissions.
         layout_keys = {'n_prelude', 'n_buffer', 'n_core', 'n_source', 'n_coda'} if recurrent else set()
         for key in DEFAULTS.keys() - mutable - layout_keys:

@@ -52,6 +52,7 @@ STAGE1 = 'stage1_v1'
 STAGE1_FULL = 'stage1_full_v1'
 LEELA = 'leela_v1'
 LEELA_FULL = 'leela_full_v1'
+FULL_ENGINE_LONG_PASSES = 3
 STAGE2_POSITIONS = 50_000_000
 ENGINE_LONG_PASSES = 2
 ARMS = ('transformer', 'temporal', 'depth', 'hybrid')
@@ -112,7 +113,7 @@ ARCHITECTURES = {
 def run_names():
     names = [f'legal_{arm}' for arm in ARMS] + ['legal_hybrid_seed2'] + [f'engine_{arm}' for arm in ARMS]
     names += [f'engine_long_{arm}' for arm in ARMS] + [f'full_legal_{arm}' for arm in ARMS]
-    names += [f'full_engine_{arm}' for arm in ARMS]
+    names += [f'full_engine_{arm}' for arm in ARMS] + [f'full_engine_long_{arm}' for arm in ARMS]
     names += [f'lr_{objective}_{rate}' for objective in ('legal', 'engine') for rate in LR_CHECK_RATES]
     names += [f'lr_legal_{arm}_{rate}' for arm in ARMS[1:] for rate in LR_CHECK_RATES]
     return names
@@ -190,6 +191,17 @@ def run_config(name, micro_batch=MICRO_BATCH):
             return config
         return _config('transformer', objective, STAGE1, round(LR_CHECK_FRACTION * updates_for(STAGE1)), out_dir,
                        learning_rate=float(rate), micro_batch=micro_batch)
+    if parts[0] == 'full' and parts[1] == 'engine' and parts[2] == 'long':
+        # Stage 2 extended: resumed from full_engine_{arm}'s pre-decay checkpoint (see run), with the stable
+        # phase stretched to FULL_ENGINE_LONG_PASSES passes over the Leela dataset and the decay at the end.
+        # Checkpoints every 2,000 updates trace the tactics results along the way.
+        arm = parts[3]
+        config = run_config(f'full_engine_{arm}', micro_batch)
+        updates = FULL_ENGINE_LONG_PASSES * updates_for(LEELA_FULL)
+        decay_start = updates - round(DECAY_FRACTION * updates)
+        config.update(out_dir=str(out_dir), max_iters=updates, lr_decay_start=decay_start, lr_decay_iters=updates,
+                      checkpoint_steps=sorted(set(range(6000, updates, 2000)) | {decay_start, updates}))
+        return config
     if parts[0] == 'full' and parts[1] == 'engine':
         # Stage 2: one pass over the 400M-position Leela dataset, continued from the final full stage-1
         # model with a fresh output layer, at stage 1's final update mixture throughout.
@@ -232,6 +244,11 @@ def run(name, micro_batch=MICRO_BATCH, **overrides):
     """Train one pilot run, resuming it if it has a checkpoint."""
     config = {**run_config(name, micro_batch), **overrides}
     checkpoint = Path(config['out_dir']) / 'ckpt.pt'
+    if name.startswith('full_engine_long_') and not checkpoint.exists():
+        # Start from the original stage-2 run at its decay start; its learning rate is still at the peak.
+        source = run_config(name.replace('_long', ''), micro_batch)
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(Path(source['out_dir']) / f"ckpt-step{source['lr_decay_start']:06d}.pt", checkpoint)
     step = 0
     if checkpoint.exists():
         step = torch.load(checkpoint, map_location='cpu', weights_only=False)['iter_num']
